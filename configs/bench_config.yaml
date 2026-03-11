@@ -1,0 +1,50 @@
+# DeepSeek R1 671B Benchmark Configuration
+# TRT-LLM PyTorch Backend on 8x H20
+
+model:
+  name: "deepseek-ai/DeepSeek-R1"
+  path: "/models/deepseekr1/"
+  architecture: "DeepseekV3ForCausalLM"
+  model_type: "deepseek_v3"
+  quantization: "FP8"
+  parameters: "671B"
+  experts: 256
+  experts_per_token: 8
+
+hardware:
+  gpu: "NVIDIA H20"
+  gpu_memory: "96GB"
+  num_gpus: 8
+  total_memory: "768GB"
+
+runtime:
+  docker_image: "nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc2"
+  backend: "pytorch"
+  tp_size: 8
+  pp_size: 1
+  ep_size: 1
+
+serving:
+  max_batch_size: 8
+  max_seq_len: 4096
+  kv_cache_free_gpu_memory_fraction: 0.85
+  reasoning_parser: "deepseek-r1"
+  trust_remote_code: true
+
+benchmark:
+  num_requests: 50
+  output_tokens: 128
+  warmup: 2
+  input_mode: "synthetic"       # synthetic | fixed_len
+  fixed_input_len: 512          # used when input_mode=fixed_len
+
+# Benchmark Results (2026-03-11)
+results:
+  request_throughput_rps: 1.92
+  output_throughput_tps: 246.0
+  total_token_throughput_tps: 278.1
+  per_gpu_output_tps: 30.8
+  per_user_output_tps: 9.3
+  avg_latency_ms: 16160
+  p50_latency_ms: 18072
+  p99_latency_ms: 26010
