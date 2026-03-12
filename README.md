@@ -2,6 +2,8 @@
 
 End-to-end performance benchmarking skills for LLM inference, generated and validated by Claude.
 
+> **New to this repo?** See the [Deployment Guide](docs/deployment-guide.md) for step-by-step instructions on setting up a fresh machine from scratch.
+
 ## Supported Platforms
 
 | Platform | GPU | Memory | Docker Image | Status |
@@ -154,6 +156,8 @@ DeepSeek R1 uses `DeepseekV3ForCausalLM` (`model_type: deepseek_v3`):
 ```
 .
 ├── README.md
+├── docs/
+│   └── deployment-guide.md    # Step-by-step fresh machine setup
 ├── scripts/
 │   ├── sa_bench_b200.sh        # B200 benchmark suite (InferenceX-style)
 │   ├── sa_bench_h200.sh        # H200 benchmark suite (InferenceX-style)
