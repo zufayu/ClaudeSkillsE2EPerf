@@ -2,118 +2,98 @@
 
 End-to-end performance benchmarking skills for LLM inference, generated and validated by Claude.
 
-## DeepSeek R1 671B on TensorRT-LLM (H20)
+## Supported Platforms
 
-Deploy and benchmark DeepSeek R1 671B (FP8) on NVIDIA H20 GPUs using TensorRT-LLM.
+| Platform | GPU | Memory | Docker Image | Status |
+|----------|-----|--------|--------------|--------|
+| **B200** | 8x NVIDIA B200 | 192GB/GPU (1.5TB) | `release:1.2.0rc4` | New |
+| **H200** | 8x NVIDIA H200 | 141GB/GPU (1.1TB) | `release:1.2.0rc4` | Planned |
+| **H20**  | 8x NVIDIA H20  | 96GB/GPU (768GB)  | `release:1.2.0rc2` | Done |
 
-## Hardware Requirements
+## B200 Benchmarks (InferenceX/MAX-style)
 
-| Component | Specification |
-|-----------|--------------|
-| GPU       | 8x NVIDIA H20 (96GB each, 768GB total) |
-| Model     | DeepSeek R1 671B MoE (FP8 quantized) |
-| Docker    | `nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc2` |
-
-## Quick Start
-
-### 1. Launch Docker Container
+### Quick Start
 
 ```bash
-docker run --rm -it \
-  --gpus all \
-  --ipc host \
-  --ulimit memlock=-1 \
-  --ulimit stack=67108864 \
-  -v /raid/data/models:/models \
-  -v /raid/data/trtllm_workspace:/workspace \
-  -p 8000:8000 \
+# 1. Launch Docker container
+bash scripts/launch_b200_docker.sh --name B200_trtllm
+
+# 2. Attach and run benchmarks
+docker attach B200_trtllm
+bash /home/kqian/ClaudeSkillsE2EPerf/scripts/sa_bench_b200.sh \
+  --model-fp4 /data/amd/DeepSeek-R1-0528-NVFP4-v2 \
+  --model-fp8 /data/DeepSeek-R1-FP8 \
+  --configs all
+```
+
+### Configs
+
+| Config | Quant | MTP | DP Attention | MOE Backend | Target |
+|--------|-------|-----|-------------|-------------|--------|
+| `fp4-throughput` | NVFP4 | No | Auto | TRTLLM/CUTLASS | Max throughput |
+| `fp4-latency` | NVFP4 | MTP-3/1 | Auto | TRTLLM/CUTLASS | Min latency |
+| `fp8-throughput` | FP8 | No | Auto | TRTLLM/DEEPGEMM | Max throughput |
+| `fp8-latency` | FP8 | MTP-3/1 | Auto | TRTLLM/DEEPGEMM | Min latency |
+
+### Test Matrix
+
+- **Scenarios**: chat (1K/1K), reasoning (1K/8K), summarize (8K/1K)
+- **Concurrency**: 1, 4, 8, 16, 32, 64, 128, 256
+- **EP sizes**: EP=1 (pure TP), EP=8 (pure EP with DP attention)
+- **Output variation**: ±20% (random_range_ratio=0.8)
+
+### Auto-Adaptive Optimizations
+
+The B200 script automatically selects optimal parameters based on scenario/concurrency:
+
+- **Piecewise CUDA Graphs**: Enabled for high-concurrency configs
+- **MOE Backend**: TRTLLM → CUTLASS (FP4+DP) → DEEPGEMM (FP8+DP)
+- **Delay Batching**: For FP8 throughput at high concurrency
+- **KV Cache Fraction**: 0.8 default, adjusted to 0.7 for DEEPGEMM configs
+- **CUDA Graph Max Batch Size**: Dynamically scaled with DP attention
+
+### Run Individual Configs
+
+```bash
+# FP4 throughput only
+bash scripts/sa_bench_b200.sh --model-fp4 /data/DeepSeek-R1-NVFP4-v2 --configs fp4-throughput
+
+# FP8 latency only, single EP
+bash scripts/sa_bench_b200.sh --model-fp8 /data/DeepSeek-R1-FP8 --configs fp8-latency --ep-sizes "1"
+```
+
+## H20 Benchmarks (Legacy)
+
+### Quick Start
+
+```bash
+docker run --rm -it --gpus all --ipc host \
+  --ulimit memlock=-1 --ulimit stack=67108864 \
+  -v /home:/home -v /raid:/raid \
+  -p 8888:8888 \
   nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc2
+
+# Inside container:
+bash /home/kqian/ClaudeSkillsE2EPerf/scripts/sa_bench_h20.sh \
+  --model /raid/data/models/deepseekr1/
 ```
 
-### 2. Serve the Model (OpenAI-Compatible API)
+### H20 Results (Baseline)
 
-```bash
-trtllm-serve serve \
-  /models/deepseekr1/ \
-  --backend pytorch \
-  --tp_size 8 \
-  --max_batch_size 8 \
-  --max_seq_len 4096 \
-  --kv_cache_free_gpu_memory_fraction 0.85 \
-  --trust_remote_code \
-  --reasoning_parser deepseek-r1 \
-  --host 0.0.0.0 \
-  --port 8000
-```
-
-### 3. Test the API
-
-```bash
-curl http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseekr1",
-    "messages": [{"role": "user", "content": "Hello, who are you?"}],
-    "max_tokens": 256
-  }'
-```
-
-### 4. Run Benchmark
-
-```bash
-# Generate benchmark dataset
-python3 scripts/gen_dataset.py \
-  --tokenizer /models/deepseekr1/ \
-  --num_requests 50 \
-  --output_tokens 128
-
-# Run throughput benchmark
-bash scripts/run_bench.sh /models/deepseekr1/ 8
-```
-
-## Architecture Notes
-
-DeepSeek R1 uses `DeepseekV3ForCausalLM` architecture (`model_type: deepseek_v3`):
-- 671B parameters, 256 routed experts, 8 experts per token
-- MLA (Multi-head Latent Attention) with KV LoRA
-- FP8 block-wise quantization (128x128)
-- 61 hidden layers, 128 attention heads
-
-### Backend Compatibility (TRT-LLM 1.2.0rc2)
-
-| Backend | Support | Notes |
-|---------|---------|-------|
-| **PyTorch** | Supported | Full support via `_torch` path. Uses DeepGEMM, FlashMLA, FP8 MLA, CUDA Graphs |
-| **TensorRT Engine** | Not supported | `MODEL_MAP` only has `DeepseekV2ForCausalLM`. Need TRT-LLM >= 1.3.x |
-
-> For TRT engine backend, upgrade to `nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc6` or later.
-
-## Benchmark Results
-
-**Config:** 8x H20, TP=8, FP8, PyTorch backend, max_batch_size=8, max_seq_len=4096
+**Config:** 8x H20, TP=8, FP8, PyTorch backend, max_batch_size=8
 
 | Metric | Value |
 |--------|-------|
-| Request Throughput | 1.92 req/s |
-| Output Throughput | **246.0 tokens/s** |
-| Total Token Throughput | 278.1 tokens/s |
-| Per GPU Output Throughput | 30.8 tokens/s/GPU |
-| Per User Output Throughput | 9.3 tokens/s/user |
-| Avg Request Latency | 16.2s |
-| P50 Latency | 18.1s |
-| P99 Latency | 26.0s |
+| Output Throughput | 246.0 tokens/s |
+| Per GPU Throughput | 30.8 tokens/s/GPU |
+| Avg Latency | 16.2s |
 
-*Test: 50 requests, avg input 17 tokens, output 128 tokens*
+## Architecture Notes
 
-## Key Parameters
-
-| Parameter | Description | Recommended |
-|-----------|-------------|-------------|
-| `--tp_size` | Tensor parallelism (number of GPUs) | 8 for 8x H20 |
-| `--max_batch_size` | Max concurrent requests | 4-16 |
-| `--max_seq_len` | Max total sequence length | 4096 (start small, scale up) |
-| `--kv_cache_free_gpu_memory_fraction` | GPU memory for KV cache | 0.80-0.90 |
-| `--reasoning_parser` | Thinking chain parser | `deepseek-r1` |
+DeepSeek R1 uses `DeepseekV3ForCausalLM` (`model_type: deepseek_v3`):
+- 671B params, 256 routed experts, 8 experts/token
+- MLA (Multi-head Latent Attention) with KV LoRA
+- Only **PyTorch backend** supported (no TRT engine)
 
 ## File Structure
 
@@ -121,23 +101,31 @@ DeepSeek R1 uses `DeepseekV3ForCausalLM` architecture (`model_type: deepseek_v3`
 .
 ├── README.md
 ├── scripts/
-│   ├── gen_dataset.py       # Generate benchmark dataset
-│   ├── run_bench.sh         # One-click benchmark runner
-│   └── serve.sh             # One-click model serving
-└── configs/
-    └── bench_config.yaml    # Benchmark configuration
+│   ├── sa_bench_b200.sh        # B200 benchmark suite (InferenceX-style)
+│   ├── sa_bench_h20.sh         # H20 benchmark suite
+│   ├── benchmark_lib.sh        # Shared utilities (server, GPU monitor, benchmark client)
+│   ├── launch_b200_docker.sh   # B200 Docker launcher
+│   ├── gen_dataset.py          # Dataset generator
+│   ├── run_bench.sh            # Simple trtllm-bench runner
+│   └── serve.sh                # Model serving script
+├── utils/
+│   └── bench_serving/          # benchmark_serving.py (from InferenceX)
+├── configs/
+│   ├── bench_config.yaml       # H20 config
+│   └── bench_config_b200.yaml  # B200 config
+└── results/
+    └── deepseek_r1_8xh20_fp8_pytorch.json
 ```
 
-## Troubleshooting
+## Benchmark Method Comparison
 
-### "DeepseekV3ForCausalLM is not supported in TRT-LLM yet"
-This happens when using `--backend tensorrt`. DeepSeek R1 (V3 arch) only supports `--backend pytorch` in TRT-LLM 1.2.0rc2.
-
-### Low KV cache allocation
-If you see `Allocated 0.14 GiB for max tokens in paged KV cache`, increase `--kv_cache_free_gpu_memory_fraction` or reduce `--max_batch_size`.
-
-### UCX version warning
-`UCP API version is incompatible: required >= 1.20, actual 1.19.0` — This is a harmless warning and does not affect performance.
+| Aspect | H20 (sa_bench_h20.sh) | B200 (sa_bench_b200.sh) |
+|--------|----------------------|------------------------|
+| **Engine** | `trtllm-bench` direct | `trtllm-serve` + `benchmark_serving.py` |
+| **Benchmark** | Internal throughput test | OpenAI API load test (realistic) |
+| **Metrics** | Throughput only | Throughput + TTFT + TPOT + E2E latency |
+| **Concurrency** | Batch size control | Request-level concurrency |
+| **Output Len** | Fixed | ±20% random variation |
 
 ## License
 

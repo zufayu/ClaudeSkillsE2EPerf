@@ -1,0 +1,89 @@
+# DeepSeek R1 671B Benchmark Configuration - B200
+# InferenceX/InferenceMAX-style
+
+model:
+  name: "deepseek-ai/DeepSeek-R1"
+  architecture: "DeepseekV3ForCausalLM"
+  model_type: "deepseek_v3"
+  parameters: "671B"
+  experts: 256
+  experts_per_token: 8
+  variants:
+    fp4:
+      path: "/data/amd/DeepSeek-R1-0528-NVFP4-v2"
+      quantization: "NVFP4"
+      hf_name: "nvidia/DeepSeek-R1-0528-NVFP4-v2"
+    fp8:
+      path: "/data/DeepSeek-R1-FP8"
+      quantization: "FP8"
+
+hardware:
+  gpu: "NVIDIA B200"
+  gpu_memory: "192GB"
+  num_gpus: 8
+  total_memory: "1536GB"
+
+runtime:
+  docker_image: "nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc4"
+  backend: "pytorch"
+  tp_size: 8
+  pp_size: 1
+
+# Benchmark matrix
+benchmark:
+  # Scenarios from SemiAnalysis InferenceX
+  scenarios:
+    - name: chat
+      isl: 1024
+      osl: 1024
+    - name: reasoning
+      isl: 1024
+      osl: 8192
+    - name: summarize
+      isl: 8192
+      osl: 1024
+
+  # Concurrency sweep
+  concurrency: [1, 4, 8, 16, 32, 64, 128, 256]
+
+  # EP sizes to test
+  ep_sizes: [1, 8]
+
+  # Random range ratio (±20% output length variation)
+  random_range_ratio: 0.8
+
+  # Configs
+  configs:
+    fp4-throughput:
+      quantization: fp4
+      mtp: false
+      description: "FP4, no MTP, max throughput"
+    fp4-latency:
+      quantization: fp4
+      mtp: true
+      mtp_layers: 3  # 1 when DP_ATTENTION=true
+      description: "FP4, MTP-3 speculative decoding, min latency"
+    fp8-throughput:
+      quantization: fp8
+      mtp: false
+      description: "FP8, no MTP, max throughput"
+    fp8-latency:
+      quantization: fp8
+      mtp: true
+      mtp_layers: 3  # 1 when DP_ATTENTION=true
+      description: "FP8, MTP-3 speculative decoding, min latency"
+
+# Adaptive parameter rules (documented for reference)
+# These are implemented in sa_bench_b200.sh compute_adaptive_params()
+adaptive_rules:
+  moe_backend:
+    - "TRTLLM: default for most FP4 configs"
+    - "CUTLASS: FP4 with DP_ATTENTION or high concurrency"
+    - "DEEPGEMM: FP8 with DP_ATTENTION or high conc long output"
+  piecewise_cuda_graphs:
+    - "Enabled for high-concurrency B200 configs"
+    - "Disabled for low concurrency (varies by scenario)"
+  delay_batching:
+    - "FP8 throughput: enabled for 1k/1k at conc>=64"
+  kv_cache_fraction:
+    - "0.8 default, 0.7 for DEEPGEMM/DP configs, 0.75 for TP=4 summarize"
