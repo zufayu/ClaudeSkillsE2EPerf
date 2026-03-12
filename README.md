@@ -7,7 +7,7 @@ End-to-end performance benchmarking skills for LLM inference, generated and vali
 | Platform | GPU | Memory | Docker Image | Status |
 |----------|-----|--------|--------------|--------|
 | **B200** | 8x NVIDIA B200 | 192GB/GPU (1.5TB) | `release:1.2.0rc4` | New |
-| **H200** | 8x NVIDIA H200 | 141GB/GPU (1.1TB) | `release:1.2.0rc4` | Planned |
+| **H200** | 8x NVIDIA H200 | 141GB/GPU (1.1TB) | `release:1.2.0rc4` | New |
 | **H20**  | 8x NVIDIA H20  | 96GB/GPU (768GB)  | `release:1.2.0rc2` | Done |
 
 ## B200 Benchmarks (InferenceX/MAX-style)
@@ -62,6 +62,60 @@ bash scripts/sa_bench_b200.sh --model-fp4 /data/DeepSeek-R1-NVFP4-v2 --configs f
 bash scripts/sa_bench_b200.sh --model-fp8 /data/DeepSeek-R1-FP8 --configs fp8-latency --ep-sizes "1"
 ```
 
+## H200 Benchmarks (InferenceX/MAX-style)
+
+### Quick Start
+
+```bash
+# 1. Launch Docker container
+bash scripts/launch_h200_docker.sh --name H200_trtllm
+
+# 2. Attach and run benchmarks
+docker attach H200_trtllm
+bash /home/kqian/ClaudeSkillsE2EPerf/scripts/sa_bench_h200.sh \
+  --model /data/DeepSeek-R1-FP8 \
+  --configs all
+```
+
+### Configs
+
+| Config | Quant | MTP | MOE Backend | Target |
+|--------|-------|-----|-------------|--------|
+| `fp8-throughput` | FP8 | No | CUTLASS | Max throughput |
+| `fp8-latency` | FP8 | MTP-3/1 | CUTLASS | Min latency |
+
+### H200 vs B200 Differences
+
+| Parameter | H200 | B200 |
+|-----------|------|------|
+| GPU Memory | 141GB | 192GB |
+| Quantization | FP8 only | FP4 + FP8 |
+| MOE Backend | Always CUTLASS | TRTLLM/CUTLASS/DEEPGEMM |
+| KV Cache Fraction | 0.75 | 0.80 |
+| CUDA Graph Max BS | Fixed 128 | Dynamic |
+| Piecewise CUDA Graphs | No | Yes (high concurrency) |
+| Delay Batching | No | Yes (FP8 throughput) |
+| Max Concurrency | 128 | 256 |
+| EP Sizes | EP=4, EP=8 | EP=1, EP=8 |
+| MTP (DP mode) | `max_batch_size=CONC/TP` | `CONC/4` or `CONC/8` |
+
+### NVIDIA Reference Performance (8×H200)
+
+| Mode | ISL/OSL | Config | Metric |
+|------|---------|--------|--------|
+| Min Latency | 1K/2K | MTP-3, EP=4, batch=1 | **158 TPS/user** |
+| Max Throughput | 1K/2K | EP=8, batch=128 | **11,489 TPS** (1,436/GPU) |
+
+### Run Individual Configs
+
+```bash
+# FP8 throughput only, EP=8
+bash scripts/sa_bench_h200.sh --model /data/DeepSeek-R1-FP8 --configs fp8-throughput --ep-sizes "8"
+
+# FP8 latency only
+bash scripts/sa_bench_h200.sh --model /data/DeepSeek-R1-FP8 --configs fp8-latency
+```
+
 ## H20 Benchmarks (Legacy)
 
 ### Quick Start
@@ -102,9 +156,11 @@ DeepSeek R1 uses `DeepseekV3ForCausalLM` (`model_type: deepseek_v3`):
 ├── README.md
 ├── scripts/
 │   ├── sa_bench_b200.sh        # B200 benchmark suite (InferenceX-style)
+│   ├── sa_bench_h200.sh        # H200 benchmark suite (InferenceX-style)
 │   ├── sa_bench_h20.sh         # H20 benchmark suite
 │   ├── benchmark_lib.sh        # Shared utilities (server, GPU monitor, benchmark client)
 │   ├── launch_b200_docker.sh   # B200 Docker launcher
+│   ├── launch_h200_docker.sh   # H200 Docker launcher
 │   ├── gen_dataset.py          # Dataset generator
 │   ├── run_bench.sh            # Simple trtllm-bench runner
 │   └── serve.sh                # Model serving script
@@ -112,15 +168,16 @@ DeepSeek R1 uses `DeepseekV3ForCausalLM` (`model_type: deepseek_v3`):
 │   └── bench_serving/          # benchmark_serving.py (from InferenceX)
 ├── configs/
 │   ├── bench_config.yaml       # H20 config
-│   └── bench_config_b200.yaml  # B200 config
+│   ├── bench_config_b200.yaml  # B200 config
+│   └── bench_config_h200.yaml  # H200 config
 └── results/
     └── deepseek_r1_8xh20_fp8_pytorch.json
 ```
 
 ## Benchmark Method Comparison
 
-| Aspect | H20 (sa_bench_h20.sh) | B200 (sa_bench_b200.sh) |
-|--------|----------------------|------------------------|
+| Aspect | H20 (sa_bench_h20.sh) | H200/B200 (sa_bench_h200/b200.sh) |
+|--------|----------------------|-----------------------------------|
 | **Engine** | `trtllm-bench` direct | `trtllm-serve` + `benchmark_serving.py` |
 | **Benchmark** | Internal throughput test | OpenAI API load test (realistic) |
 | **Metrics** | Throughput only | Throughput + TTFT + TPOT + E2E latency |

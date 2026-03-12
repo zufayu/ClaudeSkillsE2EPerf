@@ -1,0 +1,84 @@
+# DeepSeek R1 671B Benchmark Configuration - H200
+# InferenceX/InferenceMAX-style
+
+model:
+  name: "deepseek-ai/DeepSeek-R1"
+  architecture: "DeepseekV3ForCausalLM"
+  model_type: "deepseek_v3"
+  parameters: "671B"
+  experts: 256
+  experts_per_token: 8
+  variants:
+    fp8:
+      path: "/data/DeepSeek-R1-FP8"
+      quantization: "FP8"
+
+hardware:
+  gpu: "NVIDIA H200"
+  gpu_memory: "141GB"
+  num_gpus: 8
+  total_memory: "1128GB"
+
+runtime:
+  docker_image: "nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc4"
+  backend: "pytorch"
+  tp_size: 8
+  pp_size: 1
+
+# Benchmark matrix
+benchmark:
+  scenarios:
+    - name: chat
+      isl: 1024
+      osl: 1024
+    - name: reasoning
+      isl: 1024
+      osl: 8192
+    - name: summarize
+      isl: 8192
+      osl: 1024
+
+  concurrency: [1, 4, 8, 16, 32, 64, 128]
+
+  ep_sizes: [4, 8]
+
+  random_range_ratio: 0.8
+
+  configs:
+    fp8-throughput:
+      quantization: fp8
+      mtp: false
+      description: "FP8, no MTP, max throughput"
+    fp8-latency:
+      quantization: fp8
+      mtp: true
+      mtp_layers: 3  # 1 when DP_ATTENTION=true
+      description: "FP8, MTP-3 speculative decoding, min latency"
+
+# H200-specific parameter rules (vs B200)
+# Documented for reference; implemented in sa_bench_h200.sh
+h200_notes:
+  moe_backend: "Always CUTLASS (B200 uses TRTLLM/DEEPGEMM)"
+  cuda_graph_max_batch_size: "Fixed 128 (B200 dynamically computed)"
+  kv_cache_fraction: "0.75 (B200 uses 0.80)"
+  piecewise_cuda_graphs: "Not used (B200 uses for high concurrency)"
+  delay_batching: "Not used (B200 uses for FP8 throughput)"
+  max_concurrency: "128 (B200 goes to 256)"
+  quantization: "FP8 only (B200 also supports FP4)"
+  special:
+    - "ISL=8192 + DP_ATTENTION: sets PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:8192"
+    - "MTP + DP: max_batch_size = CONC/TP (vs B200's CONC/4 or CONC/8)"
+
+# NVIDIA reference performance (from blogs, 8×H200)
+reference_perf:
+  min_latency:
+    config: "MTP-3, EP=4, batch=1"
+    isl: 1024
+    osl: 2048
+    tps_per_user: 158
+  max_throughput:
+    config: "EP=8, batch=128"
+    isl: 1024
+    osl: 2048
+    total_output_tps: 11489
+    per_gpu_tps: 1436
