@@ -8,7 +8,7 @@ End-to-end performance benchmarking skills for LLM inference, generated and vali
 
 | Platform | GPU | Memory | Quantization | Docker Image | Status |
 |----------|-----|--------|-------------|--------------|--------|
-| **B200** | 8x NVIDIA B200 | 192GB/GPU | FP4 + FP8 | `release:1.2.0rc4` | Active |
+| **B200** | 8x NVIDIA B200 | 192GB/GPU | FP4 + FP8 | `release:1.2.0rc4` / `rc6.post3` | Active |
 | **H200** | 8x NVIDIA H200 | 141GB/GPU | FP8 only | `release:1.2.0rc4` | Active |
 | **H20**  | 8x NVIDIA H20  | 96GB/GPU  | FP8 only | `release:1.2.0rc2` | Done |
 
@@ -20,8 +20,9 @@ End-to-end performance benchmarking skills for LLM inference, generated and vali
 | reasoning | 1024 | 8192 | Short-in Long-out |
 | summarize | 8192 | 1024 | Long-in Short-out |
 
-- **Concurrency sweep**: 1, 4, 8, 16, 32, 64, 128, 256
+- **Concurrency sweep**: 1, 4, 8, 16, 32, 64, 128, 256 (filterable via `--concurrency`)
 - **Output variation**: ±20% (random_range_ratio=0.8)
+- **Warmups**: 8 (SA default, overridable via `--num-warmups`)
 - **Metrics**: Output TPS, TTFT p50, TPOT p50, E2E latency p50
 
 ## Platform Configurations
@@ -35,7 +36,22 @@ End-to-end performance benchmarking skills for LLM inference, generated and vali
 | `fp8-throughput` | FP8 | No | Auto | TRTLLM/DEEPGEMM | Max throughput |
 | `fp8-latency` | FP8 | MTP-3/1 | Auto | TRTLLM/DEEPGEMM | Min latency |
 
-EP sizes: EP=1 (pure TP), EP=8 (pure EP with DP attention)
+EP sizes: EP=1 (pure TP), EP=8 (pure EP with DP attention). Filterable via `--ep-sizes`.
+
+### Quick Start: Single Data Point
+
+```bash
+# Reproduce SA B200 TRT FP8 c=256 EP=8 chat data point
+bash scripts/sa_bench_b200.sh \
+  --model-fp8 /path/to/DeepSeek-R1-FP8 \
+  --configs fp8-throughput \
+  --scenario chat \
+  --concurrency 256 \
+  --ep-sizes 8 \
+  --result-dir ./results_b200_fp8_repro
+```
+
+All filter flags: `--scenario` (chat/reasoning/summarize/all), `--concurrency` ("256" or "4 128 256"), `--ep-sizes` ("8" or "1 8"), `--num-warmups` (default: 8). See `bash scripts/sa_bench_b200.sh --help` for details.
 
 Auto-adaptive optimizations per scenario/concurrency:
 - Piecewise CUDA Graphs for high concurrency

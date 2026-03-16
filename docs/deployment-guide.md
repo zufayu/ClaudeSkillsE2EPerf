@@ -183,16 +183,50 @@ bash ~/ClaudeSkillsE2EPerf/scripts/sa_bench_b200.sh \
   --configs fp4-throughput \
   --ep-sizes "1"
 
-# FP4 only (both throughput and latency)
-bash ~/ClaudeSkillsE2EPerf/scripts/sa_bench_b200.sh \
-  --model-fp4 /data/models/DeepSeek-R1-NVFP4-v2 \
-  --configs all
-
 # FP8 latency only
 bash ~/ClaudeSkillsE2EPerf/scripts/sa_bench_b200.sh \
   --model-fp8 /data/models/DeepSeek-R1-FP8 \
   --configs fp8-latency
 ```
+
+#### Running a Single Benchmark Point
+
+Use `--scenario`, `--concurrency`, and `--ep-sizes` to run one specific configuration instead of sweeping all combinations. This is useful for reproducing a single SA data point or debugging.
+
+```bash
+# Reproduce SA B200 TRT FP8 c=256 EP=8 chat data point
+bash ~/ClaudeSkillsE2EPerf/scripts/sa_bench_b200.sh \
+  --model-fp8 /data/models/DeepSeek-R1-FP8 \
+  --configs fp8-throughput \
+  --scenario chat \
+  --concurrency 256 \
+  --ep-sizes 8 \
+  --result-dir ./results_b200_fp8_repro
+
+# Run chat + reasoning scenarios, c=4 and c=128 only, EP=1
+bash ~/ClaudeSkillsE2EPerf/scripts/sa_bench_b200.sh \
+  --model-fp4 /data/models/DeepSeek-R1-NVFP4-v2 \
+  --configs fp4-throughput \
+  --scenario chat \
+  --concurrency "4 128" \
+  --ep-sizes "1"
+
+# Override warmup count (default: 8, matching SA methodology)
+bash ~/ClaudeSkillsE2EPerf/scripts/sa_bench_b200.sh \
+  --model-fp8 /data/models/DeepSeek-R1-FP8 \
+  --configs fp8-throughput \
+  --scenario reasoning \
+  --concurrency 64 \
+  --ep-sizes 8 \
+  --num-warmups 16
+```
+
+| Filter Flag | Values | Default |
+|-------------|--------|---------|
+| `--scenario` | `chat`, `reasoning`, `summarize`, `all` | `all` |
+| `--concurrency` | Space-separated list, e.g. `"256"` or `"4 128 256"` | `1 4 8 16 32 64 128 256` |
+| `--ep-sizes` | Space-separated list, e.g. `"8"` or `"1 8"` | `"1 8"` |
+| `--num-warmups` | Integer | `8` (SA default) |
 
 ### H200
 
