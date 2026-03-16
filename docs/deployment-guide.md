@@ -18,9 +18,9 @@ Covers B200, H200, and H20. Pick the section that matches your hardware.
 - [Step 7: Run Benchmark](#step-7-run-benchmark)
 - [Step 8: View Results](#step-8-view-results)
 - [Step 9: Export Results](#step-9-export-results)
+- [Step 10: Generate Comparison Dashboard](#step-10-generate-comparison-dashboard)
 - [Time Estimates](#time-estimates)
 - [Troubleshooting](#troubleshooting)
-- [Platform-Specific Notes](#platform-specific-notes)
 
 ---
 
@@ -291,6 +291,79 @@ To stop and remove the container: `docker stop B200_bench`
 
 ---
 
+## Step 10: Generate Comparison Dashboard
+
+After benchmarks finish, import results into the unified dashboard to compare against competitors (e.g., ATOM MI355X).
+
+### Import Your Results
+
+```bash
+# B200 example
+python3 ~/ClaudeSkillsE2EPerf/scripts/import_results.py \
+  --results-dir ./results_b200 \
+  --platform "8×B200" \
+  --framework "TRT-LLM 1.2.0rc4" \
+  --quantization NVFP4
+
+# H200 example
+python3 ~/ClaudeSkillsE2EPerf/scripts/import_results.py \
+  --results-dir ./results_h200 \
+  --platform "8×H200" \
+  --framework "TRT-LLM 1.2.0rc4" \
+  --quantization FP8
+
+# H20 example
+python3 ~/ClaudeSkillsE2EPerf/scripts/import_results.py \
+  --results-dir ./results_sa_bench \
+  --platform "8×H20" \
+  --framework "TRT-LLM 1.2.0rc2" \
+  --quantization FP8
+```
+
+This creates a unified JSON file in `runs/` (e.g., `runs/8xb200-nvfp4-20260316.json`).
+
+### Fetch Competitor Data
+
+```bash
+python3 ~/ClaudeSkillsE2EPerf/scripts/fetch_competitors.py
+```
+
+This fetches the latest ATOM (ROCm MI355X) benchmark data from their public GitHub Pages dashboard and saves it to `runs/atom-*.json`.
+
+### Generate Dashboard
+
+```bash
+python3 ~/ClaudeSkillsE2EPerf/scripts/generate_dashboard.py
+```
+
+This merges all `runs/*.json` files into `dashboard/data.js`.
+
+### View Dashboard
+
+```bash
+cd ~/ClaudeSkillsE2EPerf/dashboard
+python3 -m http.server 8899
+# Open http://localhost:8899 in browser
+```
+
+Or deploy to GitHub Pages for team access.
+
+### Refresh Data After New Runs
+
+```bash
+# Re-import (overwrites previous run for same platform/date)
+python3 scripts/import_results.py --results-dir ./results_b200 \
+  --platform "8×B200" --framework "TRT-LLM 1.2.0rc4" --quantization NVFP4
+
+# Refresh competitor data
+python3 scripts/fetch_competitors.py
+
+# Regenerate dashboard
+python3 scripts/generate_dashboard.py
+```
+
+---
+
 ## Time Estimates
 
 | Platform | Scope | Approximate Time |
@@ -323,35 +396,6 @@ Most time is spent on server startup (~5-10 min per restart for 671B model). The
 | Only have FP4 model, no FP8 | Want to run on H200/H20 | H200/H20 require FP8; download the FP8 model |
 | Benchmark runs but 0 TPS | Server crashed mid-benchmark | Check `server_*.log`; reduce concurrency |
 
----
 
-## Platform-Specific Notes
 
-### B200
-
-- Supports both FP4 and FP8 quantization
-- Highest concurrency (up to 256)
-- Has the most complex adaptive optimization logic:
-  - Piecewise CUDA graphs for high concurrency
-  - Dynamic MOE backend selection (TRTLLM/CUTLASS/DEEPGEMM)
-  - Delay batching for FP8 throughput at high concurrency
-- EP=1 (pure Tensor Parallel) and EP=8 (pure Expert Parallel with DP attention)
-
-### H200
-
-- FP8 only (no FP4 model support)
-- Simpler config: MOE backend always CUTLASS, fixed CUDA graph batch size 128
-- KV cache fraction 0.75 (lower than B200's 0.80 due to less memory headroom)
-- EP=4 and EP=8 default sweep
-- Special handling: ISL=8192 + DP attention sets `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:8192`
-- Max concurrency 128
-
-### H20
-
-- FP8 only, smallest GPU memory (96GB/GPU)
-- Uses the older `trtllm-bench` approach (not `benchmark_serving.py`)
-- Max concurrency 64
-- KV cache fraction 0.80
-- EP=4 only
-- Docker image: `1.2.0rc2` (older than B200/H200)
-- No piecewise CUDA graphs, no delay batching, no adaptive MOE backend
+> For platform-specific technical details (configs, EP sizes, adaptive optimizations), see the [Platform Comparison table in README](../README.md#platform-comparison).
