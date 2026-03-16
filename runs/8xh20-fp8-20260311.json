@@ -1,0 +1,29 @@
+{
+  "run_id": "8xh20-fp8-20260311",
+  "platform": "8×H20",
+  "framework": "TRT-LLM 1.2.0rc2",
+  "model": "DeepSeek-R1-0528",
+  "quantization": "FP8",
+  "gpu_count": 8,
+  "source": "manual",
+  "date": "2026-03-11",
+  "note": "Legacy trtllm-bench run, ISL=17/OSL=128, not SA-standard scenario",
+  "results": [
+    {
+      "isl": 17,
+      "osl": 128,
+      "conc": 8,
+      "scenario": "legacy-short",
+      "config": "throughput",
+      "ep_size": 4,
+      "dp_attention": false,
+      "output_tps": 246.02,
+      "total_tps": 278.12,
+      "request_tps": 1.92,
+      "tpot_p50": 0,
+      "ttft_p50": 0,
+      "e2el_p50": 18072.05,
+      "e2el_mean": 16160.35
+    }
+  ]
+}

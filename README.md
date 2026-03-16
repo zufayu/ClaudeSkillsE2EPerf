@@ -144,6 +144,120 @@ bash /home/kqian/ClaudeSkillsE2EPerf/scripts/sa_bench_h20.sh \
 | Per GPU Throughput | 30.8 tokens/s/GPU |
 | Avg Latency | 16.2s |
 
+## Unified Comparison Dashboard
+
+Interactive dark-themed dashboard for cross-platform benchmark comparison. Compares our TRT-LLM results (B200/H200/H20) against competitor data (e.g., ATOM/ROCm MI355X) side-by-side.
+
+**Live dashboard**: Deploy via GitHub Pages or open `dashboard/index.html` locally.
+
+### Dashboard Features
+
+- **Throughput vs Latency** scatter plot (InferenceX-style, lower-right = better)
+- **Throughput** line chart by concurrency
+- **Latency** charts (TPOT p50, TTFT p50) by concurrency
+- **Data Table** with auto-calculated Delta% between platforms
+- Filters: Platform, ISL/OSL scenario, Concurrency
+
+### Data Pipeline
+
+```
+Benchmark scripts          Competitor CI
+(sa_bench_*.sh)            (ATOM gh-pages)
+       |                         |
+       v                         v
+  results_*/              fetch_competitors.py
+  result_*.json                  |
+       |                         |
+       v                         v
+  import_results.py --------> runs/*.json <---- unified format
+                                 |
+                                 v
+                        generate_dashboard.py
+                                 |
+                                 v
+                          dashboard/data.js
+                                 |
+                                 v
+                        dashboard/index.html
+```
+
+### Quick Start (Dashboard)
+
+```bash
+# 1. Import your benchmark results into unified format
+python3 scripts/import_results.py \
+  --results-dir ./results_b200 \
+  --platform "8×B200" \
+  --framework "TRT-LLM 1.2.0rc4" \
+  --quantization NVFP4
+
+# 2. Fetch latest competitor data (ATOM MI355X)
+python3 scripts/fetch_competitors.py
+
+# 3. Generate dashboard data
+python3 scripts/generate_dashboard.py
+
+# 4. Preview locally
+cd dashboard && python3 -m http.server 8899
+# Open http://localhost:8899 in browser
+```
+
+### Dashboard Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/import_results.py` | Convert `results_*/result_*.json` to unified run JSON in `runs/` |
+| `scripts/fetch_competitors.py` | Fetch ATOM's latest benchmark data from their GitHub Pages |
+| `scripts/generate_dashboard.py` | Merge all `runs/*.json` into `dashboard/data.js` |
+
+### Unified Run Format
+
+Each benchmark run (our own or competitor) is stored as a JSON file in `runs/`:
+
+```json
+{
+  "run_id": "8xb200-nvfp4-20260316",
+  "platform": "8×B200",
+  "framework": "TRT-LLM 1.2.0rc4",
+  "model": "DeepSeek-R1-0528",
+  "quantization": "NVFP4",
+  "gpu_count": 8,
+  "source": "manual",
+  "date": "2026-03-16",
+  "results": [
+    {"isl": 1024, "osl": 1024, "conc": 1, "output_tps": 114.58, "tpot_p50": 8.66, "ttft_p50": 62.55, ...},
+    {"isl": 1024, "osl": 1024, "conc": 4, "output_tps": 379.80, ...}
+  ]
+}
+```
+
+### Adding New Data Sources
+
+**Add your own results:**
+```bash
+python3 scripts/import_results.py \
+  --results-dir ./results_h200 \
+  --platform "8×H200" \
+  --framework "TRT-LLM 1.2.0rc4" \
+  --quantization FP8
+```
+
+**Add a new competitor:** Edit `scripts/fetch_competitors.py` to add a new fetcher function. The competitor's public benchmark data just needs to be converted to the unified run format above.
+
+**Refresh competitor data:**
+```bash
+python3 scripts/fetch_competitors.py   # overwrites runs/atom-*.json with latest
+python3 scripts/generate_dashboard.py  # regenerate dashboard
+```
+
+### Competitor Data Sources
+
+| Competitor | GPU | Source | Auto-fetch |
+|-----------|-----|--------|-----------|
+| [ATOM (ROCm)](https://rocm.github.io/ATOM/benchmark-dashboard/) | 8×MI355X | CI nightly, gh-pages `data.js` | `fetch_competitors.py` |
+
+---
+
 ## Architecture Notes
 
 DeepSeek R1 uses `DeepseekV3ForCausalLM` (`model_type: deepseek_v3`):
@@ -157,23 +271,33 @@ DeepSeek R1 uses `DeepseekV3ForCausalLM` (`model_type: deepseek_v3`):
 .
 ├── README.md
 ├── docs/
-│   └── deployment-guide.md    # Step-by-step fresh machine setup
+│   └── deployment-guide.md         # Step-by-step fresh machine setup
+├── dashboard/                      # Unified comparison dashboard
+│   ├── index.html                  # Dashboard page (dark theme, Chart.js)
+│   └── data.js                     # Generated data (do not edit manually)
+├── runs/                           # Unified benchmark run data
+│   ├── 8xb200-nvfp4-*.json        # Our B200 results
+│   ├── 8xh20-fp8-*.json           # Our H20 results
+│   └── atom-mi355x-*.json         # Competitor data (auto-fetched)
 ├── scripts/
-│   ├── sa_bench_b200.sh        # B200 benchmark suite (InferenceX-style)
-│   ├── sa_bench_h200.sh        # H200 benchmark suite (InferenceX-style)
-│   ├── sa_bench_h20.sh         # H20 benchmark suite
-│   ├── benchmark_lib.sh        # Shared utilities (server, GPU monitor, benchmark client)
-│   ├── launch_b200_docker.sh   # B200 Docker launcher
-│   ├── launch_h200_docker.sh   # H200 Docker launcher
-│   ├── gen_dataset.py          # Dataset generator
-│   ├── run_bench.sh            # Simple trtllm-bench runner
-│   └── serve.sh                # Model serving script
+│   ├── sa_bench_b200.sh            # B200 benchmark suite (InferenceX-style)
+│   ├── sa_bench_h200.sh            # H200 benchmark suite (InferenceX-style)
+│   ├── sa_bench_h20.sh             # H20 benchmark suite
+│   ├── benchmark_lib.sh            # Shared utilities (server, GPU monitor, benchmark client)
+│   ├── import_results.py           # Convert results_*/ → runs/*.json
+│   ├── fetch_competitors.py        # Fetch competitor data → runs/*.json
+│   ├── generate_dashboard.py       # Merge runs/ → dashboard/data.js
+│   ├── launch_b200_docker.sh       # B200 Docker launcher
+│   ├── launch_h200_docker.sh       # H200 Docker launcher
+│   ├── gen_dataset.py              # Dataset generator
+│   ├── run_bench.sh                # Simple trtllm-bench runner
+│   └── serve.sh                    # Model serving script
 ├── utils/
-│   └── bench_serving/          # benchmark_serving.py (from InferenceX)
+│   └── bench_serving/              # benchmark_serving.py (from InferenceX)
 ├── configs/
-│   ├── bench_config.yaml       # H20 config
-│   ├── bench_config_b200.yaml  # B200 config
-│   └── bench_config_h200.yaml  # H200 config
+│   ├── bench_config.yaml           # H20 config
+│   ├── bench_config_b200.yaml      # B200 config
+│   └── bench_config_h200.yaml      # H200 config
 └── results/
     └── deepseek_r1_8xh20_fp8_pytorch.json
 ```
