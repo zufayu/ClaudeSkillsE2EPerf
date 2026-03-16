@@ -146,7 +146,7 @@ compute_adaptive_params() {
             fi
             # Piecewise CUDA graphs for EP=8 + 1k/1k
             if [[ "$isl" == "1024" && "$osl" == "1024" ]]; then
-                if [[ "$tp" == "8" && "$ep_size" == "8" ]]; then
+                if [[ "$TP" == "8" && "$ep_size" == "8" ]]; then
                     PIECEWISE_CUDA_GRAPHS="true"
                 fi
             fi
