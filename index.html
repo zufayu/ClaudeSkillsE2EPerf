@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ClaudeSkillsE2EPerf - Unified Benchmark Dashboard</title>
+<style>
+:root {
+  --bg-primary:#0b0c10;--bg-secondary:#141519;--bg-tertiary:#1c1d24;
+  --border:#303140;--border-light:#262733;
+  --text-primary:#eef0f6;--text-secondary:#bfc1d0;--text-tertiary:#7e8094;
+  --accent-blue:#5b9cf5;--accent-green:#56d472;--accent-red:#f25c4e;
+  --accent-orange:#eda06a;--accent-purple:#c49af5;--accent-yellow:#ddb040;
+  --accent-cyan:#4ec9d4;--accent-pink:#d86ecc;
+  --gap-sm:8px;--gap-md:16px;--gap-lg:24px;--radius:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg-primary);color:var(--text-secondary)}
+.container{max-width:1440px;margin:0 auto;padding:var(--gap-lg)}
+code{font-family:"SF Mono","Fira Code",Consolas,monospace;font-size:12px;background:var(--bg-tertiary);padding:2px 6px;border-radius:4px}
+
+/* Header */
+header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--gap-md);padding:var(--gap-md) var(--gap-lg);border-bottom:2px solid var(--accent-blue);margin:0 calc(-1*var(--gap-lg));margin-bottom:var(--gap-lg);position:sticky;top:0;z-index:50;background:var(--bg-primary)}
+h1{font-size:20px;color:var(--text-primary);font-weight:600}
+h1 .sep{color:var(--text-tertiary);font-weight:300;margin:0 4px}
+h1 .sub{color:var(--text-secondary);font-weight:400;font-size:14px}
+
+/* Filter bar */
+.filter-bar{display:flex;gap:var(--gap-sm);flex-wrap:wrap;align-items:center}
+.filter-group{position:relative}
+.filter-btn{background:var(--bg-secondary);color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;white-space:nowrap}
+.filter-btn:hover,.filter-btn.open{background:var(--bg-tertiary);color:var(--text-primary)}
+.filter-btn .count{background:var(--accent-blue);color:#fff;border-radius:10px;padding:1px 6px;margin-left:4px;font-size:10px}
+.filter-dropdown{display:none;position:absolute;top:100%;left:0;margin-top:4px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:8px 0;min-width:220px;max-height:300px;overflow-y:auto;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.filter-dropdown.open{display:block}
+.filter-dropdown label{display:flex;align-items:center;gap:8px;padding:4px 12px;font-size:12px;cursor:pointer;color:var(--text-secondary)}
+.filter-dropdown label:hover{background:var(--bg-tertiary)}
+.filter-dropdown input[type="checkbox"]{accent-color:var(--accent-blue)}
+.filter-reset{background:none;color:var(--text-tertiary);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer}
+.filter-reset:hover{color:var(--text-secondary);background:var(--bg-tertiary)}
+
+/* KPI cards */
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--gap-md);margin-bottom:var(--gap-lg)}
+.kpi-card{background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:var(--gap-md)}
+.kpi-card .kpi-label{font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.kpi-card .kpi-value{font-size:26px;font-weight:700;color:var(--text-primary);font-family:"SF Mono","Fira Code",monospace}
+.kpi-card .kpi-unit{font-size:13px;color:var(--text-tertiary);font-weight:400}
+.kpi-card .kpi-sub{font-size:11px;color:var(--text-tertiary);margin-top:4px}
+
+/* Tabs */
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:var(--gap-lg)}
+.tab{padding:8px 16px;font-size:13px;color:var(--text-tertiary);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;user-select:none}
+.tab:hover{color:var(--text-secondary)}
+.tab.active{color:var(--text-primary);border-bottom-color:var(--accent-blue)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+
+/* Charts */
+.chart-grid{display:grid;grid-template-columns:1fr;gap:var(--gap-lg)}
+.chart-card{background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:var(--gap-md)}
+.chart-card h3{font-size:13px;color:var(--text-tertiary);margin-bottom:var(--gap-sm);font-weight:500}
+.chart-card .chart-wrap{position:relative;width:100%;height:420px}
+.chart-card.half .chart-wrap{height:320px}
+@media(min-width:1024px){.chart-grid{grid-template-columns:repeat(2,1fr)}.chart-card.hero{grid-column:1/-1}}
+
+/* Tables */
+.table-wrap{overflow-x:auto}
+table.perf{width:100%;border-collapse:collapse;font-size:12px}
+table.perf th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--border);color:var(--text-tertiary);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;position:sticky;top:0;background:var(--bg-secondary)}
+table.perf th.num{text-align:right}
+table.perf td{padding:7px 10px;border-bottom:1px solid var(--border-light)}
+table.perf td.num{text-align:right;font-family:"SF Mono","Fira Code",monospace;font-size:12px}
+table.perf tbody tr:nth-child(even){background:rgba(22,27,34,.5)}
+table.perf tbody tr:hover{background:var(--bg-tertiary)}
+.delta-pos{color:var(--accent-green);font-weight:600}
+.delta-neg{color:var(--accent-red);font-weight:600}
+.delta-neutral{color:var(--text-tertiary)}
+
+/* Metadata badges */
+.badge{font-size:10px;padding:2px 8px;border-radius:10px;background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border);margin-right:4px}
+.badge.manual{border-color:var(--accent-orange);color:var(--accent-orange)}
+.badge.ci{border-color:var(--accent-green);color:var(--accent-green)}
+
+/* Footer */
+footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--text-tertiary);display:flex;justify-content:space-between;flex-wrap:wrap;gap:var(--gap-sm)}
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <div>
+    <h1>ClaudeSkillsE2EPerf<span class="sep">|</span><span class="sub">Unified Benchmark Dashboard</span></h1>
+    <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px" id="meta-line">Loading...</div>
+  </div>
+  <div class="filter-bar" id="filter-bar"></div>
+</header>
+
+<!-- KPI row -->
+<div class="kpi-row" id="kpi-row"></div>
+
+<!-- Tabs -->
+<div class="tabs" id="tabs">
+  <div class="tab active" data-tab="scatter">Throughput vs Latency</div>
+  <div class="tab" data-tab="throughput">Throughput</div>
+  <div class="tab" data-tab="latency">Latency</div>
+  <div class="tab" data-tab="data">Data Table</div>
+</div>
+
+<!-- Tab: Scatter -->
+<div class="tab-content active" id="tab-scatter">
+  <div class="chart-grid">
+    <div class="chart-card hero"><h3>Output Throughput vs TPOT (lower-right = better)</h3><div class="chart-wrap"><canvas id="chart-scatter"></canvas></div></div>
+  </div>
+</div>
+
+<!-- Tab: Throughput -->
+<div class="tab-content" id="tab-throughput">
+  <div class="chart-grid">
+    <div class="chart-card hero"><h3>Output Throughput by Concurrency</h3><div class="chart-wrap"><canvas id="chart-tput"></canvas></div></div>
+  </div>
+</div>
+
+<!-- Tab: Latency -->
+<div class="tab-content" id="tab-latency">
+  <div class="chart-grid">
+    <div class="chart-card half"><h3>TPOT p50 by Concurrency</h3><div class="chart-wrap"><canvas id="chart-tpot"></canvas></div></div>
+    <div class="chart-card half"><h3>TTFT p50 by Concurrency</h3><div class="chart-wrap"><canvas id="chart-ttft"></canvas></div></div>
+  </div>
+</div>
+
+<!-- Tab: Data Table -->
+<div class="tab-content" id="tab-data">
+  <div class="table-wrap"><table class="perf" id="data-table"><thead></thead><tbody></tbody></table></div>
+</div>
+
+<footer>
+  <span id="footer-info">ClaudeSkillsE2EPerf Benchmark Dashboard</span>
+  <span id="footer-gen"></span>
+</footer>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="data.js"></script>
+<script>
+'use strict';
+(function(){
+
+/* ================================================================
+   1. COLOR PALETTE
+   ================================================================ */
+const PALETTE = [
+  {border:'#5b9cf5',bg:'rgba(91,156,245,0.15)'},   // blue
+  {border:'#f25c4e',bg:'rgba(242,92,78,0.15)'},     // red
+  {border:'#56d472',bg:'rgba(86,212,114,0.15)'},     // green
+  {border:'#eda06a',bg:'rgba(237,160,106,0.15)'},    // orange
+  {border:'#c49af5',bg:'rgba(196,154,245,0.15)'},    // purple
+  {border:'#4ec9d4',bg:'rgba(78,201,212,0.15)'},     // cyan
+  {border:'#d86ecc',bg:'rgba(216,110,204,0.15)'},    // pink
+  {border:'#ddb040',bg:'rgba(221,176,64,0.15)'},     // yellow
+];
+const colorMap = {};
+let colorIdx = 0;
+function getColor(key) {
+  if (!colorMap[key]) { colorMap[key] = PALETTE[colorIdx % PALETTE.length]; colorIdx++; }
+  return colorMap[key];
+}
+
+/* ================================================================
+   2. DATA PARSING
+   ================================================================ */
+const rawData = window.DASHBOARD_DATA;
+const runs = rawData.runs || [];
+
+// Build lookup structures
+const allSeries = [...new Set(runs.map(r => r.series_key))];
+const allScenarios = rawData.filters?.scenarios || [];
+const allConcs = rawData.filters?.concurrencies || [];
+const allPlatforms = rawData.filters?.platforms || [];
+
+/* ================================================================
+   3. STATE & FILTERS
+   ================================================================ */
+// Default: only show SA-standard scenarios and DeepSeek runs (exclude GLM-5 and non-standard ISL/OSL)
+const standardScenarios = allScenarios.filter(s => ['1024/1024','1024/8192','8192/1024'].includes(s));
+const defaultSeries = allSeries.filter(s => !s.includes('GLM'));
+const state = {
+  scenarios: new Set(standardScenarios.length ? standardScenarios : allScenarios),
+  series: new Set(defaultSeries.length ? defaultSeries : allSeries),
+  concs: new Set(allConcs.map(String)),
+};
+
+function getFiltered() {
+  const out = [];
+  for (const run of runs) {
+    if (!state.series.has(run.series_key)) continue;
+    for (const r of run.results) {
+      const sKey = `${r.isl}/${r.osl}`;
+      if (!state.scenarios.has(sKey)) continue;
+      if (!state.concs.has(String(r.conc))) continue;
+      out.push({...r, series_key: run.series_key, platform: run.platform, date: run.date, source: run.source});
+    }
+  }
+  return out;
+}
+
+/* ================================================================
+   4. FILTER BAR
+   ================================================================ */
+function buildFilters() {
+  const bar = document.getElementById('filter-bar');
+  bar.innerHTML = '';
+
+  const defs = [
+    {id:'series', label:'Platform', options: allSeries, stateKey:'series'},
+    {id:'scenario', label:'ISL/OSL', options: allScenarios, stateKey:'scenarios'},
+    {id:'conc', label:'Concurrency', options: allConcs.map(String), stateKey:'concs'},
+  ];
+
+  for (const def of defs) {
+    const group = document.createElement('div');
+    group.className = 'filter-group';
+    const btn = document.createElement('button');
+    btn.className = 'filter-btn';
+    btn.innerHTML = `${def.label} <span class="count">${state[def.stateKey].size}</span>`;
+    const dd = document.createElement('div');
+    dd.className = 'filter-dropdown';
+
+    for (const opt of def.options) {
+      const lbl = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = state[def.stateKey].has(opt);
+      cb.addEventListener('change', () => {
+        if (cb.checked) state[def.stateKey].add(opt); else state[def.stateKey].delete(opt);
+        btn.querySelector('.count').textContent = state[def.stateKey].size;
+        refresh();
+      });
+      lbl.appendChild(cb);
+      lbl.appendChild(document.createTextNode(' ' + opt));
+      dd.appendChild(lbl);
+    }
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.filter-dropdown.open').forEach(d => { if (d !== dd) d.classList.remove('open'); });
+      dd.classList.toggle('open');
+      btn.classList.toggle('open');
+    });
+
+    group.appendChild(btn);
+    group.appendChild(dd);
+    bar.appendChild(group);
+  }
+
+  // Reset button
+  const resetBtn = document.createElement('button');
+  resetBtn.className = 'filter-reset';
+  resetBtn.textContent = 'Reset';
+  resetBtn.addEventListener('click', () => {
+    state.scenarios = new Set(allScenarios);
+    state.series = new Set(allSeries);
+    state.concs = new Set(allConcs.map(String));
+    buildFilters();
+    refresh();
+  });
+  bar.appendChild(resetBtn);
+
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.filter-dropdown.open').forEach(d => d.classList.remove('open'));
+    document.querySelectorAll('.filter-btn.open').forEach(b => b.classList.remove('open'));
+  });
+}
+
+/* ================================================================
+   5. KPI CARDS
+   ================================================================ */
+function updateKPIs(data) {
+  const row = document.getElementById('kpi-row');
+  const seriesKeys = [...new Set(data.map(d => d.series_key))];
+  // Find max throughput per series
+  const maxTput = {};
+  const bestTpot = {};
+  for (const d of data) {
+    if (!maxTput[d.series_key] || d.output_tps > maxTput[d.series_key]) maxTput[d.series_key] = d.output_tps;
+    if (!bestTpot[d.series_key] || d.tpot_p50 < bestTpot[d.series_key]) bestTpot[d.series_key] = d.tpot_p50;
+  }
+
+  row.innerHTML = '';
+  for (const sk of seriesKeys) {
+    const card = document.createElement('div');
+    card.className = 'kpi-card';
+    const run = runs.find(r => r.series_key === sk);
+    const sourceBadge = run?.source === 'ci-nightly' ? '<span class="badge ci">CI</span>' : '<span class="badge manual">Manual</span>';
+    card.innerHTML = `
+      <div class="kpi-label">${sk}</div>
+      <div class="kpi-value">${(maxTput[sk]||0).toFixed(0)} <span class="kpi-unit">tok/s</span></div>
+      <div class="kpi-sub">Peak Output TPS | Best TPOT: ${(bestTpot[sk]||0).toFixed(1)}ms</div>
+      <div class="kpi-sub">${sourceBadge} ${run?.date || ''}</div>
+    `;
+    row.appendChild(card);
+  }
+}
+
+/* ================================================================
+   6. CHARTS
+   ================================================================ */
+const charts = {};
+
+function destroyChart(id) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+
+function buildScatter(data) {
+  destroyChart('scatter');
+  const canvas = document.getElementById('chart-scatter');
+  const grouped = {};
+  for (const d of data) {
+    if (!grouped[d.series_key]) grouped[d.series_key] = [];
+    grouped[d.series_key].push({x: d.tpot_p50, y: d.output_tps, conc: d.conc, scenario: `${d.isl}/${d.osl}`});
+  }
+  const datasets = [];
+  for (const [key, points] of Object.entries(grouped)) {
+    const c = getColor(key);
+    datasets.push({
+      label: key, data: points, borderColor: c.border, backgroundColor: c.border,
+      pointRadius: 6, pointHoverRadius: 9, showLine: false,
+    });
+  }
+  charts['scatter'] = new Chart(canvas, {
+    type:'scatter',
+    data:{datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      scales:{
+        x:{title:{display:true,text:'TPOT p50 (ms)',color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
+        y:{title:{display:true,text:'Output Throughput (tok/s)',color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
+      },
+      plugins:{
+        tooltip:{
+          callbacks:{
+            label: ctx => {
+              const p = ctx.raw;
+              return `${ctx.dataset.label}: ${p.y.toFixed(0)} tok/s, TPOT=${p.x.toFixed(1)}ms (c=${p.conc}, ${p.scenario})`;
+            }
+          }
+        },
+        legend:{labels:{color:'#bfc1d0',usePointStyle:true,pointStyle:'circle'}}
+      }
+    }
+  });
+}
+
+function buildLineChart(canvasId, chartKey, data, yField, yLabel) {
+  destroyChart(chartKey);
+  const canvas = document.getElementById(canvasId);
+  const grouped = {};
+  for (const d of data) {
+    const sk = d.series_key + ' ' + d.isl + '/' + d.osl;
+    if (!grouped[sk]) grouped[sk] = {series: d.series_key, points: []};
+    grouped[sk].points.push({x: d.conc, y: d[yField]});
+  }
+  const datasets = [];
+  for (const [key, g] of Object.entries(grouped)) {
+    g.points.sort((a,b) => a.x - b.x);
+    const c = getColor(g.series);
+    datasets.push({
+      label: key, data: g.points, borderColor: c.border, backgroundColor: c.bg,
+      borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, fill: false, tension: 0.1,
+    });
+  }
+  charts[chartKey] = new Chart(canvas, {
+    type:'line',
+    data:{datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      scales:{
+        x:{type:'logarithmic',title:{display:true,text:'Concurrency',color:'#7e8094'},ticks:{color:'#7e8094',callback:v=>v},grid:{color:'#262733'}},
+        y:{title:{display:true,text:yLabel,color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
+      },
+      plugins:{
+        tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} (c=${ctx.parsed.x})`}},
+        legend:{labels:{color:'#bfc1d0',usePointStyle:true,pointStyle:'circle'}}
+      }
+    }
+  });
+}
+
+/* ================================================================
+   7. DATA TABLE
+   ================================================================ */
+function buildTable(data) {
+  const table = document.getElementById('data-table');
+  const thead = table.querySelector('thead');
+  const tbody = table.querySelector('tbody');
+
+  const seriesKeys = [...new Set(data.map(d => d.series_key))];
+
+  // Group by scenario+conc, then compare across series
+  const groups = {};
+  for (const d of data) {
+    const gk = `${d.isl}/${d.osl}|${d.conc}`;
+    if (!groups[gk]) groups[gk] = {isl:d.isl, osl:d.osl, conc:d.conc, scenario: d.scenario || `${d.isl}/${d.osl}`, byPlatform:{}};
+    groups[gk].byPlatform[d.series_key] = d;
+  }
+
+  // Header
+  let hdr = '<tr><th>Scenario</th><th>ISL/OSL</th><th class="num">Conc</th>';
+  for (const sk of seriesKeys) {
+    const c = getColor(sk);
+    hdr += `<th class="num" style="color:${c.border}">TPS<br><small>${sk}</small></th>`;
+    hdr += `<th class="num" style="color:${c.border}">TPOT<br><small>(ms)</small></th>`;
+    hdr += `<th class="num" style="color:${c.border}">TTFT<br><small>(ms)</small></th>`;
+  }
+  if (seriesKeys.length === 2) {
+    hdr += '<th class="num">TPS Delta</th><th class="num">TPOT Delta</th>';
+  }
+  hdr += '</tr>';
+  thead.innerHTML = hdr;
+
+  // Rows
+  const sortedKeys = Object.keys(groups).sort((a,b) => {
+    const ga = groups[a], gb = groups[b];
+    if (ga.isl !== gb.isl) return ga.isl - gb.isl;
+    if (ga.osl !== gb.osl) return ga.osl - gb.osl;
+    return ga.conc - gb.conc;
+  });
+
+  let rows = '';
+  for (const gk of sortedKeys) {
+    const g = groups[gk];
+    rows += `<tr><td>${g.scenario}</td><td>${g.isl}/${g.osl}</td><td class="num">${g.conc}</td>`;
+    const vals = {};
+    for (const sk of seriesKeys) {
+      const d = g.byPlatform[sk];
+      if (d) {
+        rows += `<td class="num">${d.output_tps.toFixed(1)}</td>`;
+        rows += `<td class="num">${d.tpot_p50.toFixed(1)}</td>`;
+        rows += `<td class="num">${(d.ttft_p50||0).toFixed(0)}</td>`;
+        vals[sk] = d;
+      } else {
+        rows += '<td class="num">-</td><td class="num">-</td><td class="num">-</td>';
+      }
+    }
+    // Delta columns when exactly 2 series
+    if (seriesKeys.length === 2) {
+      const a = vals[seriesKeys[0]], b = vals[seriesKeys[1]];
+      if (a && b && b.output_tps > 0) {
+        const tpsDelta = ((a.output_tps - b.output_tps) / b.output_tps * 100);
+        const tpsCls = tpsDelta > 0 ? 'delta-pos' : tpsDelta < 0 ? 'delta-neg' : 'delta-neutral';
+        rows += `<td class="num ${tpsCls}">${tpsDelta > 0 ? '+' : ''}${tpsDelta.toFixed(1)}%</td>`;
+        // TPOT: lower is better, so negative delta = good for first series
+        const tpotDelta = ((a.tpot_p50 - b.tpot_p50) / b.tpot_p50 * 100);
+        const tpotCls = tpotDelta < 0 ? 'delta-pos' : tpotDelta > 0 ? 'delta-neg' : 'delta-neutral';
+        rows += `<td class="num ${tpotCls}">${tpotDelta > 0 ? '+' : ''}${tpotDelta.toFixed(1)}%</td>`;
+      } else {
+        rows += '<td class="num">-</td><td class="num">-</td>';
+      }
+    }
+    rows += '</tr>';
+  }
+  tbody.innerHTML = rows;
+}
+
+/* ================================================================
+   8. TABS
+   ================================================================ */
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    refresh();
+  });
+});
+
+/* ================================================================
+   9. REFRESH
+   ================================================================ */
+function refresh() {
+  const data = getFiltered();
+  updateKPIs(data);
+
+  const activeTab = document.querySelector('.tab.active')?.dataset.tab;
+  if (activeTab === 'scatter') buildScatter(data);
+  else if (activeTab === 'throughput') buildLineChart('chart-tput', 'tput', data, 'output_tps', 'Output Throughput (tok/s)');
+  else if (activeTab === 'latency') {
+    buildLineChart('chart-tpot', 'tpot', data, 'tpot_p50', 'TPOT p50 (ms)');
+    buildLineChart('chart-ttft', 'ttft', data, 'ttft_p50', 'TTFT p50 (ms)');
+  }
+  else if (activeTab === 'data') buildTable(data);
+}
+
+/* ================================================================
+   10. META & INIT
+   ================================================================ */
+function init() {
+  // Meta line
+  const metaLine = document.getElementById('meta-line');
+  const runInfo = runs.map(r => {
+    const src = r.source === 'ci-nightly' ? 'CI' : 'Manual';
+    return `${r.platform} ${r.quantization} (${src}, ${r.date})`;
+  }).join(' | ');
+  metaLine.textContent = runInfo || 'No data loaded';
+
+  const footerGen = document.getElementById('footer-gen');
+  footerGen.textContent = `Generated: ${rawData.generated_at || 'unknown'}`;
+
+  buildFilters();
+  refresh();
+}
+
+init();
+
+})();
+</script>
+</body>
+</html>
