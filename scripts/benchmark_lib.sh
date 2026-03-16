@@ -184,6 +184,7 @@ run_benchmark_serving() {
     local result_filename="" result_dir=""
     local workspace_dir=""
     local use_chat_template=false
+    local num_warmups=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -195,6 +196,7 @@ run_benchmark_serving() {
             --random-range-ratio) random_range_ratio="$2"; shift 2 ;;
             --num-prompts)        num_prompts="$2"; shift 2 ;;
             --max-concurrency)    max_concurrency="$2"; shift 2 ;;
+            --num-warmups)        num_warmups="$2"; shift 2 ;;
             --result-filename)    result_filename="$2"; shift 2 ;;
             --result-dir)         result_dir="$2"; shift 2 ;;
             --bench-serving-dir)  workspace_dir="$2"; shift 2 ;;
@@ -265,7 +267,7 @@ run_benchmark_serving() {
         --request-rate inf
         --ignore-eos
         --save-result
-        --num-warmups "$((2 * max_concurrency))"
+        --num-warmups "${num_warmups:-8}"
         --percentile-metrics 'ttft,tpot,itl,e2el'
         --result-dir "$result_dir"
         --result-filename "${result_filename}.json"

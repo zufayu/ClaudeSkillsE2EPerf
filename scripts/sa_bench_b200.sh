@@ -15,10 +15,16 @@
 #   all              Run all configs
 #
 # Usage:
+#   # Run everything (original behavior):
+#   bash sa_bench_b200.sh --model-fp4 /data/model [--configs all]
+#
+#   # Run ONE specific point (reproduce SA result):
 #   bash sa_bench_b200.sh \
-#     --model-fp4 /data/DeepSeek-R1-0528-NVFP4-v2 \
-#     --model-fp8 /data/DeepSeek-R1-FP8 \
-#     [--configs all] [--port 8888] [--ep-sizes "1 8"]
+#     --model-fp4 /data/model \
+#     --configs fp4-throughput \
+#     --scenario chat \
+#     --concurrency 256 \
+#     --ep-sizes "8"
 #
 # Prerequisites:
 #   - 8× NVIDIA B200 GPUs
@@ -42,6 +48,9 @@ RANDOM_RANGE_RATIO=0.8
 EP_SIZES="1 8"
 BENCH_SERVING_DIR=""
 TP=8
+SCENARIO_FILTER="all"        # all | chat | reasoning | summarize
+CONC_FILTER=""               # empty = use default sweep; "256" or "4 128 256" = specific values
+NUM_WARMUPS=""                # empty = auto (SA default: 8); or explicit number
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -53,6 +62,9 @@ while [[ $# -gt 0 ]]; do
         --ep-sizes)         EP_SIZES="$2"; shift 2 ;;
         --bench-serving-dir) BENCH_SERVING_DIR="$2"; shift 2 ;;
         --tp)               TP="$2"; shift 2 ;;
+        --scenario)         SCENARIO_FILTER="$2"; shift 2 ;;
+        --concurrency)      CONC_FILTER="$2"; shift 2 ;;
+        --num-warmups)      NUM_WARMUPS="$2"; shift 2 ;;
         -h|--help)
             echo "Usage: bash sa_bench_b200.sh --model-fp4 <path> --model-fp8 <path> [options]"
             echo ""
@@ -65,6 +77,20 @@ while [[ $# -gt 0 ]]; do
             echo "  --ep-sizes \"1 8\"        EP sizes to sweep (default: \"1 8\")"
             echo "  --bench-serving-dir DIR Directory containing benchmark_serving.py"
             echo "  --tp N                  Tensor parallelism (default: 8)"
+            echo ""
+            echo "Filtering (run a subset):"
+            echo "  --scenario SCENARIO     chat|reasoning|summarize|all (default: all)"
+            echo "  --concurrency \"C1 C2\"   Concurrency values to run (default: sweep 1 4 8 16 32 64 128 256)"
+            echo "  --num-warmups N         Number of warmup requests (default: 8, matching SA)"
+            echo ""
+            echo "Examples:"
+            echo "  # Reproduce SA B200 TRT FP4 c=256 EP=8 chat point:"
+            echo "  bash sa_bench_b200.sh --model-fp4 /data/model \\"
+            echo "    --configs fp4-throughput --scenario chat --concurrency 256 --ep-sizes 8"
+            echo ""
+            echo "  # Run only chat scenario with c=4 and c=128:"
+            echo "  bash sa_bench_b200.sh --model-fp4 /data/model \\"
+            echo "    --configs fp4-throughput --scenario chat --concurrency \"4 128\""
             exit 0
             ;;
         *)  echo "Unknown arg: $1"; exit 1 ;;
@@ -102,14 +128,32 @@ mkdir -p "$RESULT_DIR"
 
 # ======================== ISL/OSL Test Matrix =================================
 # SemiAnalysis tests: chat(1k/1k), reasoning(1k/8k), summarize(8k/1k)
-declare -a SCENARIOS=(
+declare -a ALL_SCENARIOS=(
     "1024:1024:chat"
     "1024:8192:reasoning"
     "8192:1024:summarize"
 )
 
+# Apply --scenario filter
+declare -a SCENARIOS=()
+for s in "${ALL_SCENARIOS[@]}"; do
+    IFS=':' read -r _isl _osl _tag <<< "$s"
+    if [[ "$SCENARIO_FILTER" == "all" || "$SCENARIO_FILTER" == "$_tag" ]]; then
+        SCENARIOS+=("$s")
+    fi
+done
+if [[ ${#SCENARIOS[@]} -eq 0 ]]; then
+    echo "ERROR: --scenario '$SCENARIO_FILTER' matched nothing. Use: chat|reasoning|summarize|all"
+    exit 1
+fi
+
 # ======================== Concurrency Sweep ===================================
-declare -a CONC_SWEEP=(1 4 8 16 32 64 128 256)
+if [[ -n "$CONC_FILTER" ]]; then
+    # User specified exact concurrency values
+    declare -a CONC_SWEEP=($CONC_FILTER)
+else
+    declare -a CONC_SWEEP=(1 4 8 16 32 64 128 256)
+fi
 
 # ======================== Utility =============================================
 TS() { date '+%Y-%m-%d %H:%M:%S'; }
@@ -364,6 +408,9 @@ EOF
         local num_prompts=$(( conc * 10 ))
         [[ $num_prompts -lt 20 ]] && num_prompts=20
 
+        # SA uses 8 warmups by default, not 2*concurrency
+        local warmups="${NUM_WARMUPS:-8}"
+
         local bench_args=(
             --model "$model"
             --port "$PORT"
@@ -373,6 +420,7 @@ EOF
             --random-range-ratio "$RANDOM_RANGE_RATIO"
             --num-prompts "$num_prompts"
             --max-concurrency "$conc"
+            --num-warmups "$warmups"
             --result-filename "$result_filename"
             --result-dir "$RESULT_DIR"
         )
@@ -501,8 +549,9 @@ log "  Port:        $PORT"
 log "  Result Dir:  $RESULT_DIR"
 log "  TP:          $TP"
 log "  EP Sizes:    $EP_SIZES"
-log "  Scenarios:   ${SCENARIOS[*]}"
+log "  Scenario:    $SCENARIO_FILTER -> ${SCENARIOS[*]}"
 log "  Concurrency: ${CONC_SWEEP[*]}"
+log "  Warmups:     ${NUM_WARMUPS:-8}"
 log "  Range Ratio: $RANDOM_RANGE_RATIO"
 log "============================================================"
 echo ""
