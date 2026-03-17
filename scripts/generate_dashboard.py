@@ -34,12 +34,19 @@ def build_series_key(run):
 
     Same platform+model+quantization from different sources (ci-nightly vs manual)
     should produce the same series_key so they merge into one series.
+
+    If env_tag is present, it's appended to differentiate environments
+    (e.g. different Docker images, branches, or run dates on the same platform).
     """
     platform = run.get("platform", "unknown")
     model = run.get("model", "")
     quant = run.get("quantization", "")
     framework_short = run.get("framework", "").split(" ")[0]
-    return f"{platform} {model} {quant} ({framework_short})"
+    env_tag = run.get("env_tag", "")
+    base = f"{platform} {model} {quant} ({framework_short})"
+    if env_tag:
+        base += f" [{env_tag}]"
+    return base
 
 
 def deduplicate_runs(runs):
@@ -141,6 +148,7 @@ def generate_data_js(runs):
             "date": run.get("date", ""),
             "commit": run.get("commit", ""),
             "commit_url": run.get("commit_url", ""),
+            "env_tag": run.get("env_tag", ""),
             "results": results,
         }
 

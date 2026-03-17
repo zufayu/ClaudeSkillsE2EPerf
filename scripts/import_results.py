@@ -6,16 +6,22 @@ Usage:
         --results-dir ./results_b200 \
         --platform "8×B200" \
         --framework "TRT-LLM 1.2.0rc4" \
-        --quantization NVFP4 \
-        --tag "fp4-throughput" \
-        --output runs/b200-fp4-trtllm-20260316.json
-
-    # Auto-detect tag and date from filenames:
-    python scripts/import_results.py \
-        --results-dir ./results_b200 \
-        --platform "8×B200" \
-        --framework "TRT-LLM 1.2.0rc4" \
         --quantization NVFP4
+
+    # Compare same platform under different environments:
+    python scripts/import_results.py \
+        --results-dir ./results_b200_docker_a \
+        --platform "8×B200" --framework "TRT-LLM" --quantization FP8 \
+        --env-tag "docker-v1"
+
+    python scripts/import_results.py \
+        --results-dir ./results_b200_docker_b \
+        --platform "8×B200" --framework "TRT-LLM" --quantization FP8 \
+        --env-tag "docker-v2"
+
+    # This produces two series in the dashboard:
+    #   8×B200 DeepSeek-R1-0528 FP8 (TRT-LLM) [docker-v1]
+    #   8×B200 DeepSeek-R1-0528 FP8 (TRT-LLM) [docker-v2]
 """
 
 import argparse
@@ -107,6 +113,10 @@ def main():
     parser.add_argument("--model", default="DeepSeek-R1-0528", help="Model name")
     parser.add_argument("--gpu-count", type=int, default=8, help="Number of GPUs")
     parser.add_argument("--tag", default=None, help="Optional config tag filter (e.g. fp4-throughput)")
+    parser.add_argument("--env-tag", default=None,
+                        help='Environment tag to distinguish runs on the same platform '
+                             '(e.g. "docker-v2", "nightly-0318", "branch-fix-kv"). '
+                             'Appears in series_key for side-by-side comparison.')
     parser.add_argument("--output", default=None, help="Output JSON path (auto-generated if not set)")
     parser.add_argument("--source", default="manual", help='Data source: "manual" or "ci"')
     args = parser.parse_args()
@@ -155,7 +165,8 @@ def main():
     # Build run ID
     platform_short = args.platform.replace("×", "x").replace(" ", "").lower()
     quant_short = args.quantization.lower()
-    run_id = f"{platform_short}-{quant_short}-{run_date}"
+    env_suffix = f"-{args.env_tag}" if args.env_tag else ""
+    run_id = f"{platform_short}-{quant_short}-{run_date}{env_suffix}"
 
     run = {
         "run_id": run_id,
@@ -168,6 +179,8 @@ def main():
         "date": iso_date,
         "results": results,
     }
+    if args.env_tag:
+        run["env_tag"] = args.env_tag
 
     # Output path
     if args.output:
@@ -184,6 +197,8 @@ def main():
     print(f"  Framework:    {args.framework}")
     print(f"  Quantization: {args.quantization}")
     print(f"  Date:         {iso_date}")
+    if args.env_tag:
+        print(f"  Env Tag:      {args.env_tag}")
 
     # Print summary
     scenarios = set(r["scenario"] for r in results)
