@@ -164,7 +164,10 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
 
 <!-- Tab: Performance -->
 <div class="tab-content active" id="tab-performance">
-  <div class="metric-selector" id="perf-metric-selector"></div>
+  <div style="display:flex;gap:var(--gap-md);align-items:center;flex-wrap:wrap;margin-bottom:var(--gap-sm)">
+    <div class="metric-selector" id="perf-metric-selector"></div>
+    <button class="sel-btn" id="compare-toggle" style="margin-left:auto;border-color:var(--accent-cyan);font-weight:600">Compare (Apple-to-Apple)</button>
+  </div>
   <div class="chart-grid">
     <div class="chart-card hero"><h3 id="perf-chart-title">Output Throughput by Configuration</h3><div class="chart-wrap"><canvas id="chart-perf-bar"></canvas></div></div>
   </div>
@@ -333,6 +336,7 @@ const state = {
   concs: new Set(allConcs.map(String)),
   perfMetric: 'output_tps',
   trendsSeries: allSeries[0] || '',
+  compareMode: true,  // default ON for apple-to-apple
 };
 
 function getFiltered() {
@@ -347,6 +351,24 @@ function getFiltered() {
     }
   }
   return out;
+}
+
+/* Filter to only configs where ALL active series have data (apple-to-apple) */
+function getCompareFiltered(data) {
+  const seriesKeys = [...new Set(data.map(d => d.series_key))];
+  if (seriesKeys.length < 2) return data; // nothing to compare
+  // Find configs present in all series
+  const configsBySeries = {};
+  for (const sk of seriesKeys) configsBySeries[sk] = new Set();
+  for (const d of data) {
+    configsBySeries[d.series_key].add(`${d.isl}/${d.osl}|${d.conc}`);
+  }
+  const commonConfigs = new Set();
+  const firstSet = configsBySeries[seriesKeys[0]];
+  for (const cfg of firstSet) {
+    if (seriesKeys.every(sk => configsBySeries[sk].has(cfg))) commonConfigs.add(cfg);
+  }
+  return data.filter(d => commonConfigs.has(`${d.isl}/${d.osl}|${d.conc}`));
 }
 
 /* ================================================================
@@ -510,7 +532,10 @@ function buildPerfBarChart(data) {
   const metric = state.perfMetric;
   const def = METRIC_DEFS[metric];
 
-  document.getElementById('perf-chart-title').textContent = `${def.label} by Configuration`;
+  const seriesCount = new Set(data.map(d => d.series_key)).size;
+  const configCount = new Set(data.map(d => `${d.isl}/${d.osl} c=${d.conc}`)).size;
+  const suffix = state.compareMode && seriesCount >= 2 ? ` — ${configCount} matching configs` : '';
+  document.getElementById('perf-chart-title').textContent = `${def.label} by Configuration${suffix}`;
 
   // Group data by series, then by config label
   const seriesKeys = [...new Set(data.map(d => d.series_key))];
@@ -610,7 +635,11 @@ function buildPerfTable(data) {
     hdr += `<th class="num" style="color:${c.border}">TTFT<br><small>(ms)</small></th>`;
   }
   if (isComparison) {
-    hdr += '<th class="num">TPS Delta</th><th class="num">TPOT Delta</th><th class="num">TTFT Delta</th>';
+    const refShort = seriesKeys[0].replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
+    const cmpShort = seriesKeys[1].replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
+    hdr += `<th class="num">TPS &Delta;<br><small>${cmpShort} vs ${refShort}</small></th>`;
+    hdr += `<th class="num">TPOT &Delta;<br><small>${cmpShort} vs ${refShort}</small></th>`;
+    hdr += `<th class="num">TTFT &Delta;<br><small>${cmpShort} vs ${refShort}</small></th>`;
   }
   hdr += '</tr>';
   thead.innerHTML = hdr;
@@ -1025,10 +1054,24 @@ function refresh() {
   const data = getFiltered();
   updateKPIs(data);
 
+  // Update compare toggle button state
+  const cmpBtn = document.getElementById('compare-toggle');
+  if (cmpBtn) {
+    cmpBtn.classList.toggle('active', state.compareMode);
+    if (state.compareMode) {
+      cmpBtn.style.background = 'var(--accent-cyan)';
+      cmpBtn.style.color = '#000';
+    } else {
+      cmpBtn.style.background = '';
+      cmpBtn.style.color = '';
+    }
+  }
+
   const activeTab = document.querySelector('.tab.active')?.dataset.tab;
   if (activeTab === 'performance') {
-    buildPerfBarChart(data);
-    buildPerfTable(data);
+    const perfData = state.compareMode ? getCompareFiltered(data) : data;
+    buildPerfBarChart(perfData);
+    buildPerfTable(perfData);
   } else if (activeTab === 'scatter') {
     buildScatter(data);
     buildScatter2(data);
@@ -1059,6 +1102,13 @@ function init() {
 
   buildFilters();
   buildPerfMetricSelector();
+
+  // Compare toggle
+  document.getElementById('compare-toggle').addEventListener('click', () => {
+    state.compareMode = !state.compareMode;
+    refresh();
+  });
+
   refresh();
 }
 
