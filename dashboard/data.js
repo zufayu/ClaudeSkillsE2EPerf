@@ -1,5 +1,5 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-03-17T10:42:13.318151",
+  "generated_at": "2026-03-17T10:54:14.917982",
   "runs": [
     {
       "run_id": "8xb200-nvfp4-20260316",

@@ -120,6 +120,14 @@ def generate_data_js(runs):
     for run in runs:
         series_key = build_series_key(run)
 
+        # Ensure total_tps exists on each result
+        results = run.get("results", [])
+        for r in results:
+            if not r.get("total_tps"):
+                output_tps = r.get("output_tps", 0)
+                input_tps = r.get("input_tps", 0)
+                r["total_tps"] = output_tps + input_tps if input_tps else output_tps
+
         run_entry = {
             "run_id": run.get("run_id", ""),
             "series_key": series_key,
@@ -133,7 +141,7 @@ def generate_data_js(runs):
             "date": run.get("date", ""),
             "commit": run.get("commit", ""),
             "commit_url": run.get("commit_url", ""),
-            "results": run.get("results", []),
+            "results": results,
         }
 
         all_platforms.add(run.get("platform", ""))
