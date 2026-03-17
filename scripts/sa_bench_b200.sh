@@ -220,7 +220,11 @@ compute_adaptive_params() {
         if [[ "$has_mtp" == "false" ]]; then
             # fp8-throughput: from dsr1_fp8_b200_trt.sh
             if [[ "$isl" == "1024" && "$osl" == "1024" ]]; then
-                if [[ $conc -ge 64 ]]; then
+                if [[ $conc -ge 128 ]]; then
+                    PIECEWISE_CUDA_GRAPHS="true"
+                    DELAY_BATCHING="true"
+                    KV_CACHE_FREE_MEM_FRACTION=0.7
+                elif [[ $conc -ge 64 ]]; then
                     PIECEWISE_CUDA_GRAPHS="true"
                     DELAY_BATCHING="true"
                 fi
@@ -486,20 +490,22 @@ generate_summary() {
     log "========================================================"
 
     local summary_file="$RESULT_DIR/summary.md"
+    local gpu_count="$TP"
 
-    cat > "$summary_file" << 'HEADER'
+    cat > "$summary_file" <<EOF
 # DeepSeek R1 Benchmark Results (InferenceX-style)
-## B200 8×GPU
+## B200 ${gpu_count}×GPU
 
-| Config | Quant | Scenario | EP | CONC | DP | Req/s | Output TPS | Per-GPU TPS | TTFT p50 (ms) | TPOT p50 (ms) | E2E p50 (ms) |
-|--------|-------|----------|-----|------|----|-------|------------|-------------|---------------|---------------|--------------|
-HEADER
+| Config | Quant | Scenario | EP | CONC | Output TPS | Out TPS/GPU | Total TPS/GPU | Interactivity | TTFT p50 (ms) | TPOT p50 (ms) | ITL p50 (ms) | E2E p50 (ms) |
+|--------|-------|----------|-----|------|------------|-------------|---------------|---------------|---------------|---------------|--------------|--------------|
+EOF
 
     for f in "$RESULT_DIR"/result_*.json; do
         [[ -f "$f" ]] || continue
         python3 -c "
 import json, sys, os
 try:
+    gpu_count = $gpu_count
     with open('$f') as fh:
         data = json.load(fh)
 
@@ -512,20 +518,29 @@ try:
     scenario = parts[2] if len(parts) > 2 else '-'
     ep = parts[3].replace('ep','') if len(parts) > 3 else '-'
     conc_part = [p for p in parts if p.startswith('c') and p[1:].isdigit()]
-    conc = conc_part[0].replace('c','') if conc_part else '-'
-    dp = 'Y' if 'dp' in parts else 'N'
+    conc = int(conc_part[0].replace('c','')) if conc_part else 0
 
-    # Extract metrics - benchmark_serving.py output format
-    req_tps = data.get('request_throughput', data.get('completed', 0) / max(data.get('duration', 1), 0.001))
+    # Throughput metrics
     out_tps = data.get('output_throughput', 0)
-    gpu_tps = out_tps / 8 if out_tps else 0
+    in_tps = data.get('input_throughput', data.get('total_token_throughput', 0) - out_tps if data.get('total_token_throughput') else 0)
+    total_tps = data.get('total_token_throughput', in_tps + out_tps)
+
+    # Per-GPU metrics (SA InferenceX format)
+    out_tps_gpu = out_tps / gpu_count if out_tps else 0
+    total_tps_gpu = total_tps / gpu_count if total_tps else 0
+
+    # Interactivity = tok/s/user (SA format)
+    interactivity = out_tps / conc if (out_tps and conc) else 0
+
+    # Latency metrics
     ttft_p50 = data.get('ttft_p50', data.get('median_ttft_ms', 0))
     tpot_p50 = data.get('tpot_p50', data.get('median_tpot_ms', 0))
+    itl_p50 = data.get('itl_p50', data.get('median_itl_ms', 0))
     e2e_p50 = data.get('e2el_p50', data.get('median_e2el_ms', 0))
 
-    print(f'| {config} | {quant} | {scenario} | {ep} | {conc} | {dp} | {req_tps:.2f} | {out_tps:.1f} | {gpu_tps:.1f} | {ttft_p50:.0f} | {tpot_p50:.1f} | {e2e_p50:.0f} |')
+    print(f'| {config} | {quant} | {scenario} | {ep} | {conc} | {out_tps:.1f} | {out_tps_gpu:.1f} | {total_tps_gpu:.1f} | {interactivity:.2f} | {ttft_p50:.0f} | {tpot_p50:.1f} | {itl_p50:.1f} | {e2e_p50:.0f} |')
 except Exception as e:
-    print(f'| ERROR | - | $f | - | - | - | - | - | - | - | - | {e} |', file=sys.stderr)
+    print(f'| ERROR | - | $f | - | - | - | - | - | - | - | - | - | {e} |', file=sys.stderr)
 " >> "$summary_file" 2>/dev/null || true
     done
 
