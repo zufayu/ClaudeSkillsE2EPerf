@@ -131,10 +131,17 @@ def convert_atom_to_runs(atom_data):
             mtp_tag = f"-mtp{m.group(1)}" if m else "-mtp"
 
         model_clean = re.sub(r"-mtp\d*", "", model)
-        quant = "BF16"
+        # ATOM CI uses FP8 block-scale quantization for all DeepSeek-R1 runs
+        # (model config.json contains quantization_config with quant_method=fp8)
+        # Only the model name "GLM-5-FP8" explicitly has FP8 suffix;
+        # DeepSeek-R1-0528 is also FP8 but without the suffix.
         if "FP8" in model:
             quant = "FP8"
             model_clean = model_clean.replace("-FP8", "")
+        elif "DeepSeek-R1" in model:
+            quant = "FP8"
+        else:
+            quant = "BF16"
 
         results = []
         gpu_count = 8

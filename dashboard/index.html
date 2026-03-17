@@ -199,7 +199,7 @@ function getFiltered() {
       const sKey = `${r.isl}/${r.osl}`;
       if (!state.scenarios.has(sKey)) continue;
       if (!state.concs.has(String(r.conc))) continue;
-      out.push({...r, series_key: run.series_key, platform: run.platform, date: run.date, source: run.source});
+      out.push({...r, series_key: run.series_key, platform: run.platform, date: run.date, source: run.source, framework: run.framework, quantization: run.quantization, sources: run.sources, gpu_count: run.gpu_count});
     }
   }
   return out;
@@ -405,6 +405,23 @@ function buildTable(data) {
     groups[gk].byPlatform[d.series_key] = d;
   }
 
+  // Build run info lookup per series
+  const runInfo = {};
+  for (const sk of seriesKeys) {
+    const run = runs.find(r => r.series_key === sk);
+    if (run) {
+      const srcList = run.sources && run.sources.length ? run.sources : [run.source || '?'];
+      const badges = srcList.map(s => s === 'ci-nightly' ? '<span class="badge ci">CI</span>' : '<span class="badge manual">Manual</span>').join('');
+      runInfo[sk] = {
+        framework: run.framework || '',
+        quant: run.quantization || '',
+        gpus: run.gpu_count || '?',
+        date: run.date || '',
+        badges,
+      };
+    }
+  }
+
   // Header
   let hdr = '<tr><th>Scenario</th><th>ISL/OSL</th><th class="num">Conc</th>';
   for (const sk of seriesKeys) {
@@ -412,6 +429,7 @@ function buildTable(data) {
     hdr += `<th class="num" style="color:${c.border}">TPS<br><small>${sk}</small></th>`;
     hdr += `<th class="num" style="color:${c.border}">TPOT<br><small>(ms)</small></th>`;
     hdr += `<th class="num" style="color:${c.border}">TTFT<br><small>(ms)</small></th>`;
+    hdr += `<th style="color:${c.border}">Run Info<br><small>${sk}</small></th>`;
   }
   if (seriesKeys.length === 2) {
     hdr += '<th class="num">TPS Delta</th><th class="num">TPOT Delta</th>';
@@ -434,13 +452,16 @@ function buildTable(data) {
     const vals = {};
     for (const sk of seriesKeys) {
       const d = g.byPlatform[sk];
+      const ri = runInfo[sk];
       if (d) {
         rows += `<td class="num">${d.output_tps.toFixed(1)}</td>`;
         rows += `<td class="num">${d.tpot_p50.toFixed(1)}</td>`;
         rows += `<td class="num">${(d.ttft_p50||0).toFixed(0)}</td>`;
+        const srcBadge = d._source ? (d._source === 'ci-nightly' ? '<span class="badge ci">CI</span>' : '<span class="badge manual">Manual</span>') : (ri ? ri.badges : '');
+        rows += `<td style="font-size:11px;white-space:nowrap">${ri ? ri.framework : ''}<br>${ri ? ri.quant : ''} ${srcBadge}<br><small>${ri ? ri.date : ''}</small></td>`;
         vals[sk] = d;
       } else {
-        rows += '<td class="num">-</td><td class="num">-</td><td class="num">-</td>';
+        rows += '<td class="num">-</td><td class="num">-</td><td class="num">-</td><td>-</td>';
       }
     }
     // Delta columns when exactly 2 series

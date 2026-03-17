@@ -30,11 +30,78 @@ def load_runs(runs_dir):
 
 
 def build_series_key(run):
-    """Build a display key for a run, used as series name in charts."""
+    """Build a display key for a run, used as series name in charts.
+
+    Same platform+model+quantization from different sources (ci-nightly vs manual)
+    should produce the same series_key so they merge into one series.
+    """
     platform = run.get("platform", "unknown")
+    model = run.get("model", "")
     quant = run.get("quantization", "")
     framework_short = run.get("framework", "").split(" ")[0]
-    return f"{platform} {quant} ({framework_short})"
+    return f"{platform} {model} {quant} ({framework_short})"
+
+
+def deduplicate_runs(runs):
+    """When multiple runs share the same series_key, merge their results.
+
+    For the same (isl, osl, conc, config) data point across runs,
+    keep the one from the newer run (by date). The merged run preserves
+    source info from all contributors.
+    """
+    from collections import defaultdict
+
+    by_series = defaultdict(list)
+    for run in runs:
+        sk = build_series_key(run)
+        by_series[sk].append(run)
+
+    merged_runs = []
+    for sk, group in by_series.items():
+        if len(group) == 1:
+            merged_runs.append(group[0])
+            continue
+
+        # Sort by date ascending (latest last = highest priority)
+        # Within same date, manual > ci-nightly (manual is more trusted)
+        source_priority = {"manual": 1, "ci-nightly": 0}
+        group.sort(key=lambda r: (r.get("date", ""),
+                                  source_priority.get(r.get("source", ""), 0)))
+
+        # Merge results: latest wins per (isl, osl, conc, config)
+        result_map = {}
+        sources = []
+        for run in group:
+            src = run.get("source", "unknown")
+            sources.append(src)
+            for r in run.get("results", []):
+                key = (r.get("isl"), r.get("osl"), r.get("conc"),
+                       r.get("config", ""))
+                result_map[key] = {**r, "_source": src}
+
+        latest = group[-1]
+        merged = {
+            "run_id": latest.get("run_id", ""),
+            "platform": latest.get("platform", ""),
+            "framework": latest.get("framework", ""),
+            "model": latest.get("model", ""),
+            "quantization": latest.get("quantization", ""),
+            "gpu_count": latest.get("gpu_count", 8),
+            "source": latest.get("source", ""),
+            "sources": sorted(set(sources)),
+            "date": latest.get("date", ""),
+            "commit": latest.get("commit", ""),
+            "commit_url": latest.get("commit_url", ""),
+            "results": sorted(result_map.values(),
+                              key=lambda r: (r.get("isl", 0), r.get("osl", 0),
+                                             r.get("conc", 0))),
+        }
+        merged_runs.append(merged)
+        print(f"  Merged {len(group)} runs for '{sk}': "
+              f"{len(merged['results'])} unique points "
+              f"(sources: {', '.join(sorted(set(sources)))})")
+
+    return merged_runs
 
 
 def generate_data_js(runs):
@@ -62,6 +129,7 @@ def generate_data_js(runs):
             "quantization": run.get("quantization", ""),
             "gpu_count": run.get("gpu_count", 8),
             "source": run.get("source", ""),
+            "sources": run.get("sources", [run.get("source", "")]),
             "date": run.get("date", ""),
             "commit": run.get("commit", ""),
             "commit_url": run.get("commit_url", ""),
@@ -97,10 +165,16 @@ def main():
         print(f"ERROR: No run files found in {args.runs_dir}/", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Loaded {len(runs)} runs:")
+    print(f"Loaded {len(runs)} run files:")
     for run in runs:
         n = len(run.get("results", []))
-        print(f"  {run.get('run_id', '?'):40s}  {n:3d} points  ({run.get('date', '?')})")
+        src = run.get("source", "?")
+        print(f"  {run.get('run_id', '?'):40s}  {n:3d} points  src={src}  ({run.get('date', '?')})")
+
+    # Deduplicate: same series_key merges, latest date wins per data point
+    runs = deduplicate_runs(runs)
+
+    print(f"\nAfter dedup: {len(runs)} series")
 
     data = generate_data_js(runs)
 
