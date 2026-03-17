@@ -1,5 +1,5 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-03-17T12:16:51.264733",
+  "generated_at": "2026-03-17T18:03:32.511019",
   "runs": [
     {
       "run_id": "8xb200-fp8-20260317",
@@ -16,6 +16,7 @@ window.DASHBOARD_DATA = {
       "date": "2026-03-17",
       "commit": "",
       "commit_url": "",
+      "env_tag": "",
       "results": [
         {
           "isl": 1024,
@@ -358,6 +359,96 @@ window.DASHBOARD_DATA = {
       ]
     },
     {
+      "run_id": "8xmi355x-fp8-20260317-mtp0",
+      "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 (ATOM) [mtp0]",
+      "platform": "8\u00d7MI355X",
+      "framework": "ATOM",
+      "model": "DeepSeek-R1-0528",
+      "quantization": "FP8",
+      "gpu_count": 8,
+      "source": "manual",
+      "sources": [
+        "manual"
+      ],
+      "date": "2026-03-17",
+      "commit": "",
+      "commit_url": "",
+      "env_tag": "mtp0",
+      "results": [
+        {
+          "isl": 1024,
+          "osl": 8192,
+          "conc": 4,
+          "scenario": "reasoning",
+          "config": "throughput",
+          "ep_size": null,
+          "dp_attention": false,
+          "output_tps": 322.96763555882853,
+          "total_tps": 364.1810818821624,
+          "request_tps": 0.04447334231502517,
+          "tpot_p50": 12.230502202673705,
+          "ttft_p50": 66.91148498794064,
+          "itl_p50": 12.187599437311292,
+          "e2el_p50": 86701.80079498095,
+          "tpot_p99": 12.35067680155544,
+          "ttft_p99": 153.93164374982007,
+          "itl_p99": 12.783014938468115,
+          "e2el_p99": 99087.01516044792,
+          "tpot_mean": 12.183837359652925,
+          "ttft_mean": 74.37077890499495,
+          "e2el_mean": 88537.05041354988,
+          "num_prompts": 40,
+          "completed": 40,
+          "duration": 899.4151983599877
+        }
+      ]
+    },
+    {
+      "run_id": "8xmi355x-fp8-20260317-mtp3",
+      "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 (ATOM) [mtp3]",
+      "platform": "8\u00d7MI355X",
+      "framework": "ATOM",
+      "model": "DeepSeek-R1-0528",
+      "quantization": "FP8",
+      "gpu_count": 8,
+      "source": "manual",
+      "sources": [
+        "manual"
+      ],
+      "date": "2026-03-17",
+      "commit": "",
+      "commit_url": "",
+      "env_tag": "mtp3",
+      "results": [
+        {
+          "isl": 1024,
+          "osl": 1024,
+          "conc": 4,
+          "scenario": "chat",
+          "config": "latency",
+          "ep_size": null,
+          "dp_attention": false,
+          "output_tps": 322.4324266941599,
+          "total_tps": 648.0181193771292,
+          "request_tps": 0.3513388288366993,
+          "tpot_p50": 11.816028431901785,
+          "ttft_p50": 65.61488652369007,
+          "itl_p50": 11.635321076028049,
+          "e2el_p50": 11118.057337007485,
+          "tpot_p99": 13.629869733287045,
+          "ttft_p99": 152.51130899298005,
+          "itl_p99": 18.976792977191412,
+          "e2el_p99": 13315.392791653285,
+          "tpot_mean": 11.95491661746504,
+          "ttft_mean": 73.32140359794721,
+          "e2el_mean": 11033.279083148227,
+          "num_prompts": 40,
+          "completed": 40,
+          "duration": 113.85021158191375
+        }
+      ]
+    },
+    {
       "run_id": "atom-mi355x-deepseek-r1-0528",
       "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 (ATOM)",
       "platform": "8\u00d7MI355X",
@@ -372,6 +463,7 @@ window.DASHBOARD_DATA = {
       "date": "2026-03-17",
       "commit": "d1bdbde820548e8c9e742b08c051b20917218e61",
       "commit_url": "https://github.com/ROCm/ATOM/commit/d1bdbde820548e8c9e742b08c051b20917218e61",
+      "env_tag": "",
       "results": [
         {
           "isl": 1024,
