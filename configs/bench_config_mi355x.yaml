@@ -1,0 +1,79 @@
+# DeepSeek R1 671B Benchmark Configuration - MI355X (ROCm + ATOM/vLLM)
+# Adapted from ATOM CI benchmarks (GitHub Actions #23115155923)
+
+model:
+  name: "deepseek-ai/DeepSeek-R1-0528"
+  architecture: "DeepseekV3ForCausalLM"
+  model_type: "deepseek_v3"
+  parameters: "671B"
+  experts: 256
+  experts_per_token: 8
+  variants:
+    bf16:
+      path: "/data/DeepSeek-R1-0528"
+      quantization: "BF16"
+    bf16-mtp3:
+      path: "/data/DeepSeek-R1-0528-mtp3"
+      quantization: "BF16"
+      mtp_layers: 3
+
+hardware:
+  gpu: "AMD Instinct MI355X"
+  gpu_memory: "288GB"  # HBM3e
+  num_gpus: 8
+  total_memory: "2304GB"
+
+runtime:
+  framework: "ATOM (vLLM-based)"
+  framework_url: "https://github.com/ROCm/ATOM"
+  backend: "ROCm"
+  tp_size: 8
+  pp_size: 1
+  docker_flags: "--device=/dev/kfd --device=/dev/dri --group-add video"
+
+# Benchmark matrix
+benchmark:
+  # Scenarios from SemiAnalysis InferenceX
+  scenarios:
+    - name: chat
+      isl: 1024
+      osl: 1024
+    - name: reasoning
+      isl: 1024
+      osl: 8192
+    - name: summarize
+      isl: 8192
+      osl: 1024
+
+  # Concurrency sweep (matching ATOM CI)
+  concurrency: [1, 4, 8, 16, 32, 64, 128, 256]
+
+  # Scenario-specific concurrency limits (from ATOM CI data availability)
+  concurrency_limits:
+    reasoning: 32    # ATOM CI only ran up to c=32 for reasoning
+    summarize: 128   # ATOM CI only ran up to c=128 for summarize
+
+  # Random range ratio (±20% output length variation)
+  random_range_ratio: 0.8
+
+  # Configs
+  configs:
+    bf16-throughput:
+      quantization: bf16
+      mtp: false
+      description: "BF16, no MTP, max throughput"
+    bf16-latency:
+      quantization: bf16
+      mtp: true
+      mtp_layers: 3
+      description: "BF16, MTP-3 speculative decoding, min latency"
+
+# vLLM server parameters
+vllm_params:
+  gpu_memory_utilization: 0.90
+  dtype: "bfloat16"
+  trust_remote_code: true
+  disable_log_requests: true
+  env_vars:
+    NCCL_SOCKET_IFNAME: "lo"
+    VLLM_USE_TRITON_FLASH_ATTN: "0"
