@@ -1,6 +1,23 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-03-17T11:53:57.708259",
+  "generated_at": "2026-03-17T12:04:45.606937",
   "runs": [
+    {
+      "run_id": "8xb200-fp8-deepseek-r1-0528",
+      "series_key": "8\u00d7B200 DeepSeek-R1-0528 FP8 (TRT-LLM)",
+      "platform": "8\u00d7B200",
+      "framework": "TRT-LLM",
+      "model": "DeepSeek-R1-0528",
+      "quantization": "FP8",
+      "gpu_count": 8,
+      "source": "manual",
+      "sources": [
+        "manual"
+      ],
+      "date": "",
+      "commit": "",
+      "commit_url": "",
+      "results": []
+    },
     {
       "run_id": "atom-mi355x-deepseek-r1-0528",
       "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 (ATOM)",
@@ -358,6 +375,7 @@ window.DASHBOARD_DATA = {
   ],
   "filters": {
     "platforms": [
+      "8\u00d7B200",
       "8\u00d7MI355X"
     ],
     "scenarios": [

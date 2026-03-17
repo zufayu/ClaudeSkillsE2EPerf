@@ -575,13 +575,24 @@ function buildPerfBarChart(data) {
   });
 }
 
-/* --- Performance Tab: Table --- */
+/* --- Performance Tab: Comparison Table --- */
 function buildPerfTable(data) {
   const table = document.getElementById('perf-table');
   const thead = table.querySelector('thead');
   const tbody = table.querySelector('tbody');
 
-  // Compute ranges for heat coloring
+  const seriesKeys = [...new Set(data.map(d => d.series_key))];
+  const isComparison = seriesKeys.length >= 2;
+
+  // Group by config (ISL/OSL + conc)
+  const groups = {};
+  for (const d of data) {
+    const gk = `${d.isl}/${d.osl}|${d.conc}`;
+    if (!groups[gk]) groups[gk] = {isl:d.isl, osl:d.osl, conc:d.conc, byPlatform:{}};
+    groups[gk].byPlatform[d.series_key] = d;
+  }
+
+  // Compute ranges for heat coloring & data bars
   const tpotValues = data.filter(d => d.tpot_p50 > 0).map(d => d.tpot_p50);
   const ttftValues = data.filter(d => d.ttft_p50 > 0).map(d => d.ttft_p50);
   const tpotMin = Math.min(...tpotValues), tpotMax = Math.max(...tpotValues);
@@ -589,80 +600,105 @@ function buildPerfTable(data) {
   const outputMax = Math.max(...data.map(d => d.output_tps || 0));
   const totalMax = Math.max(...data.map(d => d.total_tps || 0));
 
-  // Find best values per config for trend comparison
-  const bestByConfig = {};
-  for (const d of data) {
-    const ck = `${d.isl}/${d.osl}|${d.conc}`;
-    if (!bestByConfig[ck]) bestByConfig[ck] = {};
-    if (!bestByConfig[ck].best_tps || d.output_tps > bestByConfig[ck].best_tps) bestByConfig[ck].best_tps = d.output_tps;
-    if (!bestByConfig[ck].best_tpot || d.tpot_p50 < bestByConfig[ck].best_tpot) bestByConfig[ck].best_tpot = d.tpot_p50;
+  // Build header
+  let hdr = '<tr><th></th><th>Scenario</th><th>ISL/OSL</th><th class="num">Conc</th>';
+  for (const sk of seriesKeys) {
+    const c = getColor(sk);
+    const shortName = sk.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
+    hdr += `<th class="num" style="color:${c.border}">Output Tput<br><small>${shortName}</small></th>`;
+    hdr += `<th class="num" style="color:${c.border}">TPOT<br><small>(ms)</small></th>`;
+    hdr += `<th class="num" style="color:${c.border}">TTFT<br><small>(ms)</small></th>`;
   }
+  if (isComparison) {
+    hdr += '<th class="num">TPS Delta</th><th class="num">TPOT Delta</th><th class="num">TTFT Delta</th>';
+  }
+  hdr += '</tr>';
+  thead.innerHTML = hdr;
 
-  thead.innerHTML = `<tr>
-    <th></th>
-    <th>Model</th>
-    <th>ISL/OSL</th>
-    <th class="num">Conc</th>
-    <th class="num">TP</th>
-    <th class="num">Total Tput</th>
-    <th class="num">Output Tput</th>
-    <th class="num">Interac.</th>
-    <th class="num">TPOT</th>
-    <th class="num">TTFT</th>
-    <th class="num">Trend</th>
-    <th>Source</th>
-    <th>Commit</th>
-    <th>Config</th>
-  </tr>`;
-
-  // Sort data
-  const sorted = [...data].sort((a, b) => {
-    if (a.isl !== b.isl) return a.isl - b.isl;
-    if (a.osl !== b.osl) return a.osl - b.osl;
-    if (a.conc !== b.conc) return a.conc - b.conc;
-    return (b.output_tps || 0) - (a.output_tps || 0);
+  // Sort groups
+  const sortedKeys = Object.keys(groups).sort((a,b) => {
+    const ga = groups[a], gb = groups[b];
+    if (ga.isl !== gb.isl) return ga.isl - gb.isl;
+    if (ga.osl !== gb.osl) return ga.osl - gb.osl;
+    return ga.conc - gb.conc;
   });
 
+  const scenarioName = (isl, osl) => {
+    if (isl === 1024 && osl === 1024) return 'chat';
+    if (isl === 1024 && osl === 8192) return 'reasoning';
+    if (isl === 8192 && osl === 1024) return 'summarize';
+    return `${isl}/${osl}`;
+  };
+
   let rows = '';
-  for (let i = 0; i < sorted.length; i++) {
-    const d = sorted[i];
-    const run = runs.find(r => r.series_key === d.series_key);
-    const rid = `perf-detail-${i}`;
-    const interactivity = d.tpot_p50 > 0 ? (1000 / d.tpot_p50) : 0;
-    const ck = `${d.isl}/${d.osl}|${d.conc}`;
-    const best = bestByConfig[ck] || {};
-
-    // Data bar widths
-    const outPct = outputMax > 0 ? (d.output_tps / outputMax * 100) : 0;
-    const totPct = totalMax > 0 ? ((d.total_tps || 0) / totalMax * 100) : 0;
-
-    // Heat backgrounds
-    const tpotBg = d.tpot_p50 > 0 ? heatBg(d.tpot_p50, tpotMin, tpotMax, true) : '';
-    const ttftBg = d.ttft_p50 > 0 ? heatBg(d.ttft_p50, ttftMin, ttftMax, true) : '';
-
-    // Trend: compare this row's output_tps vs best in same config
-    const trendHtml = data.filter(x => `${x.isl}/${x.osl}|${x.conc}` === ck).length > 1
-      ? trendHTML(d.output_tps, best.best_tps, true) : '<span class="trend-neutral">-</span>';
-
-    const c = getColor(d.series_key);
-
+  let rowIdx = 0;
+  for (const gk of sortedKeys) {
+    const g = groups[gk];
+    const rid = `perf-detail-${rowIdx++}`;
     rows += `<tr>`;
     rows += `<td><button class="expand-btn" data-target="${rid}">&#9654;</button></td>`;
-    rows += `<td style="color:${c.border};font-weight:500">${d.series_key}</td>`;
-    rows += `<td>${d.isl}/${d.osl}</td>`;
-    rows += `<td class="num">${d.conc}</td>`;
-    rows += `<td class="num">${d.gpu_count || '-'}</td>`;
-    rows += `<td class="num"><div class="data-bar"><div class="data-bar-fill" style="width:${totPct}%;background:${c.border}"></div><div class="data-bar-text">${fmtCompact(d.total_tps || 0)}</div></div></td>`;
-    rows += `<td class="num"><div class="data-bar"><div class="data-bar-fill" style="width:${outPct}%;background:${c.border}"></div><div class="data-bar-text">${fmtCompact(d.output_tps)}</div></div></td>`;
-    rows += `<td class="num">${fmtNum(interactivity, 1)}</td>`;
-    rows += `<td class="num heat-cell" style="background:${tpotBg}">${fmtNum(d.tpot_p50, 1)}</td>`;
-    rows += `<td class="num heat-cell" style="background:${ttftBg}">${fmtNum(d.ttft_p50, 0)}</td>`;
-    rows += `<td class="num">${trendHtml}</td>`;
-    rows += `<td>${sourceHTML(run || d)}</td>`;
-    rows += `<td>${commitHTML(run || d)}</td>`;
-    rows += `<td><code>${d.config || '-'}</code></td>`;
-    rows += `</tr>`;
-    rows += `<tr class="detail-row" id="${rid}"><td colspan="14">${buildDetailHTML(d, run)}</td></tr>`;
+    rows += `<td>${scenarioName(g.isl, g.osl)}</td>`;
+    rows += `<td>${g.isl}/${g.osl}</td>`;
+    rows += `<td class="num">${g.conc}</td>`;
+
+    const vals = {};
+    for (const sk of seriesKeys) {
+      const d = g.byPlatform[sk];
+      const c = getColor(sk);
+      if (d) {
+        const outPct = outputMax > 0 ? (d.output_tps / outputMax * 100) : 0;
+        const tpotBg = d.tpot_p50 > 0 ? heatBg(d.tpot_p50, tpotMin, tpotMax, true) : '';
+        const ttftBg = d.ttft_p50 > 0 ? heatBg(d.ttft_p50, ttftMin, ttftMax, true) : '';
+        rows += `<td class="num"><div class="data-bar"><div class="data-bar-fill" style="width:${outPct}%;background:${c.border}"></div><div class="data-bar-text">${fmtCompact(d.output_tps)}</div></div></td>`;
+        rows += `<td class="num heat-cell" style="background:${tpotBg}">${fmtNum(d.tpot_p50, 1)}</td>`;
+        rows += `<td class="num heat-cell" style="background:${ttftBg}">${fmtNum(d.ttft_p50, 0)}</td>`;
+        vals[sk] = d;
+      } else {
+        rows += '<td class="num" style="color:var(--text-tertiary)">-</td>'.repeat(3);
+      }
+    }
+
+    // Delta columns (first series vs second series, first series as reference)
+    if (isComparison && seriesKeys.length >= 2) {
+      const a = vals[seriesKeys[0]], b = vals[seriesKeys[1]];
+      if (a && b && a.output_tps > 0 && b.output_tps > 0) {
+        // TPS delta: (second - first) / first — positive = second is faster
+        const tpsDelta = ((b.output_tps - a.output_tps) / a.output_tps * 100);
+        const tpsCls = tpsDelta > 0 ? 'delta-pos' : tpsDelta < 0 ? 'delta-neg' : 'delta-neutral';
+        rows += `<td class="num ${tpsCls}">${tpsDelta > 0 ? '+' : ''}${tpsDelta.toFixed(1)}%</td>`;
+        // TPOT delta: lower is better, so (first - second) / first — positive = second is better
+        const tpotDelta = ((b.tpot_p50 - a.tpot_p50) / a.tpot_p50 * 100);
+        const tpotCls = tpotDelta < 0 ? 'delta-pos' : tpotDelta > 0 ? 'delta-neg' : 'delta-neutral';
+        rows += `<td class="num ${tpotCls}">${tpotDelta > 0 ? '+' : ''}${tpotDelta.toFixed(1)}%</td>`;
+        // TTFT delta: lower is better
+        const ttftDelta = a.ttft_p50 > 0 && b.ttft_p50 > 0 ? ((b.ttft_p50 - a.ttft_p50) / a.ttft_p50 * 100) : null;
+        if (ttftDelta != null) {
+          const ttftCls = ttftDelta < 0 ? 'delta-pos' : ttftDelta > 0 ? 'delta-neg' : 'delta-neutral';
+          rows += `<td class="num ${ttftCls}">${ttftDelta > 0 ? '+' : ''}${ttftDelta.toFixed(1)}%</td>`;
+        } else {
+          rows += '<td class="num">-</td>';
+        }
+      } else {
+        rows += '<td class="num">-</td><td class="num">-</td><td class="num">-</td>';
+      }
+    }
+    rows += '</tr>';
+
+    // Detail row: show all platform details for this config
+    let detailHtml = '<div style="display:flex;gap:24px;flex-wrap:wrap">';
+    for (const sk of seriesKeys) {
+      const d = g.byPlatform[sk];
+      const run = runs.find(r => r.series_key === sk);
+      const c = getColor(sk);
+      if (d) {
+        detailHtml += `<div style="flex:1;min-width:280px"><div style="color:${c.border};font-weight:600;margin-bottom:8px">${sk}</div>${buildDetailHTML(d, run)}</div>`;
+      } else {
+        detailHtml += `<div style="flex:1;min-width:280px"><div style="color:${c.border};font-weight:600;margin-bottom:8px">${sk}</div><div style="color:var(--text-tertiary);font-size:12px">No data for this configuration</div></div>`;
+      }
+    }
+    detailHtml += '</div>';
+    const colSpan = 4 + seriesKeys.length * 3 + (isComparison ? 3 : 0);
+    rows += `<tr class="detail-row" id="${rid}"><td colspan="${colSpan}">${detailHtml}</td></tr>`;
   }
   tbody.innerHTML = rows;
 

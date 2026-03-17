@@ -1,0 +1,14 @@
+{
+  "run_id": "8xb200-fp8-deepseek-r1-0528",
+  "platform": "8×B200",
+  "framework": "TRT-LLM",
+  "model": "DeepSeek-R1-0528",
+  "quantization": "FP8",
+  "gpu_count": 8,
+  "source": "manual",
+  "date": "",
+  "commit": "",
+  "commit_url": "",
+  "note": "Placeholder - data to be added from B200 machine",
+  "results": []
+}
