@@ -1,112 +1,21 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-03-17T10:54:14.917982",
+  "generated_at": "2026-03-17T11:53:57.708259",
   "runs": [
     {
-      "run_id": "8xb200-nvfp4-20260316",
-      "series_key": "8\u00d7B200 DeepSeek-R1-0528 NVFP4 (TRT-LLM)",
-      "platform": "8\u00d7B200",
-      "framework": "TRT-LLM 1.2.0rc4",
-      "model": "DeepSeek-R1-0528",
-      "quantization": "NVFP4",
-      "gpu_count": 8,
-      "source": "manual",
-      "sources": [
-        "manual"
-      ],
-      "date": "2026-03-16",
-      "commit": "",
-      "commit_url": "",
-      "results": [
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 1,
-          "scenario": "chat",
-          "config": "fp4-throughput",
-          "ep_size": 1,
-          "dp_attention": false,
-          "output_tps": 114.58,
-          "total_tps": 227.07,
-          "request_tps": 0.12,
-          "tpot_p50": 8.66,
-          "ttft_p50": 62.55,
-          "itl_p50": 86.61,
-          "e2el_p50": 8351.25,
-          "tpot_p99": 8.66,
-          "ttft_p99": 213.71,
-          "e2el_p99": 8841.41
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 4,
-          "scenario": "chat",
-          "config": "fp4-throughput",
-          "ep_size": 1,
-          "dp_attention": false,
-          "output_tps": 379.8,
-          "total_tps": 752.64,
-          "request_tps": 0.41,
-          "tpot_p50": 10.1,
-          "ttft_p50": 88.4,
-          "itl_p50": 81.5,
-          "e2el_p50": 9650.4,
-          "tpot_p99": 11.3,
-          "ttft_p99": 185.3,
-          "e2el_p99": 10800.5
-        }
-      ]
-    },
-    {
-      "run_id": "8xh20-fp8-20260311",
-      "series_key": "8\u00d7H20 DeepSeek-R1-0528 FP8 (TRT-LLM)",
-      "platform": "8\u00d7H20",
-      "framework": "TRT-LLM 1.2.0rc2",
-      "model": "DeepSeek-R1-0528",
-      "quantization": "FP8",
-      "gpu_count": 8,
-      "source": "manual",
-      "sources": [
-        "manual"
-      ],
-      "date": "2026-03-11",
-      "commit": "",
-      "commit_url": "",
-      "results": [
-        {
-          "isl": 17,
-          "osl": 128,
-          "conc": 8,
-          "scenario": "legacy-short",
-          "config": "throughput",
-          "ep_size": 4,
-          "dp_attention": false,
-          "output_tps": 246.02,
-          "total_tps": 278.12,
-          "request_tps": 1.92,
-          "tpot_p50": 0,
-          "ttft_p50": 0,
-          "e2el_p50": 18072.05,
-          "e2el_mean": 16160.35
-        }
-      ]
-    },
-    {
-      "run_id": "8xmi355x-fp8-20260317",
+      "run_id": "atom-mi355x-deepseek-r1-0528",
       "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 (ATOM)",
       "platform": "8\u00d7MI355X",
-      "framework": "ATOM 0.1.1",
+      "framework": "ATOM (d1bdbde8)",
       "model": "DeepSeek-R1-0528",
       "quantization": "FP8",
       "gpu_count": 8,
-      "source": "manual",
+      "source": "ci-nightly",
       "sources": [
-        "ci-nightly",
-        "manual"
+        "ci-nightly"
       ],
       "date": "2026-03-17",
-      "commit": "",
-      "commit_url": "",
+      "commit": "d1bdbde820548e8c9e742b08c051b20917218e61",
+      "commit_url": "https://github.com/ROCm/ATOM/commit/d1bdbde820548e8c9e742b08c051b20917218e61",
       "results": [
         {
           "isl": 1024,
@@ -122,8 +31,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 10.17,
           "ttft_p50": 64.44,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 1024,
@@ -139,8 +47,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 11.06,
           "ttft_p50": 77.22,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 1024,
@@ -156,8 +63,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 10.96,
           "ttft_p50": 91.44,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 1024,
@@ -173,8 +79,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 11.67,
           "ttft_p50": 111.02,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 1024,
@@ -190,8 +95,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 13.32,
           "ttft_p50": 134.57,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 1024,
@@ -207,8 +111,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 17.67,
           "ttft_p50": 159.72,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 1024,
@@ -224,8 +127,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 21.01,
           "ttft_p50": 194.03,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 1024,
@@ -233,26 +135,15 @@ window.DASHBOARD_DATA = {
           "conc": 128,
           "scenario": "chat",
           "config": "throughput",
-          "ep_size": null,
+          "ep_size": 0,
           "dp_attention": false,
-          "output_tps": 4320.797701594929,
-          "total_tps": 8651.087500813777,
-          "request_tps": 4.696515252654769,
-          "tpot_p50": 28.879885707382076,
-          "ttft_p50": 97.26876445347443,
-          "itl_p50": 23.40864297002554,
-          "e2el_p50": 26478.74104307266,
-          "tpot_p99": 30.333471332982924,
-          "ttft_p99": 3173.3306785172317,
-          "itl_p99": 108.69782499503344,
-          "e2el_p99": 31237.661111849593,
-          "tpot_mean": 28.482897080235936,
-          "ttft_mean": 302.44543765593335,
-          "e2el_mean": 26496.86729664909,
-          "num_prompts": 1280,
-          "completed": 1280,
-          "duration": 272.5424982440891,
-          "_source": "manual"
+          "output_tps": 4276.21,
+          "total_tps": 8561.81,
+          "request_tps": 0,
+          "tpot_p50": 28.8,
+          "ttft_p50": 319.74,
+          "itl_p50": 0,
+          "e2el_p50": 0
         },
         {
           "isl": 1024,
@@ -268,8 +159,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 38.81,
           "ttft_p50": 477.72,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 1024,
@@ -285,8 +175,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 10.7,
           "ttft_p50": 88.99,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 1024,
@@ -302,8 +191,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 11.21,
           "ttft_p50": 91.28,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 1024,
@@ -319,8 +207,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 11.86,
           "ttft_p50": 114.77,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 1024,
@@ -336,8 +223,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 13.55,
           "ttft_p50": 112.47,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 8192,
@@ -353,8 +239,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 10.74,
           "ttft_p50": 270.99,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 8192,
@@ -370,8 +255,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 11.21,
           "ttft_p50": 287.27,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 8192,
@@ -387,8 +271,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 11.98,
           "ttft_p50": 310.53,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 8192,
@@ -404,8 +287,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 13.39,
           "ttft_p50": 341.66,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 8192,
@@ -421,8 +303,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 16.73,
           "ttft_p50": 459.36,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 8192,
@@ -438,8 +319,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 24.11,
           "ttft_p50": 619.98,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 8192,
@@ -455,8 +335,7 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 34.01,
           "ttft_p50": 1048.61,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
+          "e2el_p50": 0
         },
         {
           "isl": 8192,
@@ -472,603 +351,6 @@ window.DASHBOARD_DATA = {
           "tpot_p50": 54.11,
           "ttft_p50": 1821.31,
           "itl_p50": 0,
-          "e2el_p50": 0,
-          "_source": "ci-nightly"
-        }
-      ]
-    },
-    {
-      "run_id": "atom-mi355x-deepseek-r1-0528-mtp3",
-      "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 +MTP3 (ATOM)",
-      "platform": "8\u00d7MI355X",
-      "framework": "ATOM (d1bdbde8)",
-      "model": "DeepSeek-R1-0528",
-      "quantization": "FP8 +MTP3",
-      "gpu_count": 8,
-      "source": "ci-nightly",
-      "sources": [
-        "ci-nightly"
-      ],
-      "date": "2026-03-17",
-      "commit": "d1bdbde820548e8c9e742b08c051b20917218e61",
-      "commit_url": "https://github.com/ROCm/ATOM/commit/d1bdbde820548e8c9e742b08c051b20917218e61",
-      "results": [
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 4,
-          "scenario": "chat",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 622.24,
-          "total_tps": 1252.48,
-          "request_tps": 0,
-          "tpot_p50": 5.96,
-          "ttft_p50": 103.04,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 8,
-          "scenario": "chat",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 985.63,
-          "total_tps": 1966.99,
-          "request_tps": 0,
-          "tpot_p50": 7.72,
-          "ttft_p50": 116.89,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 16,
-          "scenario": "chat",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 1623.62,
-          "total_tps": 3269.58,
-          "request_tps": 0,
-          "tpot_p50": 9.33,
-          "ttft_p50": 143.43,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 32,
-          "scenario": "chat",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 2577.49,
-          "total_tps": 5154.58,
-          "request_tps": 0,
-          "tpot_p50": 11.73,
-          "ttft_p50": 182.77,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 64,
-          "scenario": "chat",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 3743.86,
-          "total_tps": 7501.12,
-          "request_tps": 0,
-          "tpot_p50": 16.19,
-          "ttft_p50": 238.12,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 128,
-          "scenario": "chat",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 5375.63,
-          "total_tps": 10780.33,
-          "request_tps": 0,
-          "tpot_p50": 22.48,
-          "ttft_p50": 345.76,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 256,
-          "scenario": "chat",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 7332.77,
-          "total_tps": 14681.74,
-          "request_tps": 0,
-          "tpot_p50": 32.73,
-          "ttft_p50": 530.06,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 8192,
-          "conc": 8,
-          "scenario": "reasoning",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 1175.06,
-          "total_tps": 1322.39,
-          "request_tps": 0,
-          "tpot_p50": 6.61,
-          "ttft_p50": 120.78,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 8192,
-          "conc": 16,
-          "scenario": "reasoning",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 1999.33,
-          "total_tps": 2250.26,
-          "request_tps": 0,
-          "tpot_p50": 7.76,
-          "ttft_p50": 147.27,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 8192,
-          "osl": 1024,
-          "conc": 4,
-          "scenario": "summarize",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 596.62,
-          "total_tps": 5376.92,
-          "request_tps": 0,
-          "tpot_p50": 6.12,
-          "ttft_p50": 318.45,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 8192,
-          "osl": 1024,
-          "conc": 8,
-          "scenario": "summarize",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 862.08,
-          "total_tps": 7686.56,
-          "request_tps": 0,
-          "tpot_p50": 8.6,
-          "ttft_p50": 394.82,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 8192,
-          "osl": 1024,
-          "conc": 16,
-          "scenario": "summarize",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 1269.35,
-          "total_tps": 11487.1,
-          "request_tps": 0,
-          "tpot_p50": 11.76,
-          "ttft_p50": 473.52,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 8192,
-          "osl": 1024,
-          "conc": 32,
-          "scenario": "summarize",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 1740.87,
-          "total_tps": 15609.1,
-          "request_tps": 0,
-          "tpot_p50": 17.16,
-          "ttft_p50": 699.77,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 8192,
-          "osl": 1024,
-          "conc": 64,
-          "scenario": "summarize",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 2158.5,
-          "total_tps": 19511.31,
-          "request_tps": 0,
-          "tpot_p50": 27.79,
-          "ttft_p50": 1040.73,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 8192,
-          "osl": 1024,
-          "conc": 128,
-          "scenario": "summarize",
-          "config": "mtp3-throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 2612.67,
-          "total_tps": 23653.74,
-          "request_tps": 0,
-          "tpot_p50": 45.93,
-          "ttft_p50": 1876.73,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        }
-      ]
-    },
-    {
-      "run_id": "atom-mi355x-glm-5",
-      "series_key": "8\u00d7MI355X GLM-5 FP8 (ATOM)",
-      "platform": "8\u00d7MI355X",
-      "framework": "ATOM (d1bdbde8)",
-      "model": "GLM-5",
-      "quantization": "FP8",
-      "gpu_count": 8,
-      "source": "ci-nightly",
-      "sources": [
-        "ci-nightly"
-      ],
-      "date": "2026-03-17",
-      "commit": "d1bdbde820548e8c9e742b08c051b20917218e61",
-      "commit_url": "https://github.com/ROCm/ATOM/commit/d1bdbde820548e8c9e742b08c051b20917218e61",
-      "results": [
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 1,
-          "scenario": "chat",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 47.1,
-          "total_tps": 93.86,
-          "request_tps": 0,
-          "tpot_p50": 21.15,
-          "ttft_p50": 100.98,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 2,
-          "scenario": "chat",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 95.1,
-          "total_tps": 188.47,
-          "request_tps": 0,
-          "tpot_p50": 20.86,
-          "ttft_p50": 111.33,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 8,
-          "scenario": "chat",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 323.01,
-          "total_tps": 643.62,
-          "request_tps": 0,
-          "tpot_p50": 24.04,
-          "ttft_p50": 127.23,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 16,
-          "scenario": "chat",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 607.66,
-          "total_tps": 1221.79,
-          "request_tps": 0,
-          "tpot_p50": 25.55,
-          "ttft_p50": 152.87,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 32,
-          "scenario": "chat",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 1045.83,
-          "total_tps": 2088.36,
-          "request_tps": 0,
-          "tpot_p50": 29.54,
-          "ttft_p50": 186.12,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 64,
-          "scenario": "chat",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 1808.96,
-          "total_tps": 3618.74,
-          "request_tps": 0,
-          "tpot_p50": 33.94,
-          "ttft_p50": 249.26,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 128,
-          "scenario": "chat",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 2904.89,
-          "total_tps": 5816.16,
-          "request_tps": 0,
-          "tpot_p50": 42.32,
-          "ttft_p50": 372.25,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 1024,
-          "conc": 256,
-          "scenario": "chat",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 4242.31,
-          "total_tps": 8480.51,
-          "request_tps": 0,
-          "tpot_p50": 58.09,
-          "ttft_p50": 603.1,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 8192,
-          "conc": 1,
-          "scenario": "reasoning",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 45.31,
-          "total_tps": 50.92,
-          "request_tps": 0,
-          "tpot_p50": 22.06,
-          "ttft_p50": 99.91,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 8192,
-          "conc": 2,
-          "scenario": "reasoning",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 87.97,
-          "total_tps": 99.03,
-          "request_tps": 0,
-          "tpot_p50": 22.55,
-          "ttft_p50": 114.76,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 8192,
-          "conc": 4,
-          "scenario": "reasoning",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 166.48,
-          "total_tps": 187.72,
-          "request_tps": 0,
-          "tpot_p50": 23.62,
-          "ttft_p50": 116.67,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 8192,
-          "conc": 16,
-          "scenario": "reasoning",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 582.62,
-          "total_tps": 655.72,
-          "request_tps": 0,
-          "tpot_p50": 26.65,
-          "ttft_p50": 153.57,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 1024,
-          "osl": 8192,
-          "conc": 32,
-          "scenario": "reasoning",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 1082.14,
-          "total_tps": 1216.5,
-          "request_tps": 0,
-          "tpot_p50": 28.73,
-          "ttft_p50": 180.24,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 8192,
-          "osl": 1024,
-          "conc": 1,
-          "scenario": "summarize",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 44.95,
-          "total_tps": 402.36,
-          "request_tps": 0,
-          "tpot_p50": 21.5,
-          "ttft_p50": 714.42,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 8192,
-          "osl": 1024,
-          "conc": 2,
-          "scenario": "summarize",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 84.1,
-          "total_tps": 749.49,
-          "request_tps": 0,
-          "tpot_p50": 22.83,
-          "ttft_p50": 839.23,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 8192,
-          "osl": 1024,
-          "conc": 4,
-          "scenario": "summarize",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 152.91,
-          "total_tps": 1374.56,
-          "request_tps": 0,
-          "tpot_p50": 24.67,
-          "ttft_p50": 802.69,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 8192,
-          "osl": 1024,
-          "conc": 16,
-          "scenario": "summarize",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 450.37,
-          "total_tps": 4064.48,
-          "request_tps": 0,
-          "tpot_p50": 33.19,
-          "ttft_p50": 1102.14,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 8192,
-          "osl": 1024,
-          "conc": 32,
-          "scenario": "summarize",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 733.14,
-          "total_tps": 6555.93,
-          "request_tps": 0,
-          "tpot_p50": 40.76,
-          "ttft_p50": 1524.05,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 8192,
-          "osl": 1024,
-          "conc": 64,
-          "scenario": "summarize",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 1030.83,
-          "total_tps": 9291.68,
-          "request_tps": 0,
-          "tpot_p50": 58.21,
-          "ttft_p50": 2482.84,
-          "itl_p50": 0,
-          "e2el_p50": 0
-        },
-        {
-          "isl": 8192,
-          "osl": 1024,
-          "conc": 128,
-          "scenario": "summarize",
-          "config": "throughput",
-          "ep_size": 0,
-          "dp_attention": false,
-          "output_tps": 1373.67,
-          "total_tps": 12401.62,
-          "request_tps": 0,
-          "tpot_p50": 87.47,
-          "ttft_p50": 3886.98,
-          "itl_p50": 0,
           "e2el_p50": 0
         }
       ]
@@ -1076,14 +358,11 @@ window.DASHBOARD_DATA = {
   ],
   "filters": {
     "platforms": [
-      "8\u00d7B200",
-      "8\u00d7H20",
       "8\u00d7MI355X"
     ],
     "scenarios": [
       "1024/1024",
       "1024/8192",
-      "17/128",
       "8192/1024"
     ],
     "concurrencies": [
@@ -1098,8 +377,7 @@ window.DASHBOARD_DATA = {
       256
     ],
     "models": [
-      "DeepSeek-R1-0528",
-      "GLM-5"
+      "DeepSeek-R1-0528"
     ]
   }
 };
