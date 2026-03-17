@@ -687,22 +687,23 @@ function buildPerfTable(data) {
       }
     }
 
-    // Delta columns (first series vs second series, first series as reference)
+    // Delta columns: positive = MI355X better, negative = MI355X worse
+    // Unified convention: +green = win, -red = lose
     if (isComparison && seriesKeys.length >= 2) {
       const a = vals[seriesKeys[0]], b = vals[seriesKeys[1]];
       if (a && b && a.output_tps > 0 && b.output_tps > 0) {
-        // TPS delta: (second - first) / first — positive = second is faster
+        // TPS: higher is better → (MI355X - B200) / B200
         const tpsDelta = ((b.output_tps - a.output_tps) / a.output_tps * 100);
         const tpsCls = tpsDelta > 0 ? 'delta-pos' : tpsDelta < 0 ? 'delta-neg' : 'delta-neutral';
         rows += `<td class="num ${tpsCls}">${tpsDelta > 0 ? '+' : ''}${tpsDelta.toFixed(1)}%</td>`;
-        // TPOT delta: lower is better, so (first - second) / first — positive = second is better
-        const tpotDelta = ((b.tpot_p50 - a.tpot_p50) / a.tpot_p50 * 100);
-        const tpotCls = tpotDelta < 0 ? 'delta-pos' : tpotDelta > 0 ? 'delta-neg' : 'delta-neutral';
+        // TPOT: lower is better → flip: (B200 - MI355X) / B200
+        const tpotDelta = ((a.tpot_p50 - b.tpot_p50) / a.tpot_p50 * 100);
+        const tpotCls = tpotDelta > 0 ? 'delta-pos' : tpotDelta < 0 ? 'delta-neg' : 'delta-neutral';
         rows += `<td class="num ${tpotCls}">${tpotDelta > 0 ? '+' : ''}${tpotDelta.toFixed(1)}%</td>`;
-        // TTFT delta: lower is better
-        const ttftDelta = a.ttft_p50 > 0 && b.ttft_p50 > 0 ? ((b.ttft_p50 - a.ttft_p50) / a.ttft_p50 * 100) : null;
+        // TTFT: lower is better → flip: (B200 - MI355X) / B200
+        const ttftDelta = a.ttft_p50 > 0 && b.ttft_p50 > 0 ? ((a.ttft_p50 - b.ttft_p50) / a.ttft_p50 * 100) : null;
         if (ttftDelta != null) {
-          const ttftCls = ttftDelta < 0 ? 'delta-pos' : ttftDelta > 0 ? 'delta-neg' : 'delta-neutral';
+          const ttftCls = ttftDelta > 0 ? 'delta-pos' : ttftDelta < 0 ? 'delta-neg' : 'delta-neutral';
           rows += `<td class="num ${ttftCls}">${ttftDelta > 0 ? '+' : ''}${ttftDelta.toFixed(1)}%</td>`;
         } else {
           rows += '<td class="num">-</td>';
