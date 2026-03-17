@@ -272,9 +272,46 @@ python3 scripts/import_results.py \
 python3 scripts/fetch_competitors.py
 python3 scripts/generate_dashboard.py
 
-# View
-cd ~/ClaudeSkillsE2EPerf/dashboard && python3 -m http.server 8899
+# View locally
+cd ~/ClaudeSkillsE2EPerf/docs && python3 -m http.server 8899
 ```
+
+### Environment Comparison (--env-tag)
+
+同一平台、相同配置但不同环境（Docker 版本、分支、运行日期等）的对比：
+
+```bash
+# 环境 A: 旧 Docker / 旧分支
+python3 scripts/import_results.py \
+  --results-dir ./results_b200_old \
+  --platform "8×B200" --framework "TRT-LLM" --quantization FP8 \
+  --env-tag "docker-v1"
+
+# 环境 B: 新 Docker / 新分支
+python3 scripts/import_results.py \
+  --results-dir ./results_b200_new \
+  --platform "8×B200" --framework "TRT-LLM" --quantization FP8 \
+  --env-tag "docker-v2"
+
+# 重新生成看板
+python3 scripts/generate_dashboard.py
+```
+
+`--env-tag` 会在 series_key 中追加标记，生成独立的对比系列：
+- `8×B200 DeepSeek-R1-0528 FP8 (TRT-LLM) [docker-v1]`
+- `8×B200 DeepSeek-R1-0528 FP8 (TRT-LLM) [docker-v2]`
+
+看板的 Apple-to-Apple 对比表、柱状图、Delta 列自动生效。
+
+`--env-tag` 可以是任何字符串，例如：
+| 场景 | 示例 |
+|------|------|
+| Docker 版本对比 | `--env-tag "trtllm-1.2.0rc4"` vs `--env-tag "trtllm-1.3.0"` |
+| 分支对比 | `--env-tag "main"` vs `--env-tag "fix-kv-cache"` |
+| 日期对比 | `--env-tag "0317"` vs `--env-tag "0320"` |
+| Commit 对比 | `--env-tag "abc1234"` vs `--env-tag "def5678"` |
+
+> 不加 `--env-tag` 时，同平台同配置的多次导入会合并为同一个 series（去重取最新）。
 
 ### Time Estimates
 
@@ -319,17 +356,20 @@ Benchmark scripts          Competitor CI
                        generate_dashboard.py
                                 |
                                 v
-                         dashboard/data.js
+                           docs/data.js
                                 |
                                 v
-                       dashboard/index.html
+                         docs/index.html
 ```
 
 ### Dashboard Features
 
-- **Throughput vs Latency** scatter plot (InferenceX-style, lower-right = better)
-- **Throughput / Latency** line charts by concurrency
-- **Data Table** with auto-calculated Delta% between platforms
+- **Performance** tab: bar chart with metric toggle (Output TPS / Total TPS / TPOT / TTFT) + Apple-to-Apple comparison table with Delta%
+- **Throughput vs Latency** scatter plots (TPOT vs TPS, Interactive vs TPS/GPU, TTFT vs TPS)
+- **Trends** tab: line charts by concurrency with series selector
+- **Data & Trace** tab: full data table with expandable detail rows + CSV export
+- **Apple-to-Apple** toggle: filter to only matching configs across platforms
+- Heat coloring (TPOT/TTFT), in-cell data bars, expandable detail rows
 - Filters: Platform, ISL/OSL scenario, Concurrency
 
 ### Dashboard Scripts
@@ -338,7 +378,7 @@ Benchmark scripts          Competitor CI
 |--------|---------|
 | `scripts/import_results.py` | Convert `results_*/result_*.json` → unified `runs/*.json` |
 | `scripts/fetch_competitors.py` | Fetch ATOM data from GitHub Pages → `runs/atom-*.json` |
-| `scripts/generate_dashboard.py` | Merge all `runs/*.json` → `dashboard/data.js` |
+| `scripts/generate_dashboard.py` | Merge all `runs/*.json` → `docs/data.js` |
 
 ### Unified Run Format
 
@@ -370,7 +410,7 @@ DeepSeek R1 uses `DeepseekV3ForCausalLM` (`model_type: deepseek_v3`):
 ```
 .
 ├── README.md                       # This file
-├── dashboard/                      # Unified comparison dashboard
+├── docs/                           # Unified comparison dashboard (GitHub Pages)
 │   ├── index.html
 │   └── data.js
 ├── runs/                           # Unified benchmark run data
@@ -385,7 +425,7 @@ DeepSeek R1 uses `DeepseekV3ForCausalLM` (`model_type: deepseek_v3`):
 │   ├── launch_mi355x_docker.sh     # MI355X Docker launcher
 │   ├── import_results.py           # results_*/ → runs/*.json
 │   ├── fetch_competitors.py        # Fetch competitor data
-│   └── generate_dashboard.py       # runs/ → dashboard/data.js
+│   └── generate_dashboard.py       # runs/ → docs/data.js
 ├── configs/
 │   ├── bench_config.yaml           # H20 config
 │   ├── bench_config_b200.yaml      # B200 config
