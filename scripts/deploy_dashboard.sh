@@ -161,15 +161,15 @@ fi
 
 # ======================== Step 4: Deploy to gh-pages ==========================
 if [[ "$NO_DEPLOY" == "true" ]]; then
-    log "Skipping deploy (--no-deploy). Dashboard updated locally at dashboard/index.html"
+    log "Skipping deploy (--no-deploy). Dashboard updated locally at docs/index.html"
 else
     log "Deploying to gh-pages..."
 
     # Copy dashboard files to temp before any git operations
     TMPDIR=$(mktemp -d)
     trap "rm -rf $TMPDIR" EXIT
-    cp "$REPO_ROOT/dashboard/index.html" "$TMPDIR/"
-    cp "$REPO_ROOT/dashboard/data.js" "$TMPDIR/"
+    cp "$REPO_ROOT/docs/index.html" "$TMPDIR/"
+    cp "$REPO_ROOT/docs/data.js" "$TMPDIR/"
 
     # Save current branch and stash if needed
     CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")

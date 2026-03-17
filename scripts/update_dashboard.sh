@@ -98,14 +98,14 @@ else
 fi
 
 # Step 3: Regenerate dashboard
-echo "[3/4] Generating dashboard/data.js..."
+echo "[3/4] Generating docs/data.js..."
 python3 scripts/generate_dashboard.py
 echo ""
 
 # Step 4: Commit & push
 if [[ "$DO_PUSH" == "true" ]]; then
     echo "[4/4] Committing and pushing..."
-    git add runs/ dashboard/data.js
+    git add runs/ docs/data.js
     if git diff --cached --quiet; then
         echo "  No changes to commit"
     else

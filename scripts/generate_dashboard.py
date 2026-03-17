@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Generate dashboard/data.js from all run JSONs in runs/ directory.
+"""Generate docs/data.js from all run JSONs in runs/ directory.
 
 Usage:
     python scripts/generate_dashboard.py
-    python scripts/generate_dashboard.py --runs-dir runs/ --output dashboard/data.js
+    python scripts/generate_dashboard.py --runs-dir runs/ --output docs/data.js
 """
 
 import argparse
@@ -165,7 +165,7 @@ def generate_data_js(runs):
 def main():
     parser = argparse.ArgumentParser(description="Generate dashboard data from run JSONs")
     parser.add_argument("--runs-dir", default="runs", help="Directory containing run JSON files")
-    parser.add_argument("--output", default="dashboard/data.js", help="Output data.js path")
+    parser.add_argument("--output", default="docs/data.js", help="Output data.js path")
     args = parser.parse_args()
 
     runs = load_runs(args.runs_dir)
