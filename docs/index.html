@@ -211,7 +211,7 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js" defer></script>
 <script src="data.js"></script>
 <script>
 'use strict';
@@ -587,16 +587,16 @@ function buildPerfBarChart(data) {
           callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.parsed.y)} ${def.unit}` }
         },
         legend: { labels: { color: '#bfc1d0', usePointStyle: true, pointStyle: 'rectRounded' } },
-        datalabels: {
+        datalabels: typeof ChartDataLabels !== 'undefined' ? {
           display: function(ctx) {
             return ctx.dataset.type !== 'line' && ctx.parsed.y > 0;
           },
           color: '#bfc1d0', anchor: 'end', align: 'top', font: { size: 9 },
           formatter: v => v != null ? fmtCompact(v) : '',
-        }
+        } : {display: false}
       }
     },
-    plugins: [ChartDataLabels],
+    plugins: typeof ChartDataLabels !== 'undefined' ? [ChartDataLabels] : [],
   });
 }
 
@@ -1070,9 +1070,8 @@ function refresh() {
   const activeTab = document.querySelector('.tab.active')?.dataset.tab;
   if (activeTab === 'performance') {
     const perfData = state.compareMode ? getCompareFiltered(data) : data;
-    console.log('[E2EDeepPerf] Performance tab: compareMode=' + state.compareMode + ', data=' + data.length + ', perfData=' + perfData.length);
-    try { buildPerfBarChart(perfData); } catch(e) { console.error('[E2EDeepPerf] Chart error:', e); }
-    try { buildPerfTable(perfData); } catch(e) { console.error('[E2EDeepPerf] Table error:', e); }
+    buildPerfBarChart(perfData);
+    buildPerfTable(perfData);
   } else if (activeTab === 'scatter') {
     buildScatter(data);
     buildScatter2(data);
