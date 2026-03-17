@@ -1070,8 +1070,9 @@ function refresh() {
   const activeTab = document.querySelector('.tab.active')?.dataset.tab;
   if (activeTab === 'performance') {
     const perfData = state.compareMode ? getCompareFiltered(data) : data;
-    buildPerfBarChart(perfData);
-    buildPerfTable(perfData);
+    console.log('[E2EDeepPerf] Performance tab: compareMode=' + state.compareMode + ', data=' + data.length + ', perfData=' + perfData.length);
+    try { buildPerfBarChart(perfData); } catch(e) { console.error('[E2EDeepPerf] Chart error:', e); }
+    try { buildPerfTable(perfData); } catch(e) { console.error('[E2EDeepPerf] Table error:', e); }
   } else if (activeTab === 'scatter') {
     buildScatter(data);
     buildScatter2(data);
