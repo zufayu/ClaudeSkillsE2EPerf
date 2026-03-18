@@ -1,10 +1,10 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-03-18T06:29:27.215643",
+  "generated_at": "2026-03-18T06:31:23.829320",
   "runs": [
     {
       "run_id": "8xb200-fp8-20260317-mtp0",
-      "series_key": "8xB200 DeepSeek-R1-0528 FP8 (TRT-LLM) [mtp0]",
-      "platform": "8xB200",
+      "series_key": "8\u00d7B200 DeepSeek-R1-0528 FP8 (TRT-LLM) [mtp0]",
+      "platform": "8\u00d7B200",
       "framework": "TRT-LLM",
       "model": "DeepSeek-R1-0528",
       "quantization": "FP8",
@@ -1042,7 +1042,6 @@ window.DASHBOARD_DATA = {
   ],
   "filters": {
     "platforms": [
-      "8xB200",
       "8\u00d7B200",
       "8\u00d7MI355X"
     ],
