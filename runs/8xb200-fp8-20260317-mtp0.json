@@ -1,5 +1,5 @@
 {
-  "run_id": "8xb200-fp8-20260317-mtp1",
+  "run_id": "8xb200-fp8-20260317-mtp0",
   "platform": "8xB200",
   "framework": "TRT-LLM",
   "model": "DeepSeek-R1-0528",
@@ -399,5 +399,5 @@
       "duration": 750.9198390600213
     }
   ],
-  "env_tag": "mtp1"
+  "env_tag": "mtp0"
 }
