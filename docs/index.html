@@ -677,9 +677,9 @@ function buildPerfTable(data) {
   if (isComparison) {
     const refShort = refKey.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
     const cmpShort = cmpKey.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
-    hdr += `<th class="num">TPS &Delta;<br><small>${cmpShort} vs ${refShort}</small></th>`;
-    hdr += `<th class="num">TPOT &Delta;<br><small>${cmpShort} vs ${refShort}</small></th>`;
-    hdr += `<th class="num">TTFT &Delta;<br><small>${cmpShort} vs ${refShort}</small></th>`;
+    hdr += `<th class="num">TPS &Delta;<br><small>${refShort} &rarr; ${cmpShort}</small></th>`;
+    hdr += `<th class="num">TPOT &Delta;<br><small>${refShort} &rarr; ${cmpShort}</small></th>`;
+    hdr += `<th class="num">TTFT &Delta;<br><small>${refShort} &rarr; ${cmpShort}</small></th>`;
   }
   hdr += '</tr>';
   thead.innerHTML = hdr;
