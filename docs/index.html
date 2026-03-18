@@ -290,7 +290,6 @@ function buildDetailHTML(d, run) {
     ['EP Size', d.ep_size != null ? d.ep_size : '-'],
     ['DP Attention', d.dp_attention ? 'Yes' : 'No'],
     ['Request TPS', fmtNum(d.request_tps)],
-    ['Total TPS', fmtNum(d.total_tps)],
     ['Output TPS', fmtNum(d.output_tps)],
     ['TPOT p50', fmtNum(d.tpot_p50) + ' ms'],
     ['TPOT p99', d.tpot_p99 != null ? fmtNum(d.tpot_p99) + ' ms' : '-'],
@@ -511,7 +510,6 @@ function destroyChart(id) {
 /* --- Performance Tab: Bar Chart --- */
 const METRIC_DEFS = {
   output_tps: {label: 'Output Throughput', unit: 'tok/s', higher: true},
-  total_tps: {label: 'Total Throughput', unit: 'tok/s', higher: true},
   tpot_p50: {label: 'TPOT p50', unit: 'ms', higher: false},
   ttft_p50: {label: 'TTFT p50', unit: 'ms', higher: false},
 };
@@ -630,7 +628,6 @@ function buildPerfTable(data) {
   const tpotMin = Math.min(...tpotValues), tpotMax = Math.max(...tpotValues);
   const ttftMin = Math.min(...ttftValues), ttftMax = Math.max(...ttftValues);
   const outputMax = Math.max(...data.map(d => d.output_tps || 0));
-  const totalMax = Math.max(...data.map(d => d.total_tps || 0));
 
   // Build header
   let hdr = '<tr><th></th><th>Scenario</th><th>ISL/OSL</th><th class="num">Conc</th>';
@@ -1008,14 +1005,14 @@ function buildDataTable(data) {
 
 /* --- CSV Export --- */
 function copyCSV(data) {
-  const headers = ['Date','Commit','Series','Model','ISL','OSL','Conc','GPU','Output_TPS','Total_TPS','TPOT_p50','TTFT_p50','Config','Source','Framework'];
+  const headers = ['Date','Commit','Series','Model','ISL','OSL','Conc','GPU','Output_TPS','TPOT_p50','TTFT_p50','Config','Source','Framework'];
   const csvRows = [headers.join(',')];
   for (const d of data) {
     const run = runs.find(r => r.series_key === d.series_key);
     csvRows.push([
       d.date || '', (run?.commit || '').substring(0, 7), d.series_key, d.model || '',
       d.isl, d.osl, d.conc, d.gpu_count || '',
-      d.output_tps, d.total_tps || '', d.tpot_p50, d.ttft_p50,
+      d.output_tps, d.tpot_p50, d.ttft_p50,
       d.config || '', d.source || d._source || '', d.framework || ''
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
   }
