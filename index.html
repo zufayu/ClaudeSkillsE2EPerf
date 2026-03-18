@@ -677,9 +677,9 @@ function buildPerfTable(data) {
   if (isComparison) {
     const refShort = refKey.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
     const cmpShort = cmpKey.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
-    hdr += `<th class="num">TPS &Delta;<br><small>${refShort} &rarr; ${cmpShort}</small></th>`;
-    hdr += `<th class="num">TPOT &Delta;<br><small>${refShort} &rarr; ${cmpShort}</small></th>`;
-    hdr += `<th class="num">TTFT &Delta;<br><small>${refShort} &rarr; ${cmpShort}</small></th>`;
+    hdr += `<th class="num">TPS &Delta;<br><small>${refShort} vs ${cmpShort}</small></th>`;
+    hdr += `<th class="num">TPOT &Delta;<br><small>${refShort} vs ${cmpShort}</small></th>`;
+    hdr += `<th class="num">TTFT &Delta;<br><small>${refShort} vs ${cmpShort}</small></th>`;
   }
   hdr += '</tr>';
   thead.innerHTML = hdr;
@@ -732,23 +732,23 @@ function buildPerfTable(data) {
     if (isComparison) {
       const a = vals[refKey], b = vals[cmpKey];
       if (a && b && a.output_tps > 0 && b.output_tps > 0) {
-        // All deltas: (cmp - ref) / ref — positive means cmp is higher
-        // TPS: higher is better → positive = green
-        const tpsDelta = ((b.output_tps - a.output_tps) / a.output_tps * 100);
+        // All deltas from Ref's perspective: positive = Ref is better → green
+        // TPS: higher is better → (ref - cmp) / cmp — positive means Ref has higher TPS
+        const tpsDelta = ((a.output_tps - b.output_tps) / b.output_tps * 100);
         const tpsCls = tpsDelta > 0 ? 'delta-pos' : tpsDelta < 0 ? 'delta-neg' : 'delta-neutral';
         rows += `<td class="num ${tpsCls}">${tpsDelta > 0 ? '+' : ''}${tpsDelta.toFixed(1)}%</td>`;
-        // TPOT: lower is better → positive (cmp higher) = red, negative (cmp lower) = green
+        // TPOT: lower is better → (cmp - ref) / ref — positive means Ref has lower TPOT (better)
         const tpotDelta = a.tpot_p50 > 0 && b.tpot_p50 > 0 ? ((b.tpot_p50 - a.tpot_p50) / a.tpot_p50 * 100) : null;
         if (tpotDelta != null) {
-          const tpotCls = tpotDelta < 0 ? 'delta-pos' : tpotDelta > 0 ? 'delta-neg' : 'delta-neutral';
+          const tpotCls = tpotDelta > 0 ? 'delta-pos' : tpotDelta < 0 ? 'delta-neg' : 'delta-neutral';
           rows += `<td class="num ${tpotCls}">${tpotDelta > 0 ? '+' : ''}${tpotDelta.toFixed(1)}%</td>`;
         } else {
           rows += '<td class="num">-</td>';
         }
-        // TTFT: lower is better → positive (cmp higher) = red, negative (cmp lower) = green
+        // TTFT: lower is better → (cmp - ref) / ref — positive means Ref has lower TTFT (better)
         const ttftDelta = a.ttft_p50 > 0 && b.ttft_p50 > 0 ? ((b.ttft_p50 - a.ttft_p50) / a.ttft_p50 * 100) : null;
         if (ttftDelta != null) {
-          const ttftCls = ttftDelta < 0 ? 'delta-pos' : ttftDelta > 0 ? 'delta-neg' : 'delta-neutral';
+          const ttftCls = ttftDelta > 0 ? 'delta-pos' : ttftDelta < 0 ? 'delta-neg' : 'delta-neutral';
           rows += `<td class="num ${ttftCls}">${ttftDelta > 0 ? '+' : ''}${ttftDelta.toFixed(1)}%</td>`;
         } else {
           rows += '<td class="num">-</td>';
