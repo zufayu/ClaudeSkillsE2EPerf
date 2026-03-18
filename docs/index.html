@@ -499,6 +499,13 @@ const charts = {};
 
 function destroyChart(id) {
   if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+  // Also clear any orphaned Chart instance on the canvas (e.g. from prior crash)
+  const canvasMap = {'perfBar': 'chart-perf-bar', 'scatter': 'chart-scatter', 'trendLine': 'chart-trend-line'};
+  if (canvasMap[id]) {
+    const el = document.getElementById(canvasMap[id]);
+    const existing = el && Chart.getChart(el);
+    if (existing) existing.destroy();
+  }
 }
 
 /* --- Performance Tab: Bar Chart --- */
@@ -589,7 +596,7 @@ function buildPerfBarChart(data) {
         legend: { labels: { color: '#bfc1d0', usePointStyle: true, pointStyle: 'rectRounded' } },
         datalabels: typeof ChartDataLabels !== 'undefined' ? {
           display: function(ctx) {
-            return ctx.dataset.type !== 'line' && ctx.parsed.y > 0;
+            return ctx.dataset.type !== 'line' && ctx.parsed && ctx.parsed.y != null && ctx.parsed.y > 0;
           },
           color: '#bfc1d0', anchor: 'end', align: 'top', font: { size: 9 },
           formatter: v => v != null ? fmtCompact(v) : '',
