@@ -64,6 +64,13 @@ h1 .sub{color:var(--text-secondary);font-weight:400;font-size:14px}
 /* Series selector buttons */
 .series-selector{display:flex;gap:6px;margin-bottom:var(--gap-md);flex-wrap:wrap}
 
+/* Compare pair selector */
+.compare-pair{display:flex;gap:var(--gap-sm);align-items:center;flex-wrap:wrap}
+.compare-pair label{font-size:12px;color:var(--text-tertiary);font-weight:500}
+.compare-pair select{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;max-width:260px}
+.compare-pair select:focus{border-color:var(--accent-blue);outline:none}
+.compare-pair .vs-label{color:var(--text-tertiary);font-size:11px;font-weight:600}
+
 /* Charts */
 .chart-grid{display:grid;grid-template-columns:1fr;gap:var(--gap-lg)}
 .chart-card{background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:var(--gap-md)}
@@ -166,7 +173,13 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
 <div class="tab-content active" id="tab-performance">
   <div style="display:flex;gap:var(--gap-md);align-items:center;flex-wrap:wrap;margin-bottom:var(--gap-sm)">
     <div class="metric-selector" id="perf-metric-selector"></div>
-    <button class="sel-btn" id="compare-toggle" style="margin-left:auto;border-color:var(--accent-cyan);font-weight:600">Compare (Apple-to-Apple)</button>
+    <button class="sel-btn" id="compare-toggle" style="margin-left:auto;border-color:var(--accent-cyan);font-weight:600">Apple-to-Apple</button>
+  </div>
+  <div class="compare-pair" id="compare-pair">
+    <label>Ref:</label><select id="compare-ref"></select>
+    <span class="vs-label">vs</span>
+    <label>Cmp:</label><select id="compare-cmp"></select>
+    <button class="sel-btn" id="compare-swap" style="padding:4px 8px;font-size:11px">&#8644; Swap</button>
   </div>
   <div class="chart-grid">
     <div class="chart-card hero"><h3 id="perf-chart-title">Output Throughput by Configuration</h3><div class="chart-wrap"><canvas id="chart-perf-bar"></canvas></div></div>
@@ -336,6 +349,8 @@ const state = {
   perfMetric: 'output_tps',
   trendsSeries: allSeries[0] || '',
   compareMode: true,  // default ON for apple-to-apple
+  compareRef: allSeries[0] || '',
+  compareCmp: allSeries[1] || '',
 };
 
 function getFiltered() {
@@ -352,20 +367,24 @@ function getFiltered() {
   return out;
 }
 
-/* Filter to only configs where ALL active series have data (apple-to-apple) */
+/* Filter to only configs where the selected compare pair both have data (apple-to-apple) */
 function getCompareFiltered(data) {
   const seriesKeys = [...new Set(data.map(d => d.series_key))];
   if (seriesKeys.length < 2) return data; // nothing to compare
-  // Find configs present in all series
-  const configsBySeries = {};
-  for (const sk of seriesKeys) configsBySeries[sk] = new Set();
+  const refKey = seriesKeys.includes(state.compareRef) ? state.compareRef : seriesKeys[0];
+  const cmpKey = seriesKeys.includes(state.compareCmp) ? state.compareCmp : seriesKeys[1];
+  if (!refKey || !cmpKey || refKey === cmpKey) return data;
+  // Find configs present in both ref and cmp series
+  const refConfigs = new Set();
+  const cmpConfigs = new Set();
   for (const d of data) {
-    configsBySeries[d.series_key].add(`${d.isl}/${d.osl}|${d.conc}`);
+    const cfg = `${d.isl}/${d.osl}|${d.conc}`;
+    if (d.series_key === refKey) refConfigs.add(cfg);
+    if (d.series_key === cmpKey) cmpConfigs.add(cfg);
   }
   const commonConfigs = new Set();
-  const firstSet = configsBySeries[seriesKeys[0]];
-  for (const cfg of firstSet) {
-    if (seriesKeys.every(sk => configsBySeries[sk].has(cfg))) commonConfigs.add(cfg);
+  for (const cfg of refConfigs) {
+    if (cmpConfigs.has(cfg)) commonConfigs.add(cfg);
   }
   return data.filter(d => commonConfigs.has(`${d.isl}/${d.osl}|${d.conc}`));
 }
@@ -615,7 +634,10 @@ function buildPerfTable(data) {
   const tbody = table.querySelector('tbody');
 
   const seriesKeys = [...new Set(data.map(d => d.series_key))];
-  const isComparison = seriesKeys.length >= 2;
+  // Use user-selected compare pair; fall back to first two series
+  const refKey = seriesKeys.includes(state.compareRef) ? state.compareRef : seriesKeys[0];
+  const cmpKey = seriesKeys.includes(state.compareCmp) ? state.compareCmp : seriesKeys[1];
+  const isComparison = seriesKeys.length >= 2 && refKey && cmpKey && refKey !== cmpKey;
 
   // Group by config (ISL/OSL + conc)
   const groups = {};
@@ -643,8 +665,8 @@ function buildPerfTable(data) {
     hdr += `<th class="num" style="color:${c.border}">TTFT<br><small>(ms)</small></th>`;
   }
   if (isComparison) {
-    const refShort = seriesKeys[0].replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
-    const cmpShort = seriesKeys[1].replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
+    const refShort = refKey.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
+    const cmpShort = cmpKey.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
     hdr += `<th class="num">TPS &Delta;<br><small>${cmpShort} vs ${refShort}</small></th>`;
     hdr += `<th class="num">TPOT &Delta;<br><small>${cmpShort} vs ${refShort}</small></th>`;
     hdr += `<th class="num">TTFT &Delta;<br><small>${cmpShort} vs ${refShort}</small></th>`;
@@ -695,10 +717,10 @@ function buildPerfTable(data) {
       }
     }
 
-    // Delta columns: positive = MI355X better, negative = MI355X worse
-    // Unified convention: +green = win, -red = lose
-    if (isComparison && seriesKeys.length >= 2) {
-      const a = vals[seriesKeys[0]], b = vals[seriesKeys[1]];
+    // Delta columns: (cmp - ref) / ref — positive = cmp higher
+    // TPS: positive = green; TPOT/TTFT: negative = green (lower is better)
+    if (isComparison) {
+      const a = vals[refKey], b = vals[cmpKey];
       if (a && b && a.output_tps > 0 && b.output_tps > 0) {
         // All deltas: (cmp - ref) / ref — positive means cmp is higher
         // TPS: higher is better → positive = green
@@ -1062,7 +1084,35 @@ document.querySelectorAll('.tab').forEach(tab => {
 });
 
 /* ================================================================
-   9. REFRESH
+   9. COMPARE PAIR SELECTOR
+   ================================================================ */
+function buildComparePairSelector() {
+  const refSel = document.getElementById('compare-ref');
+  const cmpSel = document.getElementById('compare-cmp');
+  const activeSeries = allSeries.filter(s => state.series.has(s));
+
+  // Preserve current values, rebuild options
+  const prevRef = state.compareRef;
+  const prevCmp = state.compareCmp;
+
+  refSel.innerHTML = '';
+  cmpSel.innerHTML = '';
+  for (const sk of activeSeries) {
+    const shortName = sk.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
+    refSel.innerHTML += `<option value="${sk}" ${sk === prevRef ? 'selected' : ''}>${shortName}</option>`;
+    cmpSel.innerHTML += `<option value="${sk}" ${sk === prevCmp ? 'selected' : ''}>${shortName}</option>`;
+  }
+
+  // Auto-select: if previous values are gone, pick first two
+  if (!activeSeries.includes(state.compareRef)) state.compareRef = activeSeries[0] || '';
+  if (!activeSeries.includes(state.compareCmp)) state.compareCmp = activeSeries[1] || activeSeries[0] || '';
+
+  refSel.value = state.compareRef;
+  cmpSel.value = state.compareCmp;
+}
+
+/* ================================================================
+   10. REFRESH
    ================================================================ */
 function refresh() {
   const data = getFiltered();
@@ -1080,6 +1130,9 @@ function refresh() {
       cmpBtn.style.color = '';
     }
   }
+
+  // Update compare pair dropdowns
+  buildComparePairSelector();
 
   const activeTab = document.querySelector('.tab.active')?.dataset.tab;
   if (activeTab === 'performance') {
@@ -1101,7 +1154,7 @@ function refresh() {
 }
 
 /* ================================================================
-   10. META & INIT
+   11. META & INIT
    ================================================================ */
 function init() {
   const metaLine = document.getElementById('meta-line');
@@ -1120,6 +1173,22 @@ function init() {
   // Compare toggle
   document.getElementById('compare-toggle').addEventListener('click', () => {
     state.compareMode = !state.compareMode;
+    refresh();
+  });
+
+  // Compare pair selectors
+  document.getElementById('compare-ref').addEventListener('change', (e) => {
+    state.compareRef = e.target.value;
+    refresh();
+  });
+  document.getElementById('compare-cmp').addEventListener('change', (e) => {
+    state.compareCmp = e.target.value;
+    refresh();
+  });
+  document.getElementById('compare-swap').addEventListener('click', () => {
+    const tmp = state.compareRef;
+    state.compareRef = state.compareCmp;
+    state.compareCmp = tmp;
     refresh();
   });
 
