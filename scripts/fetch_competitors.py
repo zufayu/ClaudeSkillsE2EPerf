@@ -170,12 +170,14 @@ def convert_atom_to_runs(atom_data):
             results.append(result)
 
         run_key = f"atom-mi355x-{model_clean.lower()}{mtp_tag}"
+        mtp_env_tag = f"mtp{m.group(1)}" if (is_mtp and m) else "mtp0"
         runs[run_key] = {
             "run_id": run_key,
             "platform": f"{gpu_count}×MI355X",
             "framework": f"ATOM ({commit.get('id', 'unknown')[:8]})",
             "model": model_clean,
-            "quantization": quant + (f" +MTP3" if is_mtp else ""),
+            "quantization": quant,
+            "env_tag": mtp_env_tag,
             "gpu_count": gpu_count,
             "source": "ci-nightly",
             "date": date_str,
