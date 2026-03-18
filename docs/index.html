@@ -529,6 +529,16 @@ function destroyChart(id) {
   }
 }
 
+/* Sort series: Ref first, Cmp second, then others in original order */
+function sortSeriesKeys(keys) {
+  return keys.slice().sort((a, b) => {
+    const ai = a === state.compareRef ? 0 : a === state.compareCmp ? 1 : 2;
+    const bi = b === state.compareRef ? 0 : b === state.compareCmp ? 1 : 2;
+    if (ai !== bi) return ai - bi;
+    return keys.indexOf(a) - keys.indexOf(b);
+  });
+}
+
 /* --- Performance Tab: Bar Chart --- */
 const METRIC_DEFS = {
   output_tps: {label: 'Output Throughput', unit: 'tok/s', higher: true},
@@ -565,7 +575,7 @@ function buildPerfBarChart(data) {
   document.getElementById('perf-chart-title').textContent = `${def.label} by Configuration${suffix}`;
 
   // Group data by series, then by config label
-  const seriesKeys = [...new Set(data.map(d => d.series_key))];
+  const seriesKeys = sortSeriesKeys([...new Set(data.map(d => d.series_key))]);
   const configLabels = [...new Set(data.map(d => `${d.isl}/${d.osl} c=${d.conc}`))];
   // Sort config labels
   configLabels.sort((a, b) => {
@@ -633,7 +643,7 @@ function buildPerfTable(data) {
   const thead = table.querySelector('thead');
   const tbody = table.querySelector('tbody');
 
-  const seriesKeys = [...new Set(data.map(d => d.series_key))];
+  const seriesKeys = sortSeriesKeys([...new Set(data.map(d => d.series_key))]);
   // Use user-selected compare pair; fall back to first two series
   const refKey = seriesKeys.includes(state.compareRef) ? state.compareRef : seriesKeys[0];
   const cmpKey = seriesKeys.includes(state.compareCmp) ? state.compareCmp : seriesKeys[1];
