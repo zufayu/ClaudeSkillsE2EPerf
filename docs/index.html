@@ -431,10 +431,13 @@ function buildFilters() {
   });
   bar.appendChild(resetBtn);
 
-  document.addEventListener('click', () => {
-    document.querySelectorAll('.filter-dropdown.open').forEach(d => d.classList.remove('open'));
-    document.querySelectorAll('.filter-btn.open').forEach(b => b.classList.remove('open'));
-  });
+  if (!buildFilters._bound) {
+    buildFilters._bound = true;
+    document.addEventListener('click', () => {
+      document.querySelectorAll('.filter-dropdown.open').forEach(d => d.classList.remove('open'));
+      document.querySelectorAll('.filter-btn.open').forEach(b => b.classList.remove('open'));
+    });
+  }
 }
 
 /* ================================================================
@@ -499,7 +502,7 @@ const charts = {};
 function destroyChart(id) {
   if (charts[id]) { charts[id].destroy(); delete charts[id]; }
   // Also clear any orphaned Chart instance on the canvas (e.g. from prior crash)
-  const canvasMap = {'perfBar': 'chart-perf-bar', 'scatter': 'chart-scatter', 'trendLine': 'chart-trend-line'};
+  const canvasMap = {'perfBar': 'chart-perf-bar', 'scatter': 'chart-scatter', 'scatter2': 'chart-scatter2', 'scatter3': 'chart-scatter3', 'tput': 'chart-tput', 'tpot': 'chart-tpot', 'ttft': 'chart-ttft'};
   if (canvasMap[id]) {
     const el = document.getElementById(canvasMap[id]);
     const existing = el && Chart.getChart(el);
@@ -625,9 +628,10 @@ function buildPerfTable(data) {
   // Compute ranges for heat coloring & data bars
   const tpotValues = data.filter(d => d.tpot_p50 > 0).map(d => d.tpot_p50);
   const ttftValues = data.filter(d => d.ttft_p50 > 0).map(d => d.ttft_p50);
-  const tpotMin = Math.min(...tpotValues), tpotMax = Math.max(...tpotValues);
-  const ttftMin = Math.min(...ttftValues), ttftMax = Math.max(...ttftValues);
-  const outputMax = Math.max(...data.map(d => d.output_tps || 0));
+  const tpotMin = tpotValues.length ? Math.min(...tpotValues) : 0, tpotMax = tpotValues.length ? Math.max(...tpotValues) : 0;
+  const ttftMin = ttftValues.length ? Math.min(...ttftValues) : 0, ttftMax = ttftValues.length ? Math.max(...ttftValues) : 0;
+  const outputValues = data.map(d => d.output_tps || 0);
+  const outputMax = outputValues.length ? Math.max(...outputValues) : 0;
 
   // Build header
   let hdr = '<tr><th></th><th>Scenario</th><th>ISL/OSL</th><th class="num">Conc</th>';
@@ -696,18 +700,23 @@ function buildPerfTable(data) {
     if (isComparison && seriesKeys.length >= 2) {
       const a = vals[seriesKeys[0]], b = vals[seriesKeys[1]];
       if (a && b && a.output_tps > 0 && b.output_tps > 0) {
-        // TPS: higher is better → (MI355X - B200) / B200
+        // All deltas: (cmp - ref) / ref — positive means cmp is higher
+        // TPS: higher is better → positive = green
         const tpsDelta = ((b.output_tps - a.output_tps) / a.output_tps * 100);
         const tpsCls = tpsDelta > 0 ? 'delta-pos' : tpsDelta < 0 ? 'delta-neg' : 'delta-neutral';
         rows += `<td class="num ${tpsCls}">${tpsDelta > 0 ? '+' : ''}${tpsDelta.toFixed(1)}%</td>`;
-        // TPOT: lower is better → flip: (B200 - MI355X) / B200
-        const tpotDelta = ((a.tpot_p50 - b.tpot_p50) / a.tpot_p50 * 100);
-        const tpotCls = tpotDelta > 0 ? 'delta-pos' : tpotDelta < 0 ? 'delta-neg' : 'delta-neutral';
-        rows += `<td class="num ${tpotCls}">${tpotDelta > 0 ? '+' : ''}${tpotDelta.toFixed(1)}%</td>`;
-        // TTFT: lower is better → flip: (B200 - MI355X) / B200
-        const ttftDelta = a.ttft_p50 > 0 && b.ttft_p50 > 0 ? ((a.ttft_p50 - b.ttft_p50) / a.ttft_p50 * 100) : null;
+        // TPOT: lower is better → positive (cmp higher) = red, negative (cmp lower) = green
+        const tpotDelta = a.tpot_p50 > 0 && b.tpot_p50 > 0 ? ((b.tpot_p50 - a.tpot_p50) / a.tpot_p50 * 100) : null;
+        if (tpotDelta != null) {
+          const tpotCls = tpotDelta < 0 ? 'delta-pos' : tpotDelta > 0 ? 'delta-neg' : 'delta-neutral';
+          rows += `<td class="num ${tpotCls}">${tpotDelta > 0 ? '+' : ''}${tpotDelta.toFixed(1)}%</td>`;
+        } else {
+          rows += '<td class="num">-</td>';
+        }
+        // TTFT: lower is better → positive (cmp higher) = red, negative (cmp lower) = green
+        const ttftDelta = a.ttft_p50 > 0 && b.ttft_p50 > 0 ? ((b.ttft_p50 - a.ttft_p50) / a.ttft_p50 * 100) : null;
         if (ttftDelta != null) {
-          const ttftCls = ttftDelta > 0 ? 'delta-pos' : ttftDelta < 0 ? 'delta-neg' : 'delta-neutral';
+          const ttftCls = ttftDelta < 0 ? 'delta-pos' : ttftDelta > 0 ? 'delta-neg' : 'delta-neutral';
           rows += `<td class="num ${ttftCls}">${ttftDelta > 0 ? '+' : ''}${ttftDelta.toFixed(1)}%</td>`;
         } else {
           rows += '<td class="num">-</td>';
@@ -940,8 +949,8 @@ function buildDataTable(data) {
   // Compute ranges for heat coloring
   const tpotValues = data.filter(d => d.tpot_p50 > 0).map(d => d.tpot_p50);
   const ttftValues = data.filter(d => d.ttft_p50 > 0).map(d => d.ttft_p50);
-  const tpotMin = Math.min(...tpotValues), tpotMax = Math.max(...tpotValues);
-  const ttftMin = Math.min(...ttftValues), ttftMax = Math.max(...ttftValues);
+  const tpotMin = tpotValues.length ? Math.min(...tpotValues) : 0, tpotMax = tpotValues.length ? Math.max(...tpotValues) : 0;
+  const ttftMin = ttftValues.length ? Math.min(...ttftValues) : 0, ttftMax = ttftValues.length ? Math.max(...ttftValues) : 0;
 
   thead.innerHTML = `<tr>
     <th></th>
@@ -1013,7 +1022,7 @@ function copyCSV(data) {
       d.date || '', (run?.commit || '').substring(0, 7), d.series_key, d.model || '',
       d.isl, d.osl, d.conc, d.gpu_count || '',
       d.output_tps, d.tpot_p50, d.ttft_p50,
-      d.config || '', d.source || d._source || '', d.framework || ''
+      d.config || '', d.source || '', d.framework || ''
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
   }
   const csv = csvRows.join('\n');
