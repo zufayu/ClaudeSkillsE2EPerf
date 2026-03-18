@@ -121,6 +121,9 @@ def main():
     parser.add_argument("--source", default="manual", help='Data source: "manual" or "ci"')
     args = parser.parse_args()
 
+    # Normalize platform name: 8xB200 → 8×B200, 8xMI355X → 8×MI355X
+    args.platform = re.sub(r'(\d+)x', lambda m: m.group(1) + '×', args.platform)
+
     result_files = sorted(glob.glob(os.path.join(args.results_dir, "result_*.json")))
     if not result_files:
         print(f"ERROR: No result_*.json files found in {args.results_dir}", file=sys.stderr)
