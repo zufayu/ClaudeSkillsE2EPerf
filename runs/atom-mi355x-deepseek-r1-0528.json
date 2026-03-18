@@ -6,6 +6,7 @@
   "quantization": "FP8",
   "gpu_count": 8,
   "source": "ci-nightly",
+  "env_tag": "mtp0",
   "date": "2026-03-17",
   "commit": "d1bdbde820548e8c9e742b08c051b20917218e61",
   "commit_url": "https://github.com/ROCm/ATOM/commit/d1bdbde820548e8c9e742b08c051b20917218e61",

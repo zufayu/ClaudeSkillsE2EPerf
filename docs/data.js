@@ -1,5 +1,5 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-03-18T02:41:29.705444",
+  "generated_at": "2026-03-18T02:54:17.427103",
   "runs": [
     {
       "run_id": "8xb200-fp8-20260317-mtp0",
@@ -686,7 +686,7 @@ window.DASHBOARD_DATA = {
     },
     {
       "run_id": "atom-mi355x-deepseek-r1-0528",
-      "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 (ATOM)",
+      "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 (ATOM) [mtp0]",
       "platform": "8\u00d7MI355X",
       "framework": "ATOM (d1bdbde8)",
       "model": "DeepSeek-R1-0528",
@@ -699,7 +699,7 @@ window.DASHBOARD_DATA = {
       "date": "2026-03-17",
       "commit": "d1bdbde820548e8c9e742b08c051b20917218e61",
       "commit_url": "https://github.com/ROCm/ATOM/commit/d1bdbde820548e8c9e742b08c051b20917218e61",
-      "env_tag": "",
+      "env_tag": "mtp0",
       "results": [
         {
           "isl": 1024,
