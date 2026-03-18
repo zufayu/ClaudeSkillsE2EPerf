@@ -99,6 +99,7 @@ def deduplicate_runs(runs):
             "date": latest.get("date", ""),
             "commit": latest.get("commit", ""),
             "commit_url": latest.get("commit_url", ""),
+            "env_tag": latest.get("env_tag", ""),
             "results": sorted(result_map.values(),
                               key=lambda r: (r.get("isl", 0), r.get("osl", 0),
                                              r.get("conc", 0))),

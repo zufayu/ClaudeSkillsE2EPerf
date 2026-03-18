@@ -1,6 +1,6 @@
 {
   "run_id": "8xb200-fp8-20260317-mtp0",
-  "platform": "8xB200",
+  "platform": "8×B200",
   "framework": "TRT-LLM",
   "model": "DeepSeek-R1-0528",
   "quantization": "FP8",
