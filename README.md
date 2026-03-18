@@ -425,7 +425,8 @@ DeepSeek R1 uses `DeepseekV3ForCausalLM` (`model_type: deepseek_v3`):
 │   ├── launch_mi355x_docker.sh     # MI355X Docker launcher
 │   ├── import_results.py           # results_*/ → runs/*.json
 │   ├── fetch_competitors.py        # Fetch competitor data
-│   └── generate_dashboard.py       # runs/ → docs/data.js
+│   ├── generate_dashboard.py       # runs/ → docs/data.js
+│   └── setup_claude_memory.sh      # Claude Code memory persistence
 ├── configs/
 │   ├── bench_config.yaml           # H20 config
 │   ├── bench_config_b200.yaml      # B200 config
@@ -435,6 +436,43 @@ DeepSeek R1 uses `DeepseekV3ForCausalLM` (`model_type: deepseek_v3`):
 │   └── bench_serving/              # benchmark_serving.py (InferenceX)
 └── results/
     └── deepseek_r1_8xh20_fp8_pytorch.json
+```
+
+## Claude Code 记忆持久化
+
+在 Docker 容器内使用 Claude Code 时，记忆默认存在容器内部，容器重建后会丢失。本脚本将记忆目录 symlink 到宿主机挂载的 home 目录，实现持久化。
+
+### 首次设置（容器内执行）
+
+```bash
+bash ~/ClaudeSkillsE2EPerf/scripts/setup_claude_memory.sh
+```
+
+脚本会自动检测挂载的 home 目录（如 `/home/zufayu`），将记忆存储到 `~/.claude_memory/`。
+
+### 容器重建后恢复
+
+```bash
+bash ~/ClaudeSkillsE2EPerf/scripts/setup_claude_memory.sh
+```
+
+同一条命令，会检测到已有记忆文件并重新建立 symlink，之前的记忆全部恢复。
+
+### 手动指定挂载路径
+
+```bash
+bash ~/ClaudeSkillsE2EPerf/scripts/setup_claude_memory.sh /home/your_username
+```
+
+### 原理
+
+```
+容器内 Claude 写入:
+  /root/.claude/projects/-/memory/  (symlink)
+         ↓
+  /home/zufayu/.claude_memory/      (宿主机磁盘)
+         ↓
+  容器重建后文件仍在，重新 symlink 即可恢复
 ```
 
 ## License
