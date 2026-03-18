@@ -1,5 +1,5 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-03-18T02:24:55.164210",
+  "generated_at": "2026-03-18T02:28:22.664163",
   "runs": [
     {
       "run_id": "8xb200-fp8-20260317-mtp0",
@@ -1014,8 +1014,8 @@ window.DASHBOARD_DATA = {
       ]
     },
     {
-      "run_id": "8xmi355x-fp8-20260317-mtp3",
-      "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 (ATOM) [mtp3]",
+      "run_id": "8xmi355x-fp8-20260318-mtp3",
+      "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 (ATOM)",
       "platform": "8\u00d7MI355X",
       "framework": "ATOM",
       "model": "DeepSeek-R1-0528",
@@ -1025,10 +1025,10 @@ window.DASHBOARD_DATA = {
       "sources": [
         "manual"
       ],
-      "date": "2026-03-17",
+      "date": "2026-03-18",
       "commit": "",
       "commit_url": "",
-      "env_tag": "mtp3",
+      "env_tag": "",
       "results": [
         {
           "isl": 1024,
@@ -1054,7 +1054,35 @@ window.DASHBOARD_DATA = {
           "e2el_mean": 11033.279083148227,
           "num_prompts": 40,
           "completed": 40,
-          "duration": 113.85021158191375
+          "duration": 113.85021158191375,
+          "_source": "manual"
+        },
+        {
+          "isl": 1024,
+          "osl": 1024,
+          "conc": 128,
+          "scenario": "chat",
+          "config": "latency",
+          "ep_size": null,
+          "dp_attention": false,
+          "output_tps": 4234.1046762233855,
+          "total_tps": 8477.510999437041,
+          "request_tps": 4.602283783357803,
+          "tpot_p50": 29.126738093531625,
+          "ttft_p50": 103.89976151054725,
+          "itl_p50": 23.63304898608476,
+          "e2el_p50": 26964.9621094577,
+          "tpot_p99": 31.833577972812535,
+          "ttft_p99": 3170.6054496124852,
+          "itl_p99": 119.07130398321897,
+          "e2el_p99": 31721.16907685413,
+          "tpot_mean": 29.019947360439925,
+          "ttft_mean": 299.99840177197257,
+          "e2el_mean": 26988.230704031048,
+          "num_prompts": 1280,
+          "completed": 1280,
+          "duration": 278.1227886530105,
+          "_source": "manual"
         }
       ]
     },

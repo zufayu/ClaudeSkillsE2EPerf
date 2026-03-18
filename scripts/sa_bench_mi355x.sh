@@ -399,7 +399,7 @@ run_config() {
             fi
 
             # For latency config with MTP, limit concurrency to avoid OOM
-            if [[ "$config_name" == "latency" && $conc -gt 64 ]]; then
+            if [[ "$config_name" == "latency" && $conc -gt 128 ]]; then
                 log "  SKIP: CONC=$conc too high for MI355X MTP latency config"
                 continue
             fi
