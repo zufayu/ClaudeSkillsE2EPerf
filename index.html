@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>ClaudeSkillsE2EPerf - Unified Benchmark Dashboard</title>
+<title>E2EDeepPerf - Unified Benchmark Dashboard</title>
 <style>
 :root {
   --bg-primary:#0b0c10;--bg-secondary:#141519;--bg-tertiary:#1c1d24;
@@ -55,6 +55,22 @@ h1 .sub{color:var(--text-secondary);font-weight:400;font-size:14px}
 .tab-content{display:none}
 .tab-content.active{display:block}
 
+/* Metric selector buttons */
+.metric-selector{display:flex;gap:6px;margin-bottom:var(--gap-md);flex-wrap:wrap}
+.sel-btn{background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:500;transition:all .15s}
+.sel-btn:hover{color:var(--text-primary);border-color:var(--text-tertiary)}
+.sel-btn.active{background:var(--accent-blue);color:#fff;border-color:var(--accent-blue)}
+
+/* Series selector buttons */
+.series-selector{display:flex;gap:6px;margin-bottom:var(--gap-md);flex-wrap:wrap}
+
+/* Compare pair selector */
+.compare-pair{display:flex;gap:var(--gap-sm);align-items:center;flex-wrap:wrap}
+.compare-pair label{font-size:12px;color:var(--text-tertiary);font-weight:500}
+.compare-pair select{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;max-width:260px}
+.compare-pair select:focus{border-color:var(--accent-blue);outline:none}
+.compare-pair .vs-label{color:var(--text-tertiary);font-size:11px;font-weight:600}
+
 /* Charts */
 .chart-grid{display:grid;grid-template-columns:1fr;gap:var(--gap-lg)}
 .chart-card{background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:var(--gap-md)}
@@ -66,8 +82,9 @@ h1 .sub{color:var(--text-secondary);font-weight:400;font-size:14px}
 /* Tables */
 .table-wrap{overflow-x:auto}
 table.perf{width:100%;border-collapse:collapse;font-size:12px}
-table.perf th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--border);color:var(--text-tertiary);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;position:sticky;top:0;background:var(--bg-secondary)}
+table.perf th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--border);color:var(--text-tertiary);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;position:sticky;top:0;background:var(--bg-secondary);cursor:pointer}
 table.perf th.num{text-align:right}
+table.perf th:hover{color:var(--text-primary)}
 table.perf td{padding:7px 10px;border-bottom:1px solid var(--border-light)}
 table.perf td.num{text-align:right;font-family:"SF Mono","Fira Code",monospace;font-size:12px}
 table.perf tbody tr:nth-child(even){background:rgba(22,27,34,.5)}
@@ -76,13 +93,58 @@ table.perf tbody tr:hover{background:var(--bg-tertiary)}
 .delta-neg{color:var(--accent-red);font-weight:600}
 .delta-neutral{color:var(--text-tertiary)}
 
+/* Data bars */
+.data-bar{position:relative;min-width:80px}
+.data-bar-fill{position:absolute;top:2px;left:0;bottom:2px;border-radius:3px;opacity:0.2}
+.data-bar-text{position:relative;z-index:1;font-family:"SF Mono","Fira Code",monospace;font-size:12px;text-align:right;padding-right:4px}
+
+/* Heat coloring for TPOT/TTFT */
+.heat-cell{border-radius:3px;padding:4px 8px !important}
+
+/* Trend indicators */
+.trend-up{color:var(--accent-green);font-weight:600;font-size:11px}
+.trend-down{color:var(--accent-red);font-weight:600;font-size:11px}
+.trend-neutral{color:var(--text-tertiary);font-size:11px}
+
+/* Expandable detail rows */
+.expand-btn{background:none;border:none;color:var(--text-tertiary);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px}
+.expand-btn:hover{color:var(--text-primary);background:var(--bg-tertiary)}
+.detail-row{display:none}
+.detail-row.open{display:table-row}
+.detail-row td{padding:12px 20px !important;background:var(--bg-tertiary);border-bottom:2px solid var(--border)}
+.detail-content{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;font-size:11px}
+.detail-content .detail-item{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border-light)}
+.detail-content .detail-label{color:var(--text-tertiary)}
+.detail-content .detail-value{color:var(--text-primary);font-family:"SF Mono","Fira Code",monospace}
+
+/* View toggle */
+.view-toggle{display:flex;gap:0;margin-bottom:var(--gap-md)}
+.view-toggle .vt-btn{padding:6px 14px;font-size:12px;cursor:pointer;border:1px solid var(--border);color:var(--text-secondary);background:var(--bg-tertiary)}
+.view-toggle .vt-btn:first-child{border-radius:6px 0 0 6px}
+.view-toggle .vt-btn:last-child{border-radius:0 6px 6px 0}
+.view-toggle .vt-btn.active{background:var(--accent-blue);color:#fff;border-color:var(--accent-blue)}
+
+/* CSV copy button */
+.csv-btn{background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;margin-bottom:var(--gap-md)}
+.csv-btn:hover{background:var(--bg-secondary);color:var(--text-primary)}
+
 /* Metadata badges */
 .badge{font-size:10px;padding:2px 8px;border-radius:10px;background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border);margin-right:4px}
 .badge.manual{border-color:var(--accent-orange);color:var(--accent-orange)}
 .badge.ci{border-color:var(--accent-green);color:var(--accent-green)}
 
+/* Commit link */
+.commit-link{font-family:"SF Mono","Fira Code",monospace;font-size:11px;color:var(--accent-blue);text-decoration:none}
+.commit-link:hover{text-decoration:underline}
+
 /* Footer */
 footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--text-tertiary);display:flex;justify-content:space-between;flex-wrap:wrap;gap:var(--gap-sm)}
+
+/* Responsive */
+@media(max-width:768px){
+  .kpi-row{grid-template-columns:repeat(2,1fr)}
+  .chart-card .chart-wrap{height:300px}
+}
 </style>
 </head>
 <body>
@@ -90,7 +152,7 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
 
 <header>
   <div>
-    <h1>ClaudeSkillsE2EPerf<span class="sep">|</span><span class="sub">Unified Benchmark Dashboard</span></h1>
+    <h1>E2EDeepPerf<span class="sep">|</span><span class="sub">Unified Benchmark Dashboard</span></h1>
     <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px" id="meta-line">Loading...</div>
   </div>
   <div class="filter-bar" id="filter-bar"></div>
@@ -101,64 +163,85 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
 
 <!-- Tabs -->
 <div class="tabs" id="tabs">
-  <div class="tab active" data-tab="scatter">Throughput vs Latency</div>
-  <div class="tab" data-tab="throughput">Throughput</div>
-  <div class="tab" data-tab="latency">Latency</div>
-  <div class="tab" data-tab="data">Data Table</div>
+  <div class="tab active" data-tab="performance">Performance</div>
+  <div class="tab" data-tab="scatter">Throughput vs Latency</div>
+  <div class="tab" data-tab="trends">Trends</div>
+  <div class="tab" data-tab="data">Data &amp; Trace</div>
 </div>
 
-<!-- Tab: Scatter -->
-<div class="tab-content active" id="tab-scatter">
+<!-- Tab: Performance -->
+<div class="tab-content active" id="tab-performance">
+  <div style="display:flex;gap:var(--gap-md);align-items:center;flex-wrap:wrap;margin-bottom:var(--gap-sm)">
+    <div class="metric-selector" id="perf-metric-selector"></div>
+    <button class="sel-btn" id="compare-toggle" style="margin-left:auto;border-color:var(--accent-cyan);font-weight:600">Apple-to-Apple</button>
+  </div>
+  <div class="compare-pair" id="compare-pair">
+    <label>Ref:</label><select id="compare-ref"></select>
+    <span class="vs-label">vs</span>
+    <label>Cmp:</label><select id="compare-cmp"></select>
+    <button class="sel-btn" id="compare-swap" style="padding:4px 8px;font-size:11px">&#8644; Swap</button>
+  </div>
+  <div class="chart-grid">
+    <div class="chart-card hero"><h3 id="perf-chart-title">Output Throughput by Configuration</h3><div class="chart-wrap"><canvas id="chart-perf-bar"></canvas></div></div>
+  </div>
+  <div style="margin-top:var(--gap-lg)">
+    <div class="table-wrap"><table class="perf" id="perf-table"><thead></thead><tbody></tbody></table></div>
+  </div>
+</div>
+
+<!-- Tab: Throughput vs Latency -->
+<div class="tab-content" id="tab-scatter">
   <div class="chart-grid">
     <div class="chart-card hero"><h3>Output Throughput vs TPOT (lower-right = better)</h3><div class="chart-wrap"><canvas id="chart-scatter"></canvas></div></div>
+    <div class="chart-card half"><h3>Interactive (1000/TPOT) vs Token Throughput</h3><div class="chart-wrap"><canvas id="chart-scatter2"></canvas></div></div>
+    <div class="chart-card half"><h3>Output Throughput vs TTFT</h3><div class="chart-wrap"><canvas id="chart-scatter3"></canvas></div></div>
   </div>
 </div>
 
-<!-- Tab: Throughput -->
-<div class="tab-content" id="tab-throughput">
+<!-- Tab: Trends -->
+<div class="tab-content" id="tab-trends">
+  <div class="series-selector" id="trends-series-selector"></div>
   <div class="chart-grid">
     <div class="chart-card hero"><h3>Output Throughput by Concurrency</h3><div class="chart-wrap"><canvas id="chart-tput"></canvas></div></div>
-  </div>
-</div>
-
-<!-- Tab: Latency -->
-<div class="tab-content" id="tab-latency">
-  <div class="chart-grid">
     <div class="chart-card half"><h3>TPOT p50 by Concurrency</h3><div class="chart-wrap"><canvas id="chart-tpot"></canvas></div></div>
     <div class="chart-card half"><h3>TTFT p50 by Concurrency</h3><div class="chart-wrap"><canvas id="chart-ttft"></canvas></div></div>
   </div>
 </div>
 
-<!-- Tab: Data Table -->
+<!-- Tab: Data & Trace -->
 <div class="tab-content" id="tab-data">
+  <div style="display:flex;gap:var(--gap-sm);align-items:center;margin-bottom:var(--gap-md)">
+    <button class="csv-btn" id="copy-csv-btn">Copy CSV</button>
+  </div>
   <div class="table-wrap"><table class="perf" id="data-table"><thead></thead><tbody></tbody></table></div>
 </div>
 
 <footer>
-  <span id="footer-info">ClaudeSkillsE2EPerf Benchmark Dashboard</span>
+  <span id="footer-info">E2EDeepPerf Benchmark Dashboard</span>
   <span id="footer-gen"></span>
 </footer>
 
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js" defer></script>
 <script src="data.js"></script>
 <script>
 'use strict';
 (function(){
 
 /* ================================================================
-   1. COLOR PALETTE
+   1. COLOR PALETTE & UTILITIES
    ================================================================ */
 const PALETTE = [
-  {border:'#5b9cf5',bg:'rgba(91,156,245,0.15)'},   // blue
-  {border:'#f25c4e',bg:'rgba(242,92,78,0.15)'},     // red
-  {border:'#56d472',bg:'rgba(86,212,114,0.15)'},     // green
-  {border:'#eda06a',bg:'rgba(237,160,106,0.15)'},    // orange
-  {border:'#c49af5',bg:'rgba(196,154,245,0.15)'},    // purple
-  {border:'#4ec9d4',bg:'rgba(78,201,212,0.15)'},     // cyan
-  {border:'#d86ecc',bg:'rgba(216,110,204,0.15)'},    // pink
-  {border:'#ddb040',bg:'rgba(221,176,64,0.15)'},     // yellow
+  {border:'#5b9cf5',bg:'rgba(91,156,245,0.55)'},
+  {border:'#f25c4e',bg:'rgba(242,92,78,0.55)'},
+  {border:'#56d472',bg:'rgba(86,212,114,0.55)'},
+  {border:'#eda06a',bg:'rgba(237,160,106,0.55)'},
+  {border:'#c49af5',bg:'rgba(196,154,245,0.55)'},
+  {border:'#4ec9d4',bg:'rgba(78,201,212,0.55)'},
+  {border:'#d86ecc',bg:'rgba(216,110,204,0.55)'},
+  {border:'#ddb040',bg:'rgba(221,176,64,0.55)'},
 ];
 const colorMap = {};
 let colorIdx = 0;
@@ -167,28 +250,107 @@ function getColor(key) {
   return colorMap[key];
 }
 
+function fmtNum(v, decimals) {
+  if (v == null || isNaN(v)) return '-';
+  const d = decimals != null ? decimals : (v >= 100 ? 0 : v >= 10 ? 1 : 2);
+  return v.toLocaleString('en-US', {minimumFractionDigits: d, maximumFractionDigits: d});
+}
+
+function fmtCompact(v) {
+  if (v == null || isNaN(v)) return '-';
+  if (v >= 10000) return (v/1000).toFixed(1) + 'K';
+  if (v >= 1000) return (v/1000).toFixed(2) + 'K';
+  return fmtNum(v);
+}
+
+function trendHTML(current, baseline, higherIsBetter) {
+  if (baseline == null || baseline === 0 || current == null) return '<span class="trend-neutral">-</span>';
+  const pct = ((current - baseline) / baseline * 100);
+  const isGood = higherIsBetter ? pct > 0 : pct < 0;
+  const absPct = Math.abs(pct);
+  if (absPct < 0.5) return '<span class="trend-neutral">~0%</span>';
+  const arrow = pct > 0 ? '&#9650;' : '&#9660;';
+  const cls = isGood ? 'trend-up' : 'trend-down';
+  return `<span class="${cls}">${arrow} ${absPct.toFixed(1)}%</span>`;
+}
+
+function heatBg(value, min, max, invert) {
+  if (value == null || isNaN(value) || min === max) return '';
+  let ratio = (value - min) / (max - min);
+  if (invert) ratio = 1 - ratio;
+  ratio = Math.max(0, Math.min(1, ratio));
+  // green (good) -> yellow -> red (bad)
+  const r = Math.round(ratio < 0.5 ? ratio * 2 * 255 : 255);
+  const g = Math.round(ratio < 0.5 ? 255 : (1 - (ratio - 0.5) * 2) * 255);
+  return `rgba(${r},${g},50,0.15)`;
+}
+
+function commitHTML(run) {
+  if (!run.commit) return '-';
+  const short = run.commit.substring(0, 7);
+  if (run.commit_url) return `<a class="commit-link" href="${run.commit_url}" target="_blank" rel="noopener">${short}</a>`;
+  return `<code>${short}</code>`;
+}
+
+function sourceHTML(run) {
+  const srcList = run.sources && run.sources.length ? run.sources : [run.source || '?'];
+  return srcList.map(s => s === 'ci-nightly' ? '<span class="badge ci">CI</span>' : '<span class="badge manual">Manual</span>').join('');
+}
+
+function buildDetailHTML(d, run) {
+  const items = [
+    ['Config', d.config || '-'],
+    ['EP Size', d.ep_size != null ? d.ep_size : '-'],
+    ['DP Attention', d.dp_attention ? 'Yes' : 'No'],
+    ['Request TPS', fmtNum(d.request_tps)],
+    ['Output TPS', fmtNum(d.output_tps)],
+    ['TPOT p50', fmtNum(d.tpot_p50) + ' ms'],
+    ['TPOT p99', d.tpot_p99 != null ? fmtNum(d.tpot_p99) + ' ms' : '-'],
+    ['TPOT mean', d.tpot_mean != null ? fmtNum(d.tpot_mean) + ' ms' : '-'],
+    ['TTFT p50', fmtNum(d.ttft_p50) + ' ms'],
+    ['TTFT p99', d.ttft_p99 != null ? fmtNum(d.ttft_p99) + ' ms' : '-'],
+    ['TTFT mean', d.ttft_mean != null ? fmtNum(d.ttft_mean) + ' ms' : '-'],
+    ['ITL p50', d.itl_p50 ? fmtNum(d.itl_p50) + ' ms' : '-'],
+    ['E2E p50', d.e2el_p50 ? fmtNum(d.e2el_p50) + ' ms' : '-'],
+    ['E2E p99', d.e2el_p99 != null ? fmtNum(d.e2el_p99) + ' ms' : '-'],
+    ['E2E mean', d.e2el_mean != null ? fmtNum(d.e2el_mean) + ' ms' : '-'],
+    ['Num Prompts', d.num_prompts || '-'],
+    ['Completed', d.completed || '-'],
+    ['Duration', d.duration != null ? fmtNum(d.duration) + ' s' : '-'],
+    ['Framework', run?.framework || '-'],
+    ['GPU Count', run?.gpu_count || '-'],
+    ['Date', run?.date || '-'],
+  ];
+  return '<div class="detail-content">' +
+    items.map(([l,v]) => `<div class="detail-item"><span class="detail-label">${l}</span><span class="detail-value">${v}</span></div>`).join('') +
+    '</div>';
+}
+
 /* ================================================================
    2. DATA PARSING
    ================================================================ */
 const rawData = window.DASHBOARD_DATA;
 const runs = rawData.runs || [];
 
-// Build lookup structures
 const allSeries = [...new Set(runs.map(r => r.series_key))];
 const allScenarios = rawData.filters?.scenarios || [];
 const allConcs = rawData.filters?.concurrencies || [];
-const allPlatforms = rawData.filters?.platforms || [];
+const allModels = rawData.filters?.models || [];
 
 /* ================================================================
    3. STATE & FILTERS
    ================================================================ */
-// Default: only show SA-standard scenarios and DeepSeek runs (exclude GLM-5 and non-standard ISL/OSL)
 const standardScenarios = allScenarios.filter(s => ['1024/1024','1024/8192','8192/1024'].includes(s));
 const defaultSeries = allSeries.filter(s => !s.includes('GLM'));
 const state = {
   scenarios: new Set(standardScenarios.length ? standardScenarios : allScenarios),
   series: new Set(defaultSeries.length ? defaultSeries : allSeries),
   concs: new Set(allConcs.map(String)),
+  perfMetric: 'output_tps',
+  trendsSeries: allSeries[0] || '',
+  compareMode: true,  // default ON for apple-to-apple
+  compareRef: allSeries[0] || '',
+  compareCmp: allSeries[1] || '',
 };
 
 function getFiltered() {
@@ -199,10 +361,32 @@ function getFiltered() {
       const sKey = `${r.isl}/${r.osl}`;
       if (!state.scenarios.has(sKey)) continue;
       if (!state.concs.has(String(r.conc))) continue;
-      out.push({...r, series_key: run.series_key, platform: run.platform, date: run.date, source: run.source});
+      out.push({...r, series_key: run.series_key, platform: run.platform, date: run.date, source: run.source, framework: run.framework, quantization: run.quantization, sources: run.sources, gpu_count: run.gpu_count, commit: run.commit, commit_url: run.commit_url, model: run.model});
     }
   }
   return out;
+}
+
+/* Filter to only configs where the selected compare pair both have data (apple-to-apple) */
+function getCompareFiltered(data) {
+  const seriesKeys = [...new Set(data.map(d => d.series_key))];
+  if (seriesKeys.length < 2) return data; // nothing to compare
+  const refKey = seriesKeys.includes(state.compareRef) ? state.compareRef : seriesKeys[0];
+  const cmpKey = seriesKeys.includes(state.compareCmp) ? state.compareCmp : seriesKeys[1];
+  if (!refKey || !cmpKey || refKey === cmpKey) return data;
+  // Find configs present in both ref and cmp series
+  const refConfigs = new Set();
+  const cmpConfigs = new Set();
+  for (const d of data) {
+    const cfg = `${d.isl}/${d.osl}|${d.conc}`;
+    if (d.series_key === refKey) refConfigs.add(cfg);
+    if (d.series_key === cmpKey) cmpConfigs.add(cfg);
+  }
+  const commonConfigs = new Set();
+  for (const cfg of refConfigs) {
+    if (cmpConfigs.has(cfg)) commonConfigs.add(cfg);
+  }
+  return data.filter(d => commonConfigs.has(`${d.isl}/${d.osl}|${d.conc}`));
 }
 
 /* ================================================================
@@ -254,7 +438,6 @@ function buildFilters() {
     bar.appendChild(group);
   }
 
-  // Reset button
   const resetBtn = document.createElement('button');
   resetBtn.className = 'filter-reset';
   resetBtn.textContent = 'Reset';
@@ -267,10 +450,13 @@ function buildFilters() {
   });
   bar.appendChild(resetBtn);
 
-  document.addEventListener('click', () => {
-    document.querySelectorAll('.filter-dropdown.open').forEach(d => d.classList.remove('open'));
-    document.querySelectorAll('.filter-btn.open').forEach(b => b.classList.remove('open'));
-  });
+  if (!buildFilters._bound) {
+    buildFilters._bound = true;
+    document.addEventListener('click', () => {
+      document.querySelectorAll('.filter-dropdown.open').forEach(d => d.classList.remove('open'));
+      document.querySelectorAll('.filter-btn.open').forEach(b => b.classList.remove('open'));
+    });
+  }
 }
 
 /* ================================================================
@@ -278,26 +464,50 @@ function buildFilters() {
    ================================================================ */
 function updateKPIs(data) {
   const row = document.getElementById('kpi-row');
-  const seriesKeys = [...new Set(data.map(d => d.series_key))];
-  // Find max throughput per series
-  const maxTput = {};
-  const bestTpot = {};
+  row.innerHTML = '';
+
+  // Global peak throughput
+  let peakTput = 0, peakTputInfo = '';
+  let bestTpot = Infinity, bestTpotInfo = '';
+  const modelSet = new Set();
+  const configSet = new Set();
+  let ciCount = 0, manualCount = 0;
+
   for (const d of data) {
-    if (!maxTput[d.series_key] || d.output_tps > maxTput[d.series_key]) maxTput[d.series_key] = d.output_tps;
-    if (!bestTpot[d.series_key] || d.tpot_p50 < bestTpot[d.series_key]) bestTpot[d.series_key] = d.tpot_p50;
+    if (d.output_tps > peakTput) {
+      peakTput = d.output_tps;
+      peakTputInfo = `${d.series_key} c=${d.conc} ${d.isl}/${d.osl}`;
+    }
+    if (d.tpot_p50 > 0 && d.tpot_p50 < bestTpot) {
+      bestTpot = d.tpot_p50;
+      bestTpotInfo = `${d.series_key} c=${d.conc}`;
+    }
+    modelSet.add(d.model || d.series_key);
+    configSet.add(`${d.isl}/${d.osl}|${d.conc}`);
   }
 
-  row.innerHTML = '';
-  for (const sk of seriesKeys) {
+  for (const run of runs) {
+    if (!state.series.has(run.series_key)) continue;
+    const src = run.source || '';
+    if (src === 'ci-nightly') ciCount++; else manualCount++;
+  }
+
+  if (bestTpot === Infinity) bestTpot = 0;
+
+  const cards = [
+    {label: 'Peak Output Throughput', value: fmtCompact(peakTput), unit: 'tok/s', sub: peakTputInfo},
+    {label: 'Best TPOT (lowest)', value: fmtNum(bestTpot, 1), unit: 'ms', sub: bestTpotInfo},
+    {label: 'Test Matrix', value: `${modelSet.size}`, unit: `models &times; ${configSet.size} configs`, sub: `${data.length} total data points`},
+    {label: 'Sources', value: `${ciCount + manualCount}`, unit: 'runs', sub: `${ciCount ? '<span class="badge ci">CI</span>' + ciCount : ''}${manualCount ? ' <span class="badge manual">Manual</span>' + manualCount : ''}`},
+  ];
+
+  for (const c of cards) {
     const card = document.createElement('div');
     card.className = 'kpi-card';
-    const run = runs.find(r => r.series_key === sk);
-    const sourceBadge = run?.source === 'ci-nightly' ? '<span class="badge ci">CI</span>' : '<span class="badge manual">Manual</span>';
     card.innerHTML = `
-      <div class="kpi-label">${sk}</div>
-      <div class="kpi-value">${(maxTput[sk]||0).toFixed(0)} <span class="kpi-unit">tok/s</span></div>
-      <div class="kpi-sub">Peak Output TPS | Best TPOT: ${(bestTpot[sk]||0).toFixed(1)}ms</div>
-      <div class="kpi-sub">${sourceBadge} ${run?.date || ''}</div>
+      <div class="kpi-label">${c.label}</div>
+      <div class="kpi-value">${c.value} <span class="kpi-unit">${c.unit}</span></div>
+      <div class="kpi-sub">${c.sub}</div>
     `;
     row.appendChild(card);
   }
@@ -310,8 +520,274 @@ const charts = {};
 
 function destroyChart(id) {
   if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+  // Also clear any orphaned Chart instance on the canvas (e.g. from prior crash)
+  const canvasMap = {'perfBar': 'chart-perf-bar', 'scatter': 'chart-scatter', 'scatter2': 'chart-scatter2', 'scatter3': 'chart-scatter3', 'tput': 'chart-tput', 'tpot': 'chart-tpot', 'ttft': 'chart-ttft'};
+  if (canvasMap[id]) {
+    const el = document.getElementById(canvasMap[id]);
+    const existing = el && Chart.getChart(el);
+    if (existing) existing.destroy();
+  }
 }
 
+/* Sort series: Ref first, Cmp second, then others in original order */
+function sortSeriesKeys(keys) {
+  return keys.slice().sort((a, b) => {
+    const ai = a === state.compareRef ? 0 : a === state.compareCmp ? 1 : 2;
+    const bi = b === state.compareRef ? 0 : b === state.compareCmp ? 1 : 2;
+    if (ai !== bi) return ai - bi;
+    return keys.indexOf(a) - keys.indexOf(b);
+  });
+}
+
+/* --- Performance Tab: Bar Chart --- */
+const METRIC_DEFS = {
+  output_tps: {label: 'Output Throughput', unit: 'tok/s', higher: true},
+  tpot_p50: {label: 'TPOT p50', unit: 'ms', higher: false},
+  ttft_p50: {label: 'TTFT p50', unit: 'ms', higher: false},
+};
+
+function buildPerfMetricSelector() {
+  const container = document.getElementById('perf-metric-selector');
+  container.innerHTML = '';
+  for (const [key, def] of Object.entries(METRIC_DEFS)) {
+    const btn = document.createElement('button');
+    btn.className = 'sel-btn' + (state.perfMetric === key ? ' active' : '');
+    btn.textContent = def.label;
+    btn.addEventListener('click', () => {
+      state.perfMetric = key;
+      container.querySelectorAll('.sel-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      refresh();
+    });
+    container.appendChild(btn);
+  }
+}
+
+function buildPerfBarChart(data) {
+  destroyChart('perfBar');
+  const canvas = document.getElementById('chart-perf-bar');
+  const metric = state.perfMetric;
+  const def = METRIC_DEFS[metric];
+
+  const seriesCount = new Set(data.map(d => d.series_key)).size;
+  const configCount = new Set(data.map(d => `${d.isl}/${d.osl} c=${d.conc}`)).size;
+  const suffix = state.compareMode && seriesCount >= 2 ? ` — ${configCount} matching configs` : '';
+  document.getElementById('perf-chart-title').textContent = `${def.label} by Configuration${suffix}`;
+
+  // Group data by series, then by config label
+  const seriesKeys = sortSeriesKeys([...new Set(data.map(d => d.series_key))]);
+  const configLabels = [...new Set(data.map(d => `${d.isl}/${d.osl} c=${d.conc}`))];
+  // Sort config labels
+  configLabels.sort((a, b) => {
+    const pa = a.match(/(\d+)\/(\d+) c=(\d+)/);
+    const pb = b.match(/(\d+)\/(\d+) c=(\d+)/);
+    if (!pa || !pb) return 0;
+    if (pa[1] !== pb[1]) return +pa[1] - +pb[1];
+    if (pa[2] !== pb[2]) return +pa[2] - +pb[2];
+    return +pa[3] - +pb[3];
+  });
+
+  const datasets = [];
+  const allValues = data.map(d => d[metric] || 0).filter(v => v > 0);
+  const avg = allValues.length ? allValues.reduce((a,b) => a+b, 0) / allValues.length : 0;
+
+  for (const sk of seriesKeys) {
+    const c = getColor(sk);
+    const values = configLabels.map(cl => {
+      const match = data.find(d => d.series_key === sk && `${d.isl}/${d.osl} c=${d.conc}` === cl);
+      return match ? (match[metric] || 0) : null;
+    });
+    datasets.push({
+      label: sk, data: values, backgroundColor: c.bg, borderColor: c.border, borderWidth: 1,
+    });
+  }
+
+  // Average line dataset
+  datasets.push({
+    label: 'Average', type: 'line',
+    data: configLabels.map(() => avg),
+    borderColor: 'rgba(255,255,255,0.3)', borderDash: [6, 4], borderWidth: 1.5,
+    pointRadius: 0, fill: false, order: -1,
+  });
+
+  charts['perfBar'] = new Chart(canvas, {
+    type: 'bar',
+    data: { labels: configLabels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { color: '#7e8094', font: {size: 10} }, grid: { color: '#262733' } },
+        y: { title: { display: true, text: `${def.label} (${def.unit})`, color: '#7e8094' }, ticks: { color: '#7e8094' }, grid: { color: '#262733' } },
+      },
+      plugins: {
+        tooltip: {
+          callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.parsed.y)} ${def.unit}` }
+        },
+        legend: { labels: { color: '#bfc1d0', usePointStyle: true, pointStyle: 'rectRounded' } },
+        datalabels: typeof ChartDataLabels !== 'undefined' ? {
+          display: function(ctx) {
+            return ctx.dataset.type !== 'line' && ctx.parsed && ctx.parsed.y != null && ctx.parsed.y > 0;
+          },
+          color: '#bfc1d0', anchor: 'end', align: 'top', font: { size: 9 },
+          formatter: v => v != null ? fmtCompact(v) : '',
+        } : {display: false}
+      }
+    },
+    plugins: typeof ChartDataLabels !== 'undefined' ? [ChartDataLabels] : [],
+  });
+}
+
+/* --- Performance Tab: Comparison Table --- */
+function buildPerfTable(data) {
+  const table = document.getElementById('perf-table');
+  const thead = table.querySelector('thead');
+  const tbody = table.querySelector('tbody');
+
+  const seriesKeys = sortSeriesKeys([...new Set(data.map(d => d.series_key))]);
+  // Use user-selected compare pair; fall back to first two series
+  const refKey = seriesKeys.includes(state.compareRef) ? state.compareRef : seriesKeys[0];
+  const cmpKey = seriesKeys.includes(state.compareCmp) ? state.compareCmp : seriesKeys[1];
+  const isComparison = seriesKeys.length >= 2 && refKey && cmpKey && refKey !== cmpKey;
+
+  // Group by config (ISL/OSL + conc)
+  const groups = {};
+  for (const d of data) {
+    const gk = `${d.isl}/${d.osl}|${d.conc}`;
+    if (!groups[gk]) groups[gk] = {isl:d.isl, osl:d.osl, conc:d.conc, byPlatform:{}};
+    groups[gk].byPlatform[d.series_key] = d;
+  }
+
+  // Compute ranges for heat coloring & data bars
+  const tpotValues = data.filter(d => d.tpot_p50 > 0).map(d => d.tpot_p50);
+  const ttftValues = data.filter(d => d.ttft_p50 > 0).map(d => d.ttft_p50);
+  const tpotMin = tpotValues.length ? Math.min(...tpotValues) : 0, tpotMax = tpotValues.length ? Math.max(...tpotValues) : 0;
+  const ttftMin = ttftValues.length ? Math.min(...ttftValues) : 0, ttftMax = ttftValues.length ? Math.max(...ttftValues) : 0;
+  const outputValues = data.map(d => d.output_tps || 0);
+  const outputMax = outputValues.length ? Math.max(...outputValues) : 0;
+
+  // Build header
+  let hdr = '<tr><th></th><th>Scenario</th><th>ISL/OSL</th><th class="num">Conc</th>';
+  for (const sk of seriesKeys) {
+    const c = getColor(sk);
+    const shortName = sk.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
+    hdr += `<th class="num" style="color:${c.border}">Output Tput<br><small>${shortName}</small></th>`;
+    hdr += `<th class="num" style="color:${c.border}">TPOT<br><small>(ms)</small></th>`;
+    hdr += `<th class="num" style="color:${c.border}">TTFT<br><small>(ms)</small></th>`;
+  }
+  if (isComparison) {
+    const refShort = refKey.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
+    const cmpShort = cmpKey.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
+    hdr += `<th class="num">TPS &Delta;<br><small>${refShort} &rarr; ${cmpShort}</small></th>`;
+    hdr += `<th class="num">TPOT &Delta;<br><small>${refShort} &rarr; ${cmpShort}</small></th>`;
+    hdr += `<th class="num">TTFT &Delta;<br><small>${refShort} &rarr; ${cmpShort}</small></th>`;
+  }
+  hdr += '</tr>';
+  thead.innerHTML = hdr;
+
+  // Sort groups
+  const sortedKeys = Object.keys(groups).sort((a,b) => {
+    const ga = groups[a], gb = groups[b];
+    if (ga.isl !== gb.isl) return ga.isl - gb.isl;
+    if (ga.osl !== gb.osl) return ga.osl - gb.osl;
+    return ga.conc - gb.conc;
+  });
+
+  const scenarioName = (isl, osl) => {
+    if (isl === 1024 && osl === 1024) return 'chat';
+    if (isl === 1024 && osl === 8192) return 'reasoning';
+    if (isl === 8192 && osl === 1024) return 'summarize';
+    return `${isl}/${osl}`;
+  };
+
+  let rows = '';
+  let rowIdx = 0;
+  for (const gk of sortedKeys) {
+    const g = groups[gk];
+    const rid = `perf-detail-${rowIdx++}`;
+    rows += `<tr>`;
+    rows += `<td><button class="expand-btn" data-target="${rid}">&#9654;</button></td>`;
+    rows += `<td>${scenarioName(g.isl, g.osl)}</td>`;
+    rows += `<td>${g.isl}/${g.osl}</td>`;
+    rows += `<td class="num">${g.conc}</td>`;
+
+    const vals = {};
+    for (const sk of seriesKeys) {
+      const d = g.byPlatform[sk];
+      const c = getColor(sk);
+      if (d) {
+        const outPct = outputMax > 0 ? (d.output_tps / outputMax * 100) : 0;
+        const tpotBg = d.tpot_p50 > 0 ? heatBg(d.tpot_p50, tpotMin, tpotMax, true) : '';
+        const ttftBg = d.ttft_p50 > 0 ? heatBg(d.ttft_p50, ttftMin, ttftMax, true) : '';
+        rows += `<td class="num"><div class="data-bar"><div class="data-bar-fill" style="width:${outPct}%;background:${c.border}"></div><div class="data-bar-text">${fmtCompact(d.output_tps)}</div></div></td>`;
+        rows += `<td class="num heat-cell" style="background:${tpotBg}">${fmtNum(d.tpot_p50, 1)}</td>`;
+        rows += `<td class="num heat-cell" style="background:${ttftBg}">${fmtNum(d.ttft_p50, 0)}</td>`;
+        vals[sk] = d;
+      } else {
+        rows += '<td class="num" style="color:var(--text-tertiary)">-</td>'.repeat(3);
+      }
+    }
+
+    // Delta columns: (cmp - ref) / ref — positive = cmp higher
+    // TPS: positive = green; TPOT/TTFT: negative = green (lower is better)
+    if (isComparison) {
+      const a = vals[refKey], b = vals[cmpKey];
+      if (a && b && a.output_tps > 0 && b.output_tps > 0) {
+        // All deltas: (cmp - ref) / ref — positive means cmp is higher
+        // TPS: higher is better → positive = green
+        const tpsDelta = ((b.output_tps - a.output_tps) / a.output_tps * 100);
+        const tpsCls = tpsDelta > 0 ? 'delta-pos' : tpsDelta < 0 ? 'delta-neg' : 'delta-neutral';
+        rows += `<td class="num ${tpsCls}">${tpsDelta > 0 ? '+' : ''}${tpsDelta.toFixed(1)}%</td>`;
+        // TPOT: lower is better → positive (cmp higher) = red, negative (cmp lower) = green
+        const tpotDelta = a.tpot_p50 > 0 && b.tpot_p50 > 0 ? ((b.tpot_p50 - a.tpot_p50) / a.tpot_p50 * 100) : null;
+        if (tpotDelta != null) {
+          const tpotCls = tpotDelta < 0 ? 'delta-pos' : tpotDelta > 0 ? 'delta-neg' : 'delta-neutral';
+          rows += `<td class="num ${tpotCls}">${tpotDelta > 0 ? '+' : ''}${tpotDelta.toFixed(1)}%</td>`;
+        } else {
+          rows += '<td class="num">-</td>';
+        }
+        // TTFT: lower is better → positive (cmp higher) = red, negative (cmp lower) = green
+        const ttftDelta = a.ttft_p50 > 0 && b.ttft_p50 > 0 ? ((b.ttft_p50 - a.ttft_p50) / a.ttft_p50 * 100) : null;
+        if (ttftDelta != null) {
+          const ttftCls = ttftDelta < 0 ? 'delta-pos' : ttftDelta > 0 ? 'delta-neg' : 'delta-neutral';
+          rows += `<td class="num ${ttftCls}">${ttftDelta > 0 ? '+' : ''}${ttftDelta.toFixed(1)}%</td>`;
+        } else {
+          rows += '<td class="num">-</td>';
+        }
+      } else {
+        rows += '<td class="num">-</td><td class="num">-</td><td class="num">-</td>';
+      }
+    }
+    rows += '</tr>';
+
+    // Detail row: show all platform details for this config
+    let detailHtml = '<div style="display:flex;gap:24px;flex-wrap:wrap">';
+    for (const sk of seriesKeys) {
+      const d = g.byPlatform[sk];
+      const run = runs.find(r => r.series_key === sk);
+      const c = getColor(sk);
+      if (d) {
+        detailHtml += `<div style="flex:1;min-width:280px"><div style="color:${c.border};font-weight:600;margin-bottom:8px">${sk}</div>${buildDetailHTML(d, run)}</div>`;
+      } else {
+        detailHtml += `<div style="flex:1;min-width:280px"><div style="color:${c.border};font-weight:600;margin-bottom:8px">${sk}</div><div style="color:var(--text-tertiary);font-size:12px">No data for this configuration</div></div>`;
+      }
+    }
+    detailHtml += '</div>';
+    const colSpan = 4 + seriesKeys.length * 3 + (isComparison ? 3 : 0);
+    rows += `<tr class="detail-row" id="${rid}"><td colspan="${colSpan}">${detailHtml}</td></tr>`;
+  }
+  tbody.innerHTML = rows;
+
+  // Expand/collapse handlers
+  tbody.querySelectorAll('.expand-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(btn.dataset.target);
+      target.classList.toggle('open');
+      btn.innerHTML = target.classList.contains('open') ? '&#9660;' : '&#9654;';
+    });
+  });
+}
+
+/* --- Scatter Charts --- */
 function buildScatter(data) {
   destroyChart('scatter');
   const canvas = document.getElementById('chart-scatter');
@@ -342,21 +818,127 @@ function buildScatter(data) {
           callbacks:{
             label: ctx => {
               const p = ctx.raw;
-              return `${ctx.dataset.label}: ${p.y.toFixed(0)} tok/s, TPOT=${p.x.toFixed(1)}ms (c=${p.conc}, ${p.scenario})`;
+              return `${ctx.dataset.label}: ${fmtNum(p.y)} tok/s, TPOT=${fmtNum(p.x,1)}ms (c=${p.conc}, ${p.scenario})`;
             }
           }
         },
-        legend:{labels:{color:'#bfc1d0',usePointStyle:true,pointStyle:'circle'}}
+        legend:{labels:{color:'#bfc1d0',usePointStyle:true,pointStyle:'circle'}},
+        datalabels:{display:false}
       }
     }
   });
 }
 
+function buildScatter2(data) {
+  destroyChart('scatter2');
+  const canvas = document.getElementById('chart-scatter2');
+  const grouped = {};
+  for (const d of data) {
+    if (d.tpot_p50 <= 0) continue;
+    if (!grouped[d.series_key]) grouped[d.series_key] = [];
+    const interactive = 1000 / d.tpot_p50;
+    const perGpu = d.gpu_count > 0 ? d.output_tps / d.gpu_count : d.output_tps;
+    grouped[d.series_key].push({x: perGpu, y: interactive, conc: d.conc, scenario: `${d.isl}/${d.osl}`});
+  }
+  const datasets = [];
+  for (const [key, points] of Object.entries(grouped)) {
+    const c = getColor(key);
+    datasets.push({
+      label: key, data: points, borderColor: c.border, backgroundColor: c.border,
+      pointRadius: 5, pointHoverRadius: 8, showLine: false,
+    });
+  }
+  charts['scatter2'] = new Chart(canvas, {
+    type:'scatter',
+    data:{datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      scales:{
+        x:{title:{display:true,text:'Token Throughput per GPU (tok/s/gpu)',color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
+        y:{title:{display:true,text:'Interactive (1000/TPOT)',color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
+      },
+      plugins:{
+        tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw.y,1)} inter, ${fmtNum(ctx.raw.x)} tok/s/gpu (c=${ctx.raw.conc})`}},
+        legend:{labels:{color:'#bfc1d0',usePointStyle:true,pointStyle:'circle'}},
+        datalabels:{display:false}
+      }
+    }
+  });
+}
+
+function buildScatter3(data) {
+  destroyChart('scatter3');
+  const canvas = document.getElementById('chart-scatter3');
+  const grouped = {};
+  for (const d of data) {
+    if (!grouped[d.series_key]) grouped[d.series_key] = [];
+    grouped[d.series_key].push({x: d.ttft_p50, y: d.output_tps, conc: d.conc, scenario: `${d.isl}/${d.osl}`});
+  }
+  const datasets = [];
+  for (const [key, points] of Object.entries(grouped)) {
+    const c = getColor(key);
+    datasets.push({
+      label: key, data: points, borderColor: c.border, backgroundColor: c.border,
+      pointRadius: 5, pointHoverRadius: 8, showLine: false,
+    });
+  }
+  charts['scatter3'] = new Chart(canvas, {
+    type:'scatter',
+    data:{datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      scales:{
+        x:{title:{display:true,text:'TTFT p50 (ms)',color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
+        y:{title:{display:true,text:'Output Throughput (tok/s)',color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
+      },
+      plugins:{
+        tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw.y)} tok/s, TTFT=${fmtNum(ctx.raw.x,0)}ms (c=${ctx.raw.conc})`}},
+        legend:{labels:{color:'#bfc1d0',usePointStyle:true,pointStyle:'circle'}},
+        datalabels:{display:false}
+      }
+    }
+  });
+}
+
+/* --- Trends Tab: Line Charts --- */
+function buildTrendsSeriesSelector() {
+  const container = document.getElementById('trends-series-selector');
+  container.innerHTML = '';
+  const activeSeries = allSeries.filter(s => state.series.has(s));
+  for (const sk of activeSeries) {
+    const c = getColor(sk);
+    const btn = document.createElement('button');
+    btn.className = 'sel-btn' + (state.trendsSeries === sk ? ' active' : '');
+    btn.style.borderColor = c.border;
+    if (state.trendsSeries === sk) btn.style.background = c.border;
+    btn.textContent = sk;
+    btn.addEventListener('click', () => {
+      state.trendsSeries = sk;
+      refresh();
+    });
+    container.appendChild(btn);
+  }
+  // "All" button
+  const allBtn = document.createElement('button');
+  allBtn.className = 'sel-btn' + (state.trendsSeries === '__all__' ? ' active' : '');
+  allBtn.textContent = 'All Series';
+  allBtn.addEventListener('click', () => {
+    state.trendsSeries = '__all__';
+    refresh();
+  });
+  container.appendChild(allBtn);
+}
+
 function buildLineChart(canvasId, chartKey, data, yField, yLabel) {
   destroyChart(chartKey);
   const canvas = document.getElementById(canvasId);
+  // Filter by selected trends series
+  let filtered = data;
+  if (state.trendsSeries && state.trendsSeries !== '__all__') {
+    filtered = data.filter(d => d.series_key === state.trendsSeries);
+  }
   const grouped = {};
-  for (const d of data) {
+  for (const d of filtered) {
     const sk = d.series_key + ' ' + d.isl + '/' + d.osl;
     if (!grouped[sk]) grouped[sk] = {series: d.series_key, points: []};
     grouped[sk].points.push({x: d.conc, y: d[yField]});
@@ -366,7 +948,7 @@ function buildLineChart(canvasId, chartKey, data, yField, yLabel) {
     g.points.sort((a,b) => a.x - b.x);
     const c = getColor(g.series);
     datasets.push({
-      label: key, data: g.points, borderColor: c.border, backgroundColor: c.bg,
+      label: key, data: g.points, borderColor: c.border, backgroundColor: c.bg.replace('0.55','0.15'),
       borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, fill: false, tension: 0.1,
     });
   }
@@ -380,88 +962,123 @@ function buildLineChart(canvasId, chartKey, data, yField, yLabel) {
         y:{title:{display:true,text:yLabel,color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
       },
       plugins:{
-        tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} (c=${ctx.parsed.x})`}},
-        legend:{labels:{color:'#bfc1d0',usePointStyle:true,pointStyle:'circle'}}
+        tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.parsed.y)} (c=${ctx.parsed.x})`}},
+        legend:{labels:{color:'#bfc1d0',usePointStyle:true,pointStyle:'circle'}},
+        datalabels:{display:false}
       }
     }
   });
 }
 
 /* ================================================================
-   7. DATA TABLE
+   7. DATA & TRACE TABLE
    ================================================================ */
-function buildTable(data) {
+function buildDataTable(data) {
   const table = document.getElementById('data-table');
   const thead = table.querySelector('thead');
   const tbody = table.querySelector('tbody');
 
-  const seriesKeys = [...new Set(data.map(d => d.series_key))];
+  // Compute ranges for heat coloring
+  const tpotValues = data.filter(d => d.tpot_p50 > 0).map(d => d.tpot_p50);
+  const ttftValues = data.filter(d => d.ttft_p50 > 0).map(d => d.ttft_p50);
+  const tpotMin = tpotValues.length ? Math.min(...tpotValues) : 0, tpotMax = tpotValues.length ? Math.max(...tpotValues) : 0;
+  const ttftMin = ttftValues.length ? Math.min(...ttftValues) : 0, ttftMax = ttftValues.length ? Math.max(...ttftValues) : 0;
 
-  // Group by scenario+conc, then compare across series
-  const groups = {};
-  for (const d of data) {
-    const gk = `${d.isl}/${d.osl}|${d.conc}`;
-    if (!groups[gk]) groups[gk] = {isl:d.isl, osl:d.osl, conc:d.conc, scenario: d.scenario || `${d.isl}/${d.osl}`, byPlatform:{}};
-    groups[gk].byPlatform[d.series_key] = d;
-  }
+  thead.innerHTML = `<tr>
+    <th></th>
+    <th>Date</th>
+    <th>Commit</th>
+    <th>Model</th>
+    <th>ISL/OSL</th>
+    <th class="num">Conc</th>
+    <th class="num">TP</th>
+    <th class="num">Throughput</th>
+    <th class="num">TPOT</th>
+    <th class="num">TTFT</th>
+    <th>Source</th>
+    <th>Config</th>
+  </tr>`;
 
-  // Header
-  let hdr = '<tr><th>Scenario</th><th>ISL/OSL</th><th class="num">Conc</th>';
-  for (const sk of seriesKeys) {
-    const c = getColor(sk);
-    hdr += `<th class="num" style="color:${c.border}">TPS<br><small>${sk}</small></th>`;
-    hdr += `<th class="num" style="color:${c.border}">TPOT<br><small>(ms)</small></th>`;
-    hdr += `<th class="num" style="color:${c.border}">TTFT<br><small>(ms)</small></th>`;
-  }
-  if (seriesKeys.length === 2) {
-    hdr += '<th class="num">TPS Delta</th><th class="num">TPOT Delta</th>';
-  }
-  hdr += '</tr>';
-  thead.innerHTML = hdr;
-
-  // Rows
-  const sortedKeys = Object.keys(groups).sort((a,b) => {
-    const ga = groups[a], gb = groups[b];
-    if (ga.isl !== gb.isl) return ga.isl - gb.isl;
-    if (ga.osl !== gb.osl) return ga.osl - gb.osl;
-    return ga.conc - gb.conc;
+  const sorted = [...data].sort((a, b) => {
+    if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
+    if (a.series_key !== b.series_key) return a.series_key.localeCompare(b.series_key);
+    if (a.isl !== b.isl) return a.isl - b.isl;
+    if (a.osl !== b.osl) return a.osl - b.osl;
+    return a.conc - b.conc;
   });
 
   let rows = '';
-  for (const gk of sortedKeys) {
-    const g = groups[gk];
-    rows += `<tr><td>${g.scenario}</td><td>${g.isl}/${g.osl}</td><td class="num">${g.conc}</td>`;
-    const vals = {};
-    for (const sk of seriesKeys) {
-      const d = g.byPlatform[sk];
-      if (d) {
-        rows += `<td class="num">${d.output_tps.toFixed(1)}</td>`;
-        rows += `<td class="num">${d.tpot_p50.toFixed(1)}</td>`;
-        rows += `<td class="num">${(d.ttft_p50||0).toFixed(0)}</td>`;
-        vals[sk] = d;
-      } else {
-        rows += '<td class="num">-</td><td class="num">-</td><td class="num">-</td>';
-      }
-    }
-    // Delta columns when exactly 2 series
-    if (seriesKeys.length === 2) {
-      const a = vals[seriesKeys[0]], b = vals[seriesKeys[1]];
-      if (a && b && b.output_tps > 0) {
-        const tpsDelta = ((a.output_tps - b.output_tps) / b.output_tps * 100);
-        const tpsCls = tpsDelta > 0 ? 'delta-pos' : tpsDelta < 0 ? 'delta-neg' : 'delta-neutral';
-        rows += `<td class="num ${tpsCls}">${tpsDelta > 0 ? '+' : ''}${tpsDelta.toFixed(1)}%</td>`;
-        // TPOT: lower is better, so negative delta = good for first series
-        const tpotDelta = ((a.tpot_p50 - b.tpot_p50) / b.tpot_p50 * 100);
-        const tpotCls = tpotDelta < 0 ? 'delta-pos' : tpotDelta > 0 ? 'delta-neg' : 'delta-neutral';
-        rows += `<td class="num ${tpotCls}">${tpotDelta > 0 ? '+' : ''}${tpotDelta.toFixed(1)}%</td>`;
-      } else {
-        rows += '<td class="num">-</td><td class="num">-</td>';
-      }
-    }
-    rows += '</tr>';
+  for (let i = 0; i < sorted.length; i++) {
+    const d = sorted[i];
+    const run = runs.find(r => r.series_key === d.series_key);
+    const rid = `data-detail-${i}`;
+    const c = getColor(d.series_key);
+
+    const tpotBg = d.tpot_p50 > 0 ? heatBg(d.tpot_p50, tpotMin, tpotMax, true) : '';
+    const ttftBg = d.ttft_p50 > 0 ? heatBg(d.ttft_p50, ttftMin, ttftMax, true) : '';
+
+    rows += `<tr>`;
+    rows += `<td><button class="expand-btn" data-target="${rid}">&#9654;</button></td>`;
+    rows += `<td>${d.date || '-'}</td>`;
+    rows += `<td>${commitHTML(run || d)}</td>`;
+    rows += `<td style="color:${c.border};font-weight:500">${d.series_key}</td>`;
+    rows += `<td>${d.isl}/${d.osl}</td>`;
+    rows += `<td class="num">${d.conc}</td>`;
+    rows += `<td class="num">${d.gpu_count || '-'}</td>`;
+    rows += `<td class="num">${fmtCompact(d.output_tps)}</td>`;
+    rows += `<td class="num heat-cell" style="background:${tpotBg}">${fmtNum(d.tpot_p50, 1)}</td>`;
+    rows += `<td class="num heat-cell" style="background:${ttftBg}">${fmtNum(d.ttft_p50, 0)}</td>`;
+    rows += `<td>${sourceHTML(run || d)}</td>`;
+    rows += `<td><code>${d.config || '-'}</code></td>`;
+    rows += `</tr>`;
+    rows += `<tr class="detail-row" id="${rid}"><td colspan="12">${buildDetailHTML(d, run)}</td></tr>`;
   }
   tbody.innerHTML = rows;
+
+  tbody.querySelectorAll('.expand-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(btn.dataset.target);
+      target.classList.toggle('open');
+      btn.innerHTML = target.classList.contains('open') ? '&#9660;' : '&#9654;';
+    });
+  });
 }
+
+/* --- CSV Export --- */
+function copyCSV(data) {
+  const headers = ['Date','Commit','Series','Model','ISL','OSL','Conc','GPU','Output_TPS','TPOT_p50','TTFT_p50','Config','Source','Framework'];
+  const csvRows = [headers.join(',')];
+  for (const d of data) {
+    const run = runs.find(r => r.series_key === d.series_key);
+    csvRows.push([
+      d.date || '', (run?.commit || '').substring(0, 7), d.series_key, d.model || '',
+      d.isl, d.osl, d.conc, d.gpu_count || '',
+      d.output_tps, d.tpot_p50, d.ttft_p50,
+      d.config || '', d.source || '', d.framework || ''
+    ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+  }
+  const csv = csvRows.join('\n');
+  navigator.clipboard.writeText(csv).then(() => {
+    const btn = document.getElementById('copy-csv-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy CSV'; }, 2000);
+  }).catch(() => {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = csv;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    const btn = document.getElementById('copy-csv-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy CSV'; }, 2000);
+  });
+}
+
+document.getElementById('copy-csv-btn').addEventListener('click', () => {
+  copyCSV(getFiltered());
+});
 
 /* ================================================================
    8. TABS
@@ -477,27 +1094,79 @@ document.querySelectorAll('.tab').forEach(tab => {
 });
 
 /* ================================================================
-   9. REFRESH
+   9. COMPARE PAIR SELECTOR
+   ================================================================ */
+function buildComparePairSelector() {
+  const refSel = document.getElementById('compare-ref');
+  const cmpSel = document.getElementById('compare-cmp');
+  const activeSeries = allSeries.filter(s => state.series.has(s));
+
+  // Preserve current values, rebuild options
+  const prevRef = state.compareRef;
+  const prevCmp = state.compareCmp;
+
+  refSel.innerHTML = '';
+  cmpSel.innerHTML = '';
+  for (const sk of activeSeries) {
+    const shortName = sk.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
+    refSel.innerHTML += `<option value="${sk}" ${sk === prevRef ? 'selected' : ''}>${shortName}</option>`;
+    cmpSel.innerHTML += `<option value="${sk}" ${sk === prevCmp ? 'selected' : ''}>${shortName}</option>`;
+  }
+
+  // Auto-select: if previous values are gone, pick first two
+  if (!activeSeries.includes(state.compareRef)) state.compareRef = activeSeries[0] || '';
+  if (!activeSeries.includes(state.compareCmp)) state.compareCmp = activeSeries[1] || activeSeries[0] || '';
+
+  refSel.value = state.compareRef;
+  cmpSel.value = state.compareCmp;
+}
+
+/* ================================================================
+   10. REFRESH
    ================================================================ */
 function refresh() {
   const data = getFiltered();
   updateKPIs(data);
 
+  // Update compare toggle button state
+  const cmpBtn = document.getElementById('compare-toggle');
+  if (cmpBtn) {
+    cmpBtn.classList.toggle('active', state.compareMode);
+    if (state.compareMode) {
+      cmpBtn.style.background = 'var(--accent-cyan)';
+      cmpBtn.style.color = '#000';
+    } else {
+      cmpBtn.style.background = '';
+      cmpBtn.style.color = '';
+    }
+  }
+
+  // Update compare pair dropdowns
+  buildComparePairSelector();
+
   const activeTab = document.querySelector('.tab.active')?.dataset.tab;
-  if (activeTab === 'scatter') buildScatter(data);
-  else if (activeTab === 'throughput') buildLineChart('chart-tput', 'tput', data, 'output_tps', 'Output Throughput (tok/s)');
-  else if (activeTab === 'latency') {
+  if (activeTab === 'performance') {
+    const perfData = state.compareMode ? getCompareFiltered(data) : data;
+    buildPerfBarChart(perfData);
+    buildPerfTable(perfData);
+  } else if (activeTab === 'scatter') {
+    buildScatter(data);
+    buildScatter2(data);
+    buildScatter3(data);
+  } else if (activeTab === 'trends') {
+    buildTrendsSeriesSelector();
+    buildLineChart('chart-tput', 'tput', data, 'output_tps', 'Output Throughput (tok/s)');
     buildLineChart('chart-tpot', 'tpot', data, 'tpot_p50', 'TPOT p50 (ms)');
     buildLineChart('chart-ttft', 'ttft', data, 'ttft_p50', 'TTFT p50 (ms)');
+  } else if (activeTab === 'data') {
+    buildDataTable(data);
   }
-  else if (activeTab === 'data') buildTable(data);
 }
 
 /* ================================================================
-   10. META & INIT
+   11. META & INIT
    ================================================================ */
 function init() {
-  // Meta line
   const metaLine = document.getElementById('meta-line');
   const runInfo = runs.map(r => {
     const src = r.source === 'ci-nightly' ? 'CI' : 'Manual';
@@ -509,6 +1178,30 @@ function init() {
   footerGen.textContent = `Generated: ${rawData.generated_at || 'unknown'}`;
 
   buildFilters();
+  buildPerfMetricSelector();
+
+  // Compare toggle
+  document.getElementById('compare-toggle').addEventListener('click', () => {
+    state.compareMode = !state.compareMode;
+    refresh();
+  });
+
+  // Compare pair selectors
+  document.getElementById('compare-ref').addEventListener('change', (e) => {
+    state.compareRef = e.target.value;
+    refresh();
+  });
+  document.getElementById('compare-cmp').addEventListener('change', (e) => {
+    state.compareCmp = e.target.value;
+    refresh();
+  });
+  document.getElementById('compare-swap').addEventListener('click', () => {
+    const tmp = state.compareRef;
+    state.compareRef = state.compareCmp;
+    state.compareCmp = tmp;
+    refresh();
+  });
+
   refresh();
 }
 
