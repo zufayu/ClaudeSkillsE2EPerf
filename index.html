@@ -197,18 +197,19 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
   <div style="display:flex;gap:var(--gap-md);align-items:center;flex-wrap:wrap;margin-bottom:var(--gap-sm)">
     <div class="metric-selector" id="perf-metric-selector"></div>
   </div>
-  <div class="compare-pair" id="compare-pair">
-    <label>Ref:</label><select id="compare-ref"></select>
-    <span class="vs-label">vs</span>
-    <label>Cmp:</label><select id="compare-cmp"></select>
-    <button class="sel-btn" id="compare-swap" style="padding:4px 8px;font-size:11px">&#8644; Swap</button>
-  </div>
   <div class="chart-grid">
     <div class="chart-card hero"><h3 id="perf-chart-title">Output Throughput by Configuration</h3><div class="chart-wrap"><canvas id="chart-perf-bar"></canvas></div></div>
   </div>
   <div style="margin-top:var(--gap-lg)">
     <div style="display:flex;gap:var(--gap-sm);align-items:center;margin-bottom:var(--gap-sm);flex-wrap:wrap">
-      <span style="font-size:13px;color:var(--text-tertiary);font-weight:500">Table columns:</span>
+      <div class="compare-pair" id="compare-pair">
+        <label>Ref:</label><select id="compare-ref"></select>
+        <span class="vs-label">vs</span>
+        <label>Cmp:</label><select id="compare-cmp"></select>
+        <button class="sel-btn" id="compare-swap" style="padding:4px 8px;font-size:11px">&#8644; Swap</button>
+      </div>
+      <span style="color:var(--border);margin:0 4px">|</span>
+      <span style="font-size:13px;color:var(--text-tertiary);font-weight:500">Columns:</span>
       <div class="filter-group" id="table-cols-group"></div>
     </div>
     <div class="table-wrap"><table class="perf" id="perf-table"><thead></thead><tbody></tbody></table></div>
