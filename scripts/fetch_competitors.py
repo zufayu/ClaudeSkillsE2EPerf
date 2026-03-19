@@ -202,6 +202,10 @@ def main():
         atom_data = fetch_atom_data(args.url or ATOM_DATA_URL)
         runs = convert_atom_to_runs(atom_data)
 
+        # Only keep DeepSeek-R1-0528 base model (skip GLM-5, gpt-oss, MXFP4 variants)
+        KEEP_MODELS = {"DeepSeek-R1-0528"}
+        runs = {k: v for k, v in runs.items() if v["model"] in KEEP_MODELS}
+
         for run_key, run in runs.items():
             if args.dry_run:
                 print(f"\n=== {run_key} ===")
