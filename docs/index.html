@@ -219,6 +219,7 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
 
 <!-- Tab: Throughput vs Latency -->
 <div class="tab-content" id="tab-scatter">
+  <div class="metric-selector" id="tradeoff-scenario-selector"></div>
   <div class="chart-grid">
     <div class="chart-card hero"><h3>Interactive Performance vs Token Throughput</h3><div class="chart-wrap"><canvas id="chart-interactive2"></canvas></div></div>
     <div class="chart-card half"><h3>Output Throughput vs TPOT</h3><div class="chart-wrap"><canvas id="chart-tradeoff-tpot"></canvas></div></div>
@@ -379,6 +380,7 @@ const state = {
   compareRef: allSeries[0] || '',
   compareCmp: allSeries[1] || '',
   tableCols: new Set(allSeries.slice(0, 2)),  // default: show only Ref+Cmp in table
+  tradeoffScenario: '__all__',  // scenario filter for tradeoff tab
 };
 
 function getFiltered() {
@@ -843,34 +845,73 @@ function buildTableColsSelector(allSeriesKeys, refKey, cmpKey) {
   group.appendChild(dd);
 }
 
+/* --- Scenario constants for tradeoff/interactive charts --- */
+const SCENARIO_DASH = {'1024/1024': [], '1024/8192': [8, 4], '8192/1024': [3, 3]};
+const SCENARIO_NAME = {'1024/1024': 'chat', '1024/8192': 'reasoning', '8192/1024': 'summarize'};
+
+/* --- Tradeoff Scenario Selector --- */
+function buildTradeoffScenarioSelector(data) {
+  const container = document.getElementById('tradeoff-scenario-selector');
+  if (!container) return;
+  container.innerHTML = '';
+  const scenarios = [...new Set(data.map(d => `${d.isl}/${d.osl}`))].sort();
+
+  // "All" button
+  const allBtn = document.createElement('button');
+  allBtn.className = 'sel-btn' + (state.tradeoffScenario === '__all__' ? ' active' : '');
+  allBtn.textContent = 'All Scenarios';
+  allBtn.addEventListener('click', () => { state.tradeoffScenario = '__all__'; refresh(); });
+  container.appendChild(allBtn);
+
+  for (const sc of scenarios) {
+    const btn = document.createElement('button');
+    const name = SCENARIO_NAME[sc] || sc;
+    btn.className = 'sel-btn' + (state.tradeoffScenario === sc ? ' active' : '');
+    btn.textContent = `${name} (${sc})`;
+    btn.addEventListener('click', () => { state.tradeoffScenario = sc; refresh(); });
+    container.appendChild(btn);
+  }
+}
+
+function tradeoffFilter(data, scenarioFilter) {
+  if (!scenarioFilter || scenarioFilter === '__all__') return data;
+  return data.filter(d => `${d.isl}/${d.osl}` === scenarioFilter);
+}
+
+function shortSeriesName(sk) {
+  return sk.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
+}
+
 /* --- Interactive Performance vs Token Throughput (line chart) --- */
-function buildInteractiveChart(data, canvasId, chartKey) {
+function buildInteractiveChart(data, canvasId, chartKey, scenarioFilter) {
   canvasId = canvasId || 'chart-interactive';
   chartKey = chartKey || 'interactive';
   destroyChart(chartKey);
   const canvas = document.getElementById(canvasId);
-  // Group by series + scenario; X = throughput/gpu, Y = 1000/TPOT
+  const filtered = tradeoffFilter(data, scenarioFilter);
   const grouped = {};
-  for (const d of data) {
+  for (const d of filtered) {
     if (d.tpot_p50 <= 0 || d.output_tps <= 0) continue;
-    const sk = d.series_key + ' ' + d.isl + '/' + d.osl;
-    if (!grouped[sk]) grouped[sk] = {series: d.series_key, points: []};
+    const scenario = `${d.isl}/${d.osl}`;
+    const sk = d.series_key + ' ' + scenario;
+    if (!grouped[sk]) grouped[sk] = {series: d.series_key, scenario, points: []};
     const perGpu = d.gpu_count > 0 ? d.output_tps / d.gpu_count : d.output_tps;
-    grouped[sk].points.push({x: perGpu, y: 1000 / d.tpot_p50, conc: d.conc, scenario: `${d.isl}/${d.osl}`});
+    grouped[sk].points.push({x: perGpu, y: 1000 / d.tpot_p50, conc: d.conc});
   }
   const datasets = [];
   for (const [key, g] of Object.entries(grouped)) {
     g.points.sort((a, b) => a.conc - b.conc);
     const c = getColor(g.series);
+    const sName = SCENARIO_NAME[g.scenario] || g.scenario;
     datasets.push({
-      label: key, data: g.points, borderColor: c.border, backgroundColor: c.bg,
-      borderWidth: 2, pointRadius: 5, pointHoverRadius: 8, fill: false, tension: 0.2,
-      showLine: true,
+      label: `${shortSeriesName(g.series)} ${sName}`, data: g.points,
+      borderColor: c.border, backgroundColor: c.bg,
+      borderWidth: 2, borderDash: SCENARIO_DASH[g.scenario] || [],
+      pointRadius: 5, pointHoverRadius: 8, fill: false, tension: 0.2, showLine: true,
     });
   }
   charts[chartKey] = new Chart(canvas, {
-    type: 'scatter',
-    data: {datasets},
+    type: 'scatter', data: {datasets},
     options: {
       responsive: true, maintainAspectRatio: false,
       scales: {
@@ -879,7 +920,7 @@ function buildInteractiveChart(data, canvasId, chartKey) {
       },
       plugins: {
         tooltip: {callbacks: {label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.raw.y, 1)} tok/s/req, ${fmtNum(ctx.raw.x)} tok/s/gpu (c=${ctx.raw.conc})`}},
-        legend: {labels: {color: '#bfc1d0', usePointStyle: true, pointStyle: 'circle'}},
+        legend: {labels: {color: '#bfc1d0', usePointStyle: true, pointStyle: 'line'}},
         datalabels: {display: false}
       }
     }
@@ -887,31 +928,32 @@ function buildInteractiveChart(data, canvasId, chartKey) {
 }
 
 /* --- Tradeoff Charts (line: Throughput vs Latency, connected by concurrency) --- */
-function buildTradeoffChart(canvasId, chartKey, data, xField, xLabel) {
+function buildTradeoffChart(canvasId, chartKey, data, xField, xLabel, scenarioFilter) {
   destroyChart(chartKey);
   const canvas = document.getElementById(canvasId);
-  // Group by series + scenario, each line connects concurrency points
+  const filtered = tradeoffFilter(data, scenarioFilter);
   const grouped = {};
-  for (const d of data) {
+  for (const d of filtered) {
     if (d[xField] <= 0 || d.output_tps <= 0) continue;
-    const sk = d.series_key + ' ' + d.isl + '/' + d.osl;
-    if (!grouped[sk]) grouped[sk] = {series: d.series_key, scenario: `${d.isl}/${d.osl}`, points: []};
+    const scenario = `${d.isl}/${d.osl}`;
+    const sk = d.series_key + ' ' + scenario;
+    if (!grouped[sk]) grouped[sk] = {series: d.series_key, scenario, points: []};
     grouped[sk].points.push({x: d[xField], y: d.output_tps, conc: d.conc});
   }
   const datasets = [];
   for (const [key, g] of Object.entries(grouped)) {
-    // Sort by concurrency so the line connects low→high concurrency
     g.points.sort((a, b) => a.conc - b.conc);
     const c = getColor(g.series);
+    const sName = SCENARIO_NAME[g.scenario] || g.scenario;
     datasets.push({
-      label: key, data: g.points, borderColor: c.border, backgroundColor: c.bg,
-      borderWidth: 2, pointRadius: 5, pointHoverRadius: 8, fill: false, tension: 0.2,
-      showLine: true,
+      label: `${shortSeriesName(g.series)} ${sName}`, data: g.points,
+      borderColor: c.border, backgroundColor: c.bg,
+      borderWidth: 2, borderDash: SCENARIO_DASH[g.scenario] || [],
+      pointRadius: 5, pointHoverRadius: 8, fill: false, tension: 0.2, showLine: true,
     });
   }
   charts[chartKey] = new Chart(canvas, {
-    type: 'scatter',
-    data: {datasets},
+    type: 'scatter', data: {datasets},
     options: {
       responsive: true, maintainAspectRatio: false,
       scales: {
@@ -919,15 +961,11 @@ function buildTradeoffChart(canvasId, chartKey, data, xField, xLabel) {
         y: {title: {display: true, text: 'Output Throughput (tok/s)', color: '#7e8094'}, ticks: {color: '#7e8094'}, grid: {color: '#262733'}},
       },
       plugins: {
-        tooltip: {
-          callbacks: {
-            label: ctx => {
-              const p = ctx.raw;
-              return `${ctx.dataset.label}: ${fmtNum(p.y)} tok/s, ${xField === 'tpot_p50' ? 'TPOT' : 'TTFT'}=${fmtNum(p.x, xField === 'tpot_p50' ? 1 : 0)}ms (c=${p.conc})`;
-            }
-          }
-        },
-        legend: {labels: {color: '#bfc1d0', usePointStyle: true, pointStyle: 'circle'}},
+        tooltip: {callbacks: {label: ctx => {
+          const p = ctx.raw;
+          return `${ctx.dataset.label}: ${fmtNum(p.y)} tok/s, ${xField === 'tpot_p50' ? 'TPOT' : 'TTFT'}=${fmtNum(p.x, xField === 'tpot_p50' ? 1 : 0)}ms (c=${p.conc})`;
+        }}},
+        legend: {labels: {color: '#bfc1d0', usePointStyle: true, pointStyle: 'line'}},
         datalabels: {display: false}
       }
     }
@@ -1171,9 +1209,11 @@ function refresh() {
     buildInteractiveChart(data);
     buildPerfTable(data);
   } else if (activeTab === 'scatter') {
-    buildInteractiveChart(data, 'chart-interactive2', 'interactive2');
-    buildTradeoffChart('chart-tradeoff-tpot', 'tradeoffTpot', data, 'tpot_p50', 'TPOT p50 (ms)');
-    buildTradeoffChart('chart-tradeoff-ttft', 'tradeoffTtft', data, 'ttft_p50', 'TTFT p50 (ms)');
+    buildTradeoffScenarioSelector(data);
+    const sf = state.tradeoffScenario;
+    buildInteractiveChart(data, 'chart-interactive2', 'interactive2', sf);
+    buildTradeoffChart('chart-tradeoff-tpot', 'tradeoffTpot', data, 'tpot_p50', 'TPOT p50 (ms)', sf);
+    buildTradeoffChart('chart-tradeoff-ttft', 'tradeoffTtft', data, 'ttft_p50', 'TTFT p50 (ms)', sf);
   } else if (activeTab === 'trends') {
     buildTrendsSeriesSelector();
     buildLineChart('chart-tput', 'tput', data, 'output_tps', 'Output Throughput (tok/s)');
