@@ -607,5 +607,7 @@
       "duration": 110.08147778100101
     }
   ],
-  "env_tag": "mtp0"
+  "env_tag": "mtp0",
+  "docker_image": "nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post3",
+  "benchmark_cmd": "bash scripts/sa_bench_b200.sh --model-fp8 /home/models/models--DeepSeek-R1-0528/ --configs fp8-throughput --ep-sizes 1 --result-dir ./results_b200_fp8_ep1"
 }

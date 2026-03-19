@@ -73,13 +73,22 @@ def extract_metrics(data, file_info):
 
     # Extract server-side config from metadata (injected via --metadata)
     SERVER_CONFIG_KEYS = [
+        # Common
         "max_model_len",
-        "gpu_memory_utilization",
-        "enforce_eager",
         "kv_cache_dtype",
         "tensor_parallel_size",
-        "max_num_seqs",
         "mtp_layers",
+        "random_range_ratio",
+        # MI355X / ATOM (vLLM)
+        "gpu_memory_utilization",
+        "enforce_eager",
+        "max_num_seqs",
+        # B200 / TRT-LLM
+        "kv_cache_free_mem_fraction",
+        "ep_size",
+        "dp_attention",
+        "moe_backend",
+        "piecewise_cuda_graphs",
     ]
     server_config = {k: data[k] for k in SERVER_CONFIG_KEYS if data.get(k) is not None}
 
