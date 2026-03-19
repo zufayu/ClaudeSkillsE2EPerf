@@ -5,13 +5,7 @@ Benchmark comparison dashboard for DeepSeek R1 671B inference across GPU platfor
 - Dashboard: https://zufayu.github.io/ClaudeSkillsE2EPerf/ (password: `deepperf2026`)
 - GitHub: `zufayu/ClaudeSkillsE2EPerf`
 
-## Machines
-| Machine | Working Dir | Role |
-|---------|------------|------|
-| H20 (kqian) | `/home/kqian/ClaudeSkillsE2EPerf` | Dashboard deploy, data management |
-| B200 (ubuntu) | `/home/ubuntu/zufa/ClaudeSkillsE2EPerf` | NVIDIA benchmark runner |
-
-## Model Paths (B200 Machine)
+## Model Paths (B200)
 - **FP8**: `/home/models/models--DeepSeek-R1-0528/` (quant_method: fp8)
 - **FP4**: `/home/models/DeepSeek-R1-0528-NVFP4-v2/` (nvidia/DeepSeek-R1-0528-NVFP4-v2)
 
@@ -54,7 +48,7 @@ bash scripts/sa_bench_b200.sh --model-fp4 /home/models/DeepSeek-R1-0528-NVFP4-v2
 bash scripts/sa_bench_b200.sh --model-fp8 /home/models/models--DeepSeek-R1-0528/ --configs fp8-throughput --scenario chat --concurrency 128 --ep-sizes 1 --result-dir ./results_b200_test
 ```
 
-### Deploy dashboard (from H20 machine)
+### Deploy dashboard
 ```bash
 bash scripts/deploy_dashboard.sh --fetch-competitors
 ```
@@ -72,7 +66,7 @@ bash scripts/deploy_dashboard.sh --fetch-competitors
 ## Docker Launch (B200)
 ```bash
 sudo docker run -it --gpus all --ipc host --ulimit memlock=-1 \
-  --name zufa_trt --ulimit stack=67108864 \
+  --ulimit stack=67108864 \
   -v /home:/home -v /mnt:/mnt -v /data:/data \
   --shm-size=64g -p 8000:8000 \
   --cap-add=SYS_PTRACE \
