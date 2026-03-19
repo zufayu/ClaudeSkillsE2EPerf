@@ -347,8 +347,10 @@ function buildDetailHTML(d, run) {
     ['Completed', d.completed || '-'],
     ['Duration', d.duration != null ? fmtNum(d.duration) + ' s' : '-'],
     ['Framework', run?.framework || '-'],
+    ['Docker Image', run?.docker_image || '-'],
     ['GPU Count', run?.gpu_count || '-'],
     ['Date', run?.date || '-'],
+    ['Benchmark Cmd', run?.benchmark_cmd ? `<code style="font-size:10px;word-break:break-all">${run.benchmark_cmd}</code>` : '-'],
   ];
   return '<div class="detail-content">' +
     items.map(([l,v]) => `<div class="detail-item"><span class="detail-label">${l}</span><span class="detail-value">${v}</span></div>`).join('') +

@@ -1,7 +1,7 @@
 {
   "run_id": "8xb200-fp8-20260317-mtp0",
-  "platform": "8×B200",
-  "framework": "TRT-LLM",
+  "platform": "8\u00d7B200",
+  "framework": "TRT-LLM (1.2.0rc6.post3)",
   "model": "DeepSeek-R1-0528",
   "quantization": "FP8",
   "gpu_count": 8,
@@ -400,5 +400,6 @@
       "duration": 750.9198390600213
     }
   ],
-  "env_tag": "mtp0"
+  "docker_image": "nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post3",
+  "benchmark_cmd": "bash scripts/sa_bench_b200.sh --model-fp8 /home/models/models--DeepSeek-R1-0528/ --configs fp8-throughput --ep-sizes 1 --result-dir ./results_b200_fp8_ep1"
 }

@@ -100,6 +100,8 @@ def deduplicate_runs(runs):
             "commit": latest.get("commit", ""),
             "commit_url": latest.get("commit_url", ""),
             "env_tag": latest.get("env_tag", ""),
+            "docker_image": latest.get("docker_image", ""),
+            "benchmark_cmd": latest.get("benchmark_cmd", ""),
             "results": sorted(result_map.values(),
                               key=lambda r: (r.get("isl", 0), r.get("osl", 0),
                                              r.get("conc", 0))),
@@ -150,6 +152,8 @@ def generate_data_js(runs):
             "commit": run.get("commit", ""),
             "commit_url": run.get("commit_url", ""),
             "env_tag": run.get("env_tag", ""),
+            "docker_image": run.get("docker_image", ""),
+            "benchmark_cmd": run.get("benchmark_cmd", ""),
             "results": results,
         }
 
