@@ -102,3 +102,12 @@ Series use `env_tag` for MTP differentiation:
 ## Delta Comparison Logic
 - TPS: `(ref - cmp) / cmp` — positive green = Ref higher throughput
 - TPOT/TTFT: `(cmp - ref) / ref` — positive green = Ref lower latency (better)
+
+## Engineering Instincts
+
+| Instinct | Core Meaning | Engineering Value |
+|----------|-------------|-------------------|
+| **fix-then-sweep** | 修复单个 bug 后，通过 grep 等工具扫描同类型 pattern，批量修复所有同类问题 | 避免单点修复，从根源消除同类缺陷，提升代码一致性 |
+| **no-speculation** | 拒绝无依据猜测，先收集证据（日志、数据、复现步骤）再推导结论 | 减少无效排查，提升问题定位效率与准确性 |
+| **test-before-commit** | 代码改动必须通过验证（单元测试、集成测试等）后，再提交/推送 | 保障代码质量，防止未验证变更破坏主干流程 |
+| **verify-before-act** | 先验证假设/方案的可行性，再执行具体开发或变更操作 | 降低试错成本，避免无效开发与资源浪费 |
