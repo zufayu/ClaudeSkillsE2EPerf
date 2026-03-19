@@ -219,9 +219,8 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
 <!-- Tab: Throughput vs Latency -->
 <div class="tab-content" id="tab-scatter">
   <div class="chart-grid">
-    <div class="chart-card hero"><h3>Output Throughput vs TPOT (lower-right = better)</h3><div class="chart-wrap"><canvas id="chart-scatter"></canvas></div></div>
-    <div class="chart-card half"><h3>Interactive (1000/TPOT) vs Token Throughput</h3><div class="chart-wrap"><canvas id="chart-scatter2"></canvas></div></div>
-    <div class="chart-card half"><h3>Output Throughput vs TTFT</h3><div class="chart-wrap"><canvas id="chart-scatter3"></canvas></div></div>
+    <div class="chart-card half"><h3>Output Throughput vs TPOT</h3><div class="chart-wrap"><canvas id="chart-tradeoff-tpot"></canvas></div></div>
+    <div class="chart-card half"><h3>Output Throughput vs TTFT</h3><div class="chart-wrap"><canvas id="chart-tradeoff-ttft"></canvas></div></div>
   </div>
 </div>
 
@@ -527,7 +526,7 @@ const charts = {};
 function destroyChart(id) {
   if (charts[id]) { charts[id].destroy(); delete charts[id]; }
   // Also clear any orphaned Chart instance on the canvas (e.g. from prior crash)
-  const canvasMap = {'perfBar': 'chart-perf-bar', 'scatter': 'chart-scatter', 'scatter2': 'chart-scatter2', 'scatter3': 'chart-scatter3', 'tput': 'chart-tput', 'tpot': 'chart-tpot', 'ttft': 'chart-ttft'};
+  const canvasMap = {'perfBar': 'chart-perf-bar', 'tradeoffTpot': 'chart-tradeoff-tpot', 'tradeoffTtft': 'chart-tradeoff-ttft', 'tput': 'chart-tput', 'tpot': 'chart-tpot', 'ttft': 'chart-ttft'};
   if (canvasMap[id]) {
     const el = document.getElementById(canvasMap[id]);
     const existing = el && Chart.getChart(el);
@@ -842,114 +841,49 @@ function buildTableColsSelector(allSeriesKeys, refKey, cmpKey) {
   group.appendChild(dd);
 }
 
-/* --- Scatter Charts --- */
-function buildScatter(data) {
-  destroyChart('scatter');
-  const canvas = document.getElementById('chart-scatter');
+/* --- Tradeoff Charts (line: Throughput vs Latency, connected by concurrency) --- */
+function buildTradeoffChart(canvasId, chartKey, data, xField, xLabel) {
+  destroyChart(chartKey);
+  const canvas = document.getElementById(canvasId);
+  // Group by series + scenario, each line connects concurrency points
   const grouped = {};
   for (const d of data) {
-    if (!grouped[d.series_key]) grouped[d.series_key] = [];
-    grouped[d.series_key].push({x: d.tpot_p50, y: d.output_tps, conc: d.conc, scenario: `${d.isl}/${d.osl}`});
+    if (d[xField] <= 0 || d.output_tps <= 0) continue;
+    const sk = d.series_key + ' ' + d.isl + '/' + d.osl;
+    if (!grouped[sk]) grouped[sk] = {series: d.series_key, scenario: `${d.isl}/${d.osl}`, points: []};
+    grouped[sk].points.push({x: d[xField], y: d.output_tps, conc: d.conc});
   }
   const datasets = [];
-  for (const [key, points] of Object.entries(grouped)) {
-    const c = getColor(key);
+  for (const [key, g] of Object.entries(grouped)) {
+    // Sort by concurrency so the line connects low→high concurrency
+    g.points.sort((a, b) => a.conc - b.conc);
+    const c = getColor(g.series);
     datasets.push({
-      label: key, data: points, borderColor: c.border, backgroundColor: c.border,
-      pointRadius: 6, pointHoverRadius: 9, showLine: false,
+      label: key, data: g.points, borderColor: c.border, backgroundColor: c.bg,
+      borderWidth: 2, pointRadius: 5, pointHoverRadius: 8, fill: false, tension: 0.2,
+      showLine: true,
     });
   }
-  charts['scatter'] = new Chart(canvas, {
-    type:'scatter',
-    data:{datasets},
-    options:{
-      responsive:true, maintainAspectRatio:false,
-      scales:{
-        x:{title:{display:true,text:'TPOT p50 (ms)',color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
-        y:{title:{display:true,text:'Output Throughput (tok/s)',color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
+  charts[chartKey] = new Chart(canvas, {
+    type: 'scatter',
+    data: {datasets},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: {title: {display: true, text: xLabel, color: '#7e8094'}, ticks: {color: '#7e8094'}, grid: {color: '#262733'}},
+        y: {title: {display: true, text: 'Output Throughput (tok/s)', color: '#7e8094'}, ticks: {color: '#7e8094'}, grid: {color: '#262733'}},
       },
-      plugins:{
-        tooltip:{
-          callbacks:{
+      plugins: {
+        tooltip: {
+          callbacks: {
             label: ctx => {
               const p = ctx.raw;
-              return `${ctx.dataset.label}: ${fmtNum(p.y)} tok/s, TPOT=${fmtNum(p.x,1)}ms (c=${p.conc}, ${p.scenario})`;
+              return `${ctx.dataset.label}: ${fmtNum(p.y)} tok/s, ${xField === 'tpot_p50' ? 'TPOT' : 'TTFT'}=${fmtNum(p.x, xField === 'tpot_p50' ? 1 : 0)}ms (c=${p.conc})`;
             }
           }
         },
-        legend:{labels:{color:'#bfc1d0',usePointStyle:true,pointStyle:'circle'}},
-        datalabels:{display:false}
-      }
-    }
-  });
-}
-
-function buildScatter2(data) {
-  destroyChart('scatter2');
-  const canvas = document.getElementById('chart-scatter2');
-  const grouped = {};
-  for (const d of data) {
-    if (d.tpot_p50 <= 0) continue;
-    if (!grouped[d.series_key]) grouped[d.series_key] = [];
-    const interactive = 1000 / d.tpot_p50;
-    const perGpu = d.gpu_count > 0 ? d.output_tps / d.gpu_count : d.output_tps;
-    grouped[d.series_key].push({x: perGpu, y: interactive, conc: d.conc, scenario: `${d.isl}/${d.osl}`});
-  }
-  const datasets = [];
-  for (const [key, points] of Object.entries(grouped)) {
-    const c = getColor(key);
-    datasets.push({
-      label: key, data: points, borderColor: c.border, backgroundColor: c.border,
-      pointRadius: 5, pointHoverRadius: 8, showLine: false,
-    });
-  }
-  charts['scatter2'] = new Chart(canvas, {
-    type:'scatter',
-    data:{datasets},
-    options:{
-      responsive:true, maintainAspectRatio:false,
-      scales:{
-        x:{title:{display:true,text:'Token Throughput per GPU (tok/s/gpu)',color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
-        y:{title:{display:true,text:'Interactive (1000/TPOT)',color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
-      },
-      plugins:{
-        tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw.y,1)} inter, ${fmtNum(ctx.raw.x)} tok/s/gpu (c=${ctx.raw.conc})`}},
-        legend:{labels:{color:'#bfc1d0',usePointStyle:true,pointStyle:'circle'}},
-        datalabels:{display:false}
-      }
-    }
-  });
-}
-
-function buildScatter3(data) {
-  destroyChart('scatter3');
-  const canvas = document.getElementById('chart-scatter3');
-  const grouped = {};
-  for (const d of data) {
-    if (!grouped[d.series_key]) grouped[d.series_key] = [];
-    grouped[d.series_key].push({x: d.ttft_p50, y: d.output_tps, conc: d.conc, scenario: `${d.isl}/${d.osl}`});
-  }
-  const datasets = [];
-  for (const [key, points] of Object.entries(grouped)) {
-    const c = getColor(key);
-    datasets.push({
-      label: key, data: points, borderColor: c.border, backgroundColor: c.border,
-      pointRadius: 5, pointHoverRadius: 8, showLine: false,
-    });
-  }
-  charts['scatter3'] = new Chart(canvas, {
-    type:'scatter',
-    data:{datasets},
-    options:{
-      responsive:true, maintainAspectRatio:false,
-      scales:{
-        x:{title:{display:true,text:'TTFT p50 (ms)',color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
-        y:{title:{display:true,text:'Output Throughput (tok/s)',color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
-      },
-      plugins:{
-        tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw.y)} tok/s, TTFT=${fmtNum(ctx.raw.x,0)}ms (c=${ctx.raw.conc})`}},
-        legend:{labels:{color:'#bfc1d0',usePointStyle:true,pointStyle:'circle'}},
-        datalabels:{display:false}
+        legend: {labels: {color: '#bfc1d0', usePointStyle: true, pointStyle: 'circle'}},
+        datalabels: {display: false}
       }
     }
   });
@@ -1191,9 +1125,8 @@ function refresh() {
     buildPerfBarChart(data);
     buildPerfTable(data);
   } else if (activeTab === 'scatter') {
-    buildScatter(data);
-    buildScatter2(data);
-    buildScatter3(data);
+    buildTradeoffChart('chart-tradeoff-tpot', 'tradeoffTpot', data, 'tpot_p50', 'TPOT p50 (ms)');
+    buildTradeoffChart('chart-tradeoff-ttft', 'tradeoffTtft', data, 'ttft_p50', 'TTFT p50 (ms)');
   } else if (activeTab === 'trends') {
     buildTrendsSeriesSelector();
     buildLineChart('chart-tput', 'tput', data, 'output_tps', 'Output Throughput (tok/s)');
