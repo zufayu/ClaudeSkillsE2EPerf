@@ -185,6 +185,7 @@ run_benchmark_serving() {
     local workspace_dir=""
     local use_chat_template=false
     local num_warmups=""
+    local -a metadata_args=()
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -201,6 +202,7 @@ run_benchmark_serving() {
             --result-dir)         result_dir="$2"; shift 2 ;;
             --bench-serving-dir)  workspace_dir="$2"; shift 2 ;;
             --use-chat-template)  use_chat_template=true; shift ;;
+            --metadata)           shift; while [[ $# -gt 0 && "$1" != --* ]]; do metadata_args+=("$1"); shift; done ;;
             *)                    echo "Unknown parameter: $1"; return 1 ;;
         esac
     done
@@ -275,6 +277,10 @@ run_benchmark_serving() {
 
     if [[ "$use_chat_template" == true ]]; then
         benchmark_cmd+=(--use-chat-template)
+    fi
+
+    if [[ ${#metadata_args[@]} -gt 0 ]]; then
+        benchmark_cmd+=(--metadata "${metadata_args[@]}")
     fi
 
     echo "[Benchmark] Running: ${benchmark_cmd[*]}"

@@ -427,6 +427,17 @@ EOF
             --num-warmups "$warmups"
             --result-filename "$result_filename"
             --result-dir "$RESULT_DIR"
+            --metadata
+                "max_model_len=$max_model_len"
+                "kv_cache_dtype=fp8"
+                "kv_cache_free_mem_fraction=$KV_CACHE_FREE_MEM_FRACTION"
+                "tensor_parallel_size=$TP"
+                "ep_size=$ep_size"
+                "dp_attention=$dp_attn"
+                "moe_backend=$MOE_BACKEND"
+                "mtp_layers=$MTP_LAYERS"
+                "piecewise_cuda_graphs=$PIECEWISE_CUDA_GRAPHS"
+                "random_range_ratio=$RANDOM_RANGE_RATIO"
         )
         if [[ -n "$BENCH_SERVING_DIR" ]]; then
             bench_args+=(--bench-serving-dir "$BENCH_SERVING_DIR")

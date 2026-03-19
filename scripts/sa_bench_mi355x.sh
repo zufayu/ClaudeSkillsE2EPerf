@@ -366,6 +366,15 @@ run_single_point() {
             --percentile-metrics "ttft,tpot,itl,e2el"
             --result-dir "$RESULT_DIR"
             --result-filename "${result_filename}.json"
+            --metadata
+                "max_model_len=$max_model_len"
+                "gpu_memory_utilization=$GPU_MEMORY_UTILIZATION"
+                "enforce_eager=$ENFORCE_EAGER"
+                "kv_cache_dtype=fp8"
+                "tensor_parallel_size=$TP"
+                "max_num_seqs=$MAX_NUM_SEQS"
+                "mtp_layers=$MTP_LAYERS"
+                "random_range_ratio=$RANDOM_RANGE_RATIO"
         )
 
         set -x

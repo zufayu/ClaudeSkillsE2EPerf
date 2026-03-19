@@ -71,7 +71,19 @@ def extract_metrics(data, file_info):
     scenario = file_info.get("scenario", "unknown")
     isl, osl = SCENARIO_MAP.get(scenario, (0, 0))
 
-    return {
+    # Extract server-side config from metadata (injected via --metadata)
+    SERVER_CONFIG_KEYS = [
+        "max_model_len",
+        "gpu_memory_utilization",
+        "enforce_eager",
+        "kv_cache_dtype",
+        "tensor_parallel_size",
+        "max_num_seqs",
+        "mtp_layers",
+    ]
+    server_config = {k: data[k] for k in SERVER_CONFIG_KEYS if data.get(k) is not None}
+
+    result = {
         "isl": isl,
         "osl": osl,
         "conc": file_info.get("conc", data.get("max_concurrency", 0)),
@@ -102,6 +114,11 @@ def extract_metrics(data, file_info):
         "completed": data.get("completed", 0),
         "duration": data.get("duration", 0),
     }
+
+    if server_config:
+        result["server_config"] = server_config
+
+    return result
 
 
 def main():
