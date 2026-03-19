@@ -122,6 +122,10 @@ def extract_metrics(data, file_info):
         "num_prompts": data.get("num_prompts", 0),
         "completed": data.get("completed", 0),
         "duration": data.get("duration", 0),
+        # Reproduce info (injected by sa_bench_b200.sh)
+        "server_cmd": data.get("server_cmd", ""),
+        "benchmark_cmd": data.get("benchmark_cmd", ""),
+        "config_yaml": data.get("config_yaml", ""),
     }
 
     if server_config:
@@ -157,6 +161,7 @@ def main():
 
     results = []
     dates = []
+    docker_images = set()
 
     for f in result_files:
         file_info = parse_result_filename(f)
@@ -177,6 +182,11 @@ def main():
 
         metrics = extract_metrics(data, file_info)
         results.append(metrics)
+
+        # Collect docker image from result if present
+        di = data.get("docker_image", "")
+        if di:
+            docker_images.add(di)
 
         # Try to get date from the data
         date_str = data.get("date", "")
@@ -206,6 +216,7 @@ def main():
         "gpu_count": args.gpu_count,
         "source": args.source,
         "date": iso_date,
+        "docker_image": list(docker_images)[0] if len(docker_images) == 1 else ", ".join(sorted(docker_images)),
         "results": results,
     }
     if args.env_tag:

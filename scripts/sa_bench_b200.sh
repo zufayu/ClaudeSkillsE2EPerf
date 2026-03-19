@@ -358,10 +358,16 @@ EOF
     else
         max_num_tokens=$(( (conc + isl + 64 + 63) / 64 * 64 ))
     fi
-    local max_model_len=$(( isl + osl + 256 ))
-
-    # Enforce minimums (from InferenceX)
-    [[ $max_model_len -lt 8192 ]] && max_model_len=8192
+    # Match ATOM CI max_model_len for fair cross-platform comparison:
+    #   chat (1k/1k):      ATOM unset (defaults 163840), we use 8192 (tighter = better)
+    #   reasoning (1k/8k): ATOM uses 10240
+    #   summarize (8k/1k): ATOM uses 10240
+    local max_model_len
+    if [[ $((isl + osl)) -le 2048 ]]; then
+        max_model_len=8192
+    else
+        max_model_len=10240
+    fi
     [[ $max_num_tokens -lt 8192 ]] && max_num_tokens=8192
 
     # --- Piecewise CUDA Graphs ---
@@ -388,10 +394,17 @@ EOF
         unset ENABLE_CONFIGURABLE_MOE 2>/dev/null || true
     fi
 
-    # --- Start server ---
+    # --- Build server command ---
     local server_log="$RESULT_DIR/server_${tag}.log"
     local gpu_csv="$RESULT_DIR/gpu_${tag}.csv"
     local result_filename="result_${tag}"
+
+    local server_cmd="PYTHONNOUSERSITE=1 mpirun -n 1 --oversubscribe --allow-run-as-root"
+    server_cmd+=" trtllm-serve $model --port=$PORT"
+    server_cmd+=" --trust_remote_code --backend=pytorch"
+    server_cmd+=" --max_seq_len=$max_model_len --max_num_tokens=$max_num_tokens"
+    server_cmd+=" --tp_size=$TP --ep_size=$ep_size"
+    server_cmd+=" --extra_llm_api_options=$config_file"
 
     start_gpu_monitor --output "$gpu_csv"
 
@@ -448,6 +461,48 @@ EOF
 
         run_benchmark_serving "${bench_args[@]}" || \
             log "  WARN: Benchmark failed for $tag"
+
+        # --- Inject reproduce commands into result JSON ---
+        local result_json="$RESULT_DIR/${result_filename}.json"
+        if [[ -f "$result_json" ]]; then
+            # Detect docker image from env or label
+            local docker_image="${DOCKER_IMAGE:-${TRTLLM_IMAGE:-}}"
+            if [[ -z "$docker_image" && -f /.dockerenv ]]; then
+                docker_image="unknown-docker"
+            fi
+
+            # Merge reproduce info into result JSON
+            RESULT_JSON="$result_json" \
+            SERVER_CMD="$server_cmd" \
+            BENCH_ARGS="${bench_args[*]}" \
+            CONFIG_FILE="$config_file" \
+            DOCKER_IMG="$docker_image" \
+            python3 << 'PYEOF'
+import json, sys, os
+
+result_path = os.environ["RESULT_JSON"]
+server_cmd = os.environ["SERVER_CMD"]
+bench_args_str = os.environ["BENCH_ARGS"]
+config_file = os.environ["CONFIG_FILE"]
+docker_image = os.environ["DOCKER_IMG"]
+
+with open(result_path) as f:
+    data = json.load(f)
+
+with open(config_file) as f:
+    config_yaml = f.read()
+
+data["server_cmd"] = server_cmd
+data["benchmark_cmd"] = "benchmark_serving.py " + bench_args_str
+data["config_yaml"] = config_yaml
+if docker_image:
+    data["docker_image"] = docker_image
+
+with open(result_path, "w") as f:
+    json.dump(data, f, indent=2)
+print(f"  Injected reproduce info into {result_path}")
+PYEOF
+        fi
     else
         log "  SKIP: Server failed to start for $tag"
     fi
@@ -579,6 +634,7 @@ log "  Scenario:    $SCENARIO_FILTER -> ${SCENARIOS[*]}"
 log "  Concurrency: ${CONC_SWEEP[*]}"
 log "  Warmups:     ${NUM_WARMUPS:-8}"
 log "  Range Ratio: $RANDOM_RANGE_RATIO"
+log "  Docker Img:  ${DOCKER_IMAGE:-<not set, set DOCKER_IMAGE env to record>}"
 log "============================================================"
 echo ""
 
