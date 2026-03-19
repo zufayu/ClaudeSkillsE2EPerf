@@ -145,10 +145,32 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
   .kpi-row{grid-template-columns:repeat(2,1fr)}
   .chart-card .chart-wrap{height:300px}
 }
+/* Password gate */
+#pw-gate{position:fixed;top:0;left:0;width:100%;height:100%;background:var(--bg-primary);z-index:9999;display:flex;align-items:center;justify-content:center}
+#pw-gate.hidden{display:none}
+#pw-box{background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;padding:40px;text-align:center;max-width:360px;width:90%}
+#pw-box h2{color:var(--text-primary);margin-bottom:8px;font-size:18px}
+#pw-box p{color:var(--text-tertiary);font-size:13px;margin-bottom:20px}
+#pw-box input{width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:14px;outline:none;margin-bottom:12px}
+#pw-box input:focus{border-color:var(--accent-blue)}
+#pw-box button{width:100%;padding:10px;background:var(--accent-blue);color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer}
+#pw-box button:hover{opacity:0.9}
+#pw-box .pw-err{color:var(--accent-red);font-size:12px;margin-top:8px;display:none}
 </style>
 </head>
 <body>
-<div class="container">
+
+<div id="pw-gate">
+  <div id="pw-box">
+    <h2>E2EDeepPerf</h2>
+    <p>Enter password to access the dashboard</p>
+    <input type="password" id="pw-input" placeholder="Password" autofocus/>
+    <button id="pw-btn">Enter</button>
+    <div class="pw-err" id="pw-err">Incorrect password</div>
+  </div>
+</div>
+
+<div class="container" id="main-content" style="display:none">
 
 <header>
   <div>
@@ -1207,6 +1229,29 @@ function init() {
 
 init();
 
+})();
+</script>
+<script>
+(function(){
+  const PASS_HASH = 'd2b9dc0f25ad351b9d4de2b1789f917a76d3bcd1c8e49c7330fa2d5a92a63743';
+  async function sha256(str){
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  function unlock(){
+    document.getElementById('pw-gate').classList.add('hidden');
+    document.getElementById('main-content').style.display='';
+    sessionStorage.setItem('pw-ok','1');
+  }
+  if(sessionStorage.getItem('pw-ok')==='1'){unlock();}
+  document.getElementById('pw-btn').addEventListener('click', async()=>{
+    const v=document.getElementById('pw-input').value;
+    if(await sha256(v)===PASS_HASH){unlock();}
+    else{document.getElementById('pw-err').style.display='block';}
+  });
+  document.getElementById('pw-input').addEventListener('keydown',(e)=>{
+    if(e.key==='Enter')document.getElementById('pw-btn').click();
+  });
 })();
 </script>
 </body>
