@@ -199,6 +199,7 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
   </div>
   <div class="chart-grid">
     <div class="chart-card hero"><h3 id="perf-chart-title">Output Throughput by Configuration</h3><div class="chart-wrap"><canvas id="chart-perf-bar"></canvas></div></div>
+    <div class="chart-card hero"><h3>Interactive Performance vs Token Throughput</h3><div class="chart-wrap"><canvas id="chart-interactive"></canvas></div></div>
   </div>
   <div style="margin-top:var(--gap-lg)">
     <div style="display:flex;gap:var(--gap-sm);align-items:center;margin-bottom:var(--gap-sm);flex-wrap:wrap">
@@ -526,7 +527,7 @@ const charts = {};
 function destroyChart(id) {
   if (charts[id]) { charts[id].destroy(); delete charts[id]; }
   // Also clear any orphaned Chart instance on the canvas (e.g. from prior crash)
-  const canvasMap = {'perfBar': 'chart-perf-bar', 'tradeoffTpot': 'chart-tradeoff-tpot', 'tradeoffTtft': 'chart-tradeoff-ttft', 'tput': 'chart-tput', 'tpot': 'chart-tpot', 'ttft': 'chart-ttft'};
+  const canvasMap = {'perfBar': 'chart-perf-bar', 'interactive': 'chart-interactive', 'tradeoffTpot': 'chart-tradeoff-tpot', 'tradeoffTtft': 'chart-tradeoff-ttft', 'tput': 'chart-tput', 'tpot': 'chart-tpot', 'ttft': 'chart-ttft'};
   if (canvasMap[id]) {
     const el = document.getElementById(canvasMap[id]);
     const existing = el && Chart.getChart(el);
@@ -841,6 +842,47 @@ function buildTableColsSelector(allSeriesKeys, refKey, cmpKey) {
   group.appendChild(dd);
 }
 
+/* --- Interactive Performance vs Token Throughput (line chart) --- */
+function buildInteractiveChart(data) {
+  destroyChart('interactive');
+  const canvas = document.getElementById('chart-interactive');
+  // Group by series + scenario; X = throughput/gpu, Y = 1000/TPOT
+  const grouped = {};
+  for (const d of data) {
+    if (d.tpot_p50 <= 0 || d.output_tps <= 0) continue;
+    const sk = d.series_key + ' ' + d.isl + '/' + d.osl;
+    if (!grouped[sk]) grouped[sk] = {series: d.series_key, points: []};
+    const perGpu = d.gpu_count > 0 ? d.output_tps / d.gpu_count : d.output_tps;
+    grouped[sk].points.push({x: perGpu, y: 1000 / d.tpot_p50, conc: d.conc, scenario: `${d.isl}/${d.osl}`});
+  }
+  const datasets = [];
+  for (const [key, g] of Object.entries(grouped)) {
+    g.points.sort((a, b) => a.conc - b.conc);
+    const c = getColor(g.series);
+    datasets.push({
+      label: key, data: g.points, borderColor: c.border, backgroundColor: c.bg,
+      borderWidth: 2, pointRadius: 5, pointHoverRadius: 8, fill: false, tension: 0.2,
+      showLine: true,
+    });
+  }
+  charts['interactive'] = new Chart(canvas, {
+    type: 'scatter',
+    data: {datasets},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: {title: {display: true, text: 'Token Throughput per GPU (tok/s/gpu)', color: '#7e8094'}, ticks: {color: '#7e8094'}, grid: {color: '#262733'}},
+        y: {title: {display: true, text: 'Interactive Performance (1000/TPOT)', color: '#7e8094'}, ticks: {color: '#7e8094'}, grid: {color: '#262733'}},
+      },
+      plugins: {
+        tooltip: {callbacks: {label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.raw.y, 1)} tok/s/req, ${fmtNum(ctx.raw.x)} tok/s/gpu (c=${ctx.raw.conc})`}},
+        legend: {labels: {color: '#bfc1d0', usePointStyle: true, pointStyle: 'circle'}},
+        datalabels: {display: false}
+      }
+    }
+  });
+}
+
 /* --- Tradeoff Charts (line: Throughput vs Latency, connected by concurrency) --- */
 function buildTradeoffChart(canvasId, chartKey, data, xField, xLabel) {
   destroyChart(chartKey);
@@ -1123,6 +1165,7 @@ function refresh() {
   const activeTab = document.querySelector('.tab.active')?.dataset.tab;
   if (activeTab === 'performance') {
     buildPerfBarChart(data);
+    buildInteractiveChart(data);
     buildPerfTable(data);
   } else if (activeTab === 'scatter') {
     buildTradeoffChart('chart-tradeoff-tpot', 'tradeoffTpot', data, 'tpot_p50', 'TPOT p50 (ms)');
