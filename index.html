@@ -140,13 +140,6 @@ table.perf tbody tr:hover{background:var(--bg-tertiary)}
 /* Footer */
 footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--text-tertiary);display:flex;justify-content:space-between;flex-wrap:wrap;gap:var(--gap-sm)}
 
-/* Table column pills */
-.tbl-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:12px;font-size:11px;cursor:pointer;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-tertiary);transition:all .15s;user-select:none}
-.tbl-pill:hover{border-color:var(--text-tertiary);color:var(--text-secondary)}
-.tbl-pill.active{border-color:var(--accent-blue);color:var(--text-primary);background:rgba(91,156,245,.12)}
-.tbl-pill.is-ref{border-color:var(--accent-green);color:var(--accent-green);background:rgba(86,212,114,.1)}
-.tbl-pill.is-cmp{border-color:var(--accent-orange);color:var(--accent-orange);background:rgba(237,160,106,.1)}
-.tbl-pill .pill-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 
 /* Responsive */
 @media(max-width:768px){
@@ -203,7 +196,6 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
 <div class="tab-content active" id="tab-performance">
   <div style="display:flex;gap:var(--gap-md);align-items:center;flex-wrap:wrap;margin-bottom:var(--gap-sm)">
     <div class="metric-selector" id="perf-metric-selector"></div>
-    <button class="sel-btn" id="compare-toggle" style="margin-left:auto;border-color:var(--accent-cyan);font-weight:600">Apple-to-Apple</button>
   </div>
   <div class="compare-pair" id="compare-pair">
     <label>Ref:</label><select id="compare-ref"></select>
@@ -217,8 +209,7 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
   <div style="margin-top:var(--gap-lg)">
     <div style="display:flex;gap:var(--gap-sm);align-items:center;margin-bottom:var(--gap-sm);flex-wrap:wrap">
       <span style="font-size:13px;color:var(--text-tertiary);font-weight:500">Table columns:</span>
-      <button class="sel-btn active" id="table-cols-toggle" style="font-size:11px;padding:4px 10px;border-color:var(--accent-cyan)">Ref+Cmp only</button>
-      <div id="table-series-pills" style="display:flex;gap:4px;flex-wrap:wrap"></div>
+      <div class="filter-group" id="table-cols-group"></div>
     </div>
     <div class="table-wrap"><table class="perf" id="perf-table"><thead></thead><tbody></tbody></table></div>
   </div>
@@ -383,11 +374,9 @@ const state = {
   concs: new Set(allConcs.map(String)),
   perfMetric: 'output_tps',
   trendsSeries: allSeries[0] || '',
-  compareMode: true,  // default ON for apple-to-apple
   compareRef: allSeries[0] || '',
   compareCmp: allSeries[1] || '',
-  tableFocused: true,  // default: show only Ref+Cmp in table
-  tableExtra: new Set(),  // additional series to show in table
+  tableCols: new Set(allSeries.slice(0, 2)),  // default: show only Ref+Cmp in table
 };
 
 function getFiltered() {
@@ -404,27 +393,6 @@ function getFiltered() {
   return out;
 }
 
-/* Filter to only configs where the selected compare pair both have data (apple-to-apple) */
-function getCompareFiltered(data) {
-  const seriesKeys = [...new Set(data.map(d => d.series_key))];
-  if (seriesKeys.length < 2) return data; // nothing to compare
-  const refKey = seriesKeys.includes(state.compareRef) ? state.compareRef : seriesKeys[0];
-  const cmpKey = seriesKeys.includes(state.compareCmp) ? state.compareCmp : seriesKeys[1];
-  if (!refKey || !cmpKey || refKey === cmpKey) return data;
-  // Find configs present in both ref and cmp series
-  const refConfigs = new Set();
-  const cmpConfigs = new Set();
-  for (const d of data) {
-    const cfg = `${d.isl}/${d.osl}|${d.conc}`;
-    if (d.series_key === refKey) refConfigs.add(cfg);
-    if (d.series_key === cmpKey) cmpConfigs.add(cfg);
-  }
-  const commonConfigs = new Set();
-  for (const cfg of refConfigs) {
-    if (cmpConfigs.has(cfg)) commonConfigs.add(cfg);
-  }
-  return data.filter(d => commonConfigs.has(`${d.isl}/${d.osl}|${d.conc}`));
-}
 
 /* ================================================================
    4. FILTER BAR
@@ -606,10 +574,8 @@ function buildPerfBarChart(data) {
   const metric = state.perfMetric;
   const def = METRIC_DEFS[metric];
 
-  const seriesCount = new Set(data.map(d => d.series_key)).size;
   const configCount = new Set(data.map(d => `${d.isl}/${d.osl} c=${d.conc}`)).size;
-  const suffix = state.compareMode && seriesCount >= 2 ? ` — ${configCount} matching configs` : '';
-  document.getElementById('perf-chart-title').textContent = `${def.label} by Configuration${suffix}`;
+  document.getElementById('perf-chart-title').textContent = `${def.label} by Configuration — ${configCount} configs`;
 
   // Group data by series, then by config label
   const seriesKeys = sortSeriesKeys([...new Set(data.map(d => d.series_key))]);
@@ -685,18 +651,12 @@ function buildPerfTable(data) {
   const refKey = allSeriesKeys.includes(state.compareRef) ? state.compareRef : allSeriesKeys[0];
   const cmpKey = allSeriesKeys.includes(state.compareCmp) ? state.compareCmp : allSeriesKeys[1];
 
-  // Filter table columns: focused mode shows only Ref+Cmp + extras
-  let seriesKeys;
-  if (state.tableFocused && refKey && cmpKey) {
-    const visible = new Set([refKey, cmpKey, ...state.tableExtra]);
-    seriesKeys = allSeriesKeys.filter(sk => visible.has(sk));
-  } else {
-    seriesKeys = allSeriesKeys;
-  }
-  const isComparison = seriesKeys.length >= 2 && refKey && cmpKey && refKey !== cmpKey;
+  // Filter table columns based on user selection
+  const seriesKeys = allSeriesKeys.filter(sk => state.tableCols.has(sk));
+  const isComparison = seriesKeys.length >= 2 && refKey && cmpKey && refKey !== cmpKey && seriesKeys.includes(refKey) && seriesKeys.includes(cmpKey);
 
-  // Build series pills for adding/removing columns
-  buildTableSeriesPills(allSeriesKeys, seriesKeys, refKey, cmpKey);
+  // Build column selector dropdown
+  buildTableColsSelector(allSeriesKeys, refKey, cmpKey);
 
   // Group by config (ISL/OSL + conc)
   const groups = {};
@@ -836,31 +796,49 @@ function buildPerfTable(data) {
   });
 }
 
-/* --- Table Series Pills --- */
-function buildTableSeriesPills(allSeriesKeys, visibleKeys, refKey, cmpKey) {
-  const container = document.getElementById('table-series-pills');
-  if (!container) return;
-  // Only show pills when in focused mode and there are extra series to add
-  const extraKeys = allSeriesKeys.filter(sk => sk !== refKey && sk !== cmpKey);
-  if (!state.tableFocused || extraKeys.length === 0) {
-    container.innerHTML = '';
-    return;
-  }
-  const visibleSet = new Set(visibleKeys);
-  container.innerHTML = extraKeys.map(sk => {
+/* --- Table Columns Selector (dropdown checkboxes) --- */
+function buildTableColsSelector(allSeriesKeys, refKey, cmpKey) {
+  const group = document.getElementById('table-cols-group');
+  if (!group) return;
+  group.innerHTML = '';
+
+  const btn = document.createElement('button');
+  btn.className = 'filter-btn';
+  btn.innerHTML = `Columns <span class="count">${state.tableCols.size}</span>`;
+
+  const dd = document.createElement('div');
+  dd.className = 'filter-dropdown';
+
+  for (const sk of allSeriesKeys) {
     const c = getColor(sk);
     const shortName = sk.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
-    const isActive = visibleSet.has(sk);
-    return `<span class="tbl-pill${isActive ? ' active' : ''}" data-sk="${sk}"><span class="pill-dot" style="background:${c.border}"></span>${shortName}</span>`;
-  }).join('');
-  container.querySelectorAll('.tbl-pill').forEach(pill => {
-    pill.addEventListener('click', () => {
-      const sk = pill.dataset.sk;
-      if (state.tableExtra.has(sk)) state.tableExtra.delete(sk);
-      else state.tableExtra.add(sk);
+    const tag = sk === refKey ? ' (Ref)' : sk === cmpKey ? ' (Cmp)' : '';
+    const lbl = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = state.tableCols.has(sk);
+    cb.addEventListener('change', () => {
+      if (cb.checked) state.tableCols.add(sk); else state.tableCols.delete(sk);
+      btn.querySelector('.count').textContent = state.tableCols.size;
       refresh();
     });
+    lbl.appendChild(cb);
+    const dot = document.createElement('span');
+    dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;background:${c.border};margin:0 4px;vertical-align:middle`;
+    lbl.appendChild(dot);
+    lbl.appendChild(document.createTextNode(shortName + tag));
+    dd.appendChild(lbl);
+  }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    document.querySelectorAll('.filter-dropdown.open').forEach(d => { if (d !== dd) d.classList.remove('open'); });
+    dd.classList.toggle('open');
+    btn.classList.toggle('open');
   });
+
+  group.appendChild(btn);
+  group.appendChild(dd);
 }
 
 /* --- Scatter Charts --- */
@@ -1204,34 +1182,13 @@ function refresh() {
   const data = getFiltered();
   updateKPIs(data);
 
-  // Update compare toggle button state
-  const cmpBtn = document.getElementById('compare-toggle');
-  if (cmpBtn) {
-    cmpBtn.classList.toggle('active', state.compareMode);
-    if (state.compareMode) {
-      cmpBtn.style.background = 'var(--accent-cyan)';
-      cmpBtn.style.color = '#000';
-    } else {
-      cmpBtn.style.background = '';
-      cmpBtn.style.color = '';
-    }
-  }
-
-  // Update table columns toggle button state
-  const colsBtn = document.getElementById('table-cols-toggle');
-  if (colsBtn) {
-    colsBtn.classList.toggle('active', state.tableFocused);
-    colsBtn.textContent = state.tableFocused ? 'Ref+Cmp only' : 'All columns';
-  }
-
   // Update compare pair dropdowns
   buildComparePairSelector();
 
   const activeTab = document.querySelector('.tab.active')?.dataset.tab;
   if (activeTab === 'performance') {
-    const perfData = state.compareMode ? getCompareFiltered(data) : data;
-    buildPerfBarChart(perfData);
-    buildPerfTable(perfData);
+    buildPerfBarChart(data);
+    buildPerfTable(data);
   } else if (activeTab === 'scatter') {
     buildScatter(data);
     buildScatter2(data);
@@ -1263,32 +1220,21 @@ function init() {
   buildFilters();
   buildPerfMetricSelector();
 
-  // Compare toggle
-  document.getElementById('compare-toggle').addEventListener('click', () => {
-    state.compareMode = !state.compareMode;
-    refresh();
-  });
-
-  // Compare pair selectors
+  // Compare pair selectors — auto-add to table columns
   document.getElementById('compare-ref').addEventListener('change', (e) => {
     state.compareRef = e.target.value;
+    state.tableCols.add(e.target.value);
     refresh();
   });
   document.getElementById('compare-cmp').addEventListener('change', (e) => {
     state.compareCmp = e.target.value;
+    state.tableCols.add(e.target.value);
     refresh();
   });
   document.getElementById('compare-swap').addEventListener('click', () => {
     const tmp = state.compareRef;
     state.compareRef = state.compareCmp;
     state.compareCmp = tmp;
-    refresh();
-  });
-
-  // Table column focus toggle
-  document.getElementById('table-cols-toggle').addEventListener('click', () => {
-    state.tableFocused = !state.tableFocused;
-    state.tableExtra.clear();
     refresh();
   });
 
