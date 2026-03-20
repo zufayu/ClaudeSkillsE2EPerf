@@ -474,22 +474,25 @@ EOF
         # --- Collect DAR (Draft Acceptance Rate) for MTP configs ---
         if [[ $MTP_LAYERS -gt 0 ]]; then
             log "  Collecting DAR from /perf_metrics..."
-            local dar_json
-            dar_json=$(curl -s "http://0.0.0.0:${PORT}/perf_metrics" 2>/dev/null || echo "[]")
+            local dar_file="$RESULT_DIR/perf_metrics_${tag}.json"
+            local dar_result_path="$RESULT_DIR/${result_filename}.json"
+            curl -s "http://0.0.0.0:${PORT}/perf_metrics" > "$dar_file" 2>/dev/null || echo "[]" > "$dar_file"
+            log "  DAR response saved to $dar_file ($(wc -c < "$dar_file") bytes)"
 
-            DAR_JSON="$dar_json" \
-            RESULT_JSON_PATH="$RESULT_DIR/${result_filename}.json" \
-            python3 << 'DAREOF'
-import json, os, sys
+            python3 - "$dar_file" "$dar_result_path" << 'DAREOF'
+import json, sys
 
-dar_raw = os.environ["DAR_JSON"]
-result_path = os.environ["RESULT_JSON_PATH"]
+dar_file = sys.argv[1]
+result_path = sys.argv[2]
 
 try:
-    metrics = json.loads(dar_raw)
-except json.JSONDecodeError:
-    print("  WARN: Failed to parse /perf_metrics response")
+    with open(dar_file) as f:
+        metrics = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError) as e:
+    print(f"  WARN: Failed to read /perf_metrics: {e}")
     sys.exit(0)
+
+print(f"  /perf_metrics returned {len(metrics)} items")
 
 # Extract per-request acceptance rates
 acceptance_rates = []
@@ -497,6 +500,8 @@ total_accepted = 0
 total_draft = 0
 for item in metrics:
     pm = item.get("perf_metrics", {})
+    if pm is None:
+        continue
     sd = pm.get("speculative_decoding", {})
     if sd and sd.get("total_draft_tokens", 0) > 0:
         acceptance_rates.append(sd["acceptance_rate"])
@@ -504,6 +509,10 @@ for item in metrics:
         total_draft += sd["total_draft_tokens"]
 
 if not acceptance_rates:
+    # Debug: show first item structure
+    if metrics:
+        pm = metrics[0].get("perf_metrics")
+        print(f"  DEBUG: first item perf_metrics type={type(pm).__name__}, keys={list(pm.keys()) if isinstance(pm, dict) else 'N/A'}")
     print("  WARN: No speculative decoding metrics found in /perf_metrics")
     sys.exit(0)
 
@@ -519,7 +528,7 @@ print(f"  DAR: mean={dar_mean:.4f}, p50={dar_p50:.4f}, p99={dar_p99:.4f}, "
       f"overall={dar_overall:.4f} ({total_accepted}/{total_draft} tokens, {n} requests)")
 
 # Inject into result JSON
-if os.path.exists(result_path):
+try:
     with open(result_path) as f:
         data = json.load(f)
     data["dar_mean"] = round(dar_mean, 4)
@@ -532,6 +541,8 @@ if os.path.exists(result_path):
     with open(result_path, "w") as f:
         json.dump(data, f, indent=2)
     print(f"  Injected DAR into {result_path}")
+except Exception as e:
+    print(f"  WARN: Failed to inject DAR: {e}")
 DAREOF
         fi
 
