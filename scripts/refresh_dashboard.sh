@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
-# One-command dashboard refresh: import results + regenerate dashboard
+# One-command dashboard refresh: trim logs + import results + regenerate dashboard
 #
 # Usage (on B200 machine):
 #   bash scripts/refresh_dashboard.sh
 #
 # What it does:
-#   1. Import new B200 FP8 EP=1 results → replaces old mtp0 data
-#   2. Fetch latest competitor data (ATOM MI355X)
-#   3. Regenerate dashboard/data.js
-#   4. Show summary of what changed
+#   1. Trim server logs in all results_*/ directories (for repo storage)
+#   2. Import B200 FP8 results from all known result directories
+#   3. Fetch latest competitor data (ATOM MI355X)
+#   4. Regenerate dashboard/data.js
+#   5. Show summary of what changed
 # =============================================================================
 
 set -euo pipefail
@@ -23,40 +24,76 @@ echo "  Dashboard Refresh"
 echo "============================================================"
 echo ""
 
-# ---- Step 1: Import B200 FP8 EP=1 (mtp0) results ----
-# New data from results_b200_fp8_ep1 replaces old incomplete mtp0 data
-B200_FP8_EP1_DIR=""
-for candidate in \
-    "./results_b200_fp8_ep1" \
-    "$HOME/zufa/ClaudeSkillsE2EPerf/results_b200_fp8_ep1" \
-    "../results_b200_fp8_ep1"; do
-    if [[ -d "$candidate" ]] && ls "$candidate"/result_*.json &>/dev/null; then
-        B200_FP8_EP1_DIR="$(cd "$candidate" && pwd)"
-        break
+# ---- Step 1: Trim server logs ----
+echo "[1/4] Trimming server logs..."
+RESULT_DIRS=()
+for d in results_*/; do
+    [[ -d "$d" ]] && RESULT_DIRS+=("$d")
+done
+
+if [[ ${#RESULT_DIRS[@]} -gt 0 ]]; then
+    bash "$SCRIPT_DIR/trim_logs.sh" "${RESULT_DIRS[@]}"
+else
+    echo "  No results_*/ directories found"
+fi
+echo ""
+
+# ---- Step 2: Import B200 FP8 results ----
+# Import map: directory pattern → env-tag
+# Each entry: "dir_pattern env_tag"
+IMPORT_MAP=(
+    "results_b200_fp8_mtp0_ep1  mtp0-ep1"
+    "results_b200_fp8_mtp3_ep1  mtp3-ep1"
+    "results_b200_fp8_mtp0_ep8  mtp0-ep8"
+    "results_b200_fp8_mtp3_ep8  mtp3-ep8"
+)
+
+imported=0
+skipped=0
+for entry in "${IMPORT_MAP[@]}"; do
+    dir_pattern="${entry%% *}"
+    env_tag="${entry##* }"
+
+    # Search for the directory
+    found_dir=""
+    for candidate in \
+        "./$dir_pattern" \
+        "$HOME/zufa/ClaudeSkillsE2EPerf/$dir_pattern" \
+        "../$dir_pattern"; do
+        if [[ -d "$candidate" ]] && ls "$candidate"/result_*.json &>/dev/null; then
+            found_dir="$(cd "$candidate" && pwd)"
+            break
+        fi
+    done
+
+    if [[ -n "$found_dir" ]]; then
+        n_files=$(ls "$found_dir"/result_*.json 2>/dev/null | wc -l)
+        echo "[2/4] Importing $dir_pattern ($n_files files, env=$env_tag)"
+
+        python3 "$SCRIPT_DIR/import_results.py" \
+            --results-dir "$found_dir" \
+            --platform "8×B200" \
+            --framework "TRT-LLM 1.2.0rc6.post3" \
+            --quantization FP8 \
+            --env-tag "$env_tag"
+
+        ((imported++)) || true
+    else
+        ((skipped++)) || true
     fi
 done
 
-if [[ -n "$B200_FP8_EP1_DIR" ]]; then
-    echo "[1/3] Importing B200 FP8 mtp0 results from: $B200_FP8_EP1_DIR"
-    n_files=$(ls "$B200_FP8_EP1_DIR"/result_*.json 2>/dev/null | wc -l)
-    echo "  Found $n_files result files"
-
-    python3 "$SCRIPT_DIR/import_results.py" \
-        --results-dir "$B200_FP8_EP1_DIR" \
-        --platform "8×B200" \
-        --framework "TRT-LLM 1.2.0rc6.post3" \
-        --quantization FP8 \
-        --env-tag mtp0
-
-    echo ""
+echo ""
+if [[ $imported -eq 0 && $skipped -gt 0 ]]; then
+    echo "[2/4] SKIP: No B200 FP8 result directories found"
+    echo "  Expected: results_b200_fp8_{mtp0,mtp3}_{ep1,ep8}/"
 else
-    echo "[1/3] SKIP: No B200 FP8 EP=1 results found"
-    echo "  Looked for: ./results_b200_fp8_ep1, ~/zufa/.../results_b200_fp8_ep1"
-    echo ""
+    echo "[2/4] Imported $imported directories ($skipped not found)"
 fi
+echo ""
 
-# ---- Step 2: Fetch competitor data ----
-echo "[2/3] Fetching competitor data (ATOM MI355X)..."
+# ---- Step 3: Fetch competitor data ----
+echo "[3/4] Fetching competitor data (ATOM MI355X)..."
 if python3 "$SCRIPT_DIR/fetch_competitors.py" 2>/dev/null; then
     echo "  Done"
 else
@@ -64,8 +101,8 @@ else
 fi
 echo ""
 
-# ---- Step 3: Regenerate dashboard ----
-echo "[3/3] Regenerating dashboard..."
+# ---- Step 4: Regenerate dashboard ----
+echo "[4/4] Regenerating dashboard..."
 python3 "$SCRIPT_DIR/generate_dashboard.py"
 echo ""
 
@@ -87,4 +124,11 @@ print(f\"  {os.path.basename('$f'):50s} {d['platform']} {d['quantization']}{tag_
 " 2>/dev/null
 done
 echo ""
-echo "To view: cd dashboard && python3 -m http.server 8899"
+
+# Show trimmed log stats
+trimmed_count=$(find results_*/ -name "*.trimmed.log" 2>/dev/null | wc -l)
+trimmed_size=$(du -sh results_*/*.trimmed.log 2>/dev/null | tail -1 | awk '{print $1}' || echo "0")
+echo "Trimmed logs: $trimmed_count files"
+echo ""
+echo "To view: cd docs && python3 -m http.server 8899"
+echo "To commit: git add results_*/*.trimmed.log runs/ docs/data.js && git commit"

@@ -66,6 +66,59 @@ SCENARIO_MAP = {
 }
 
 
+def import_dar_results(results_dir):
+    """Scan dar_*.json files and extract DAR (Draft Acceptance Rate) metrics.
+
+    Returns dict mapping scenario -> {dar_avg, dar_p50, dar_p90, dar_p99,
+    acceptance_len_avg, acceptance_len_p50}.
+    """
+    dar_files = sorted(glob.glob(os.path.join(results_dir, "dar_*.json")))
+    dar_by_scenario = {}
+
+    for f in dar_files:
+        # Parse scenario from filename: dar_fp8_latency_chat.json -> chat
+        base = os.path.basename(f).replace(".json", "")
+        parts = base.split("_")
+        # Expected: dar_<quant>_<config>_<scenario>
+        if len(parts) < 4:
+            continue
+        scenario = parts[3]
+
+        try:
+            with open(f) as fh:
+                data = json.load(fh)
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"WARN: Skipping DAR file {f}: {e}", file=sys.stderr)
+            continue
+
+        ds = data.get("decoding_stats", {})
+        dar = ds.get("draft_acceptance_rate_percentiles", {})
+        acc_len = ds.get("acceptance_length_percentiles", {})
+
+        if not dar and not acc_len:
+            print(f"WARN: No decoding_stats in {f}", file=sys.stderr)
+            continue
+
+        dar_metrics = {}
+        if dar:
+            dar_metrics["dar_avg"] = dar.get("avg")
+            dar_metrics["dar_p50"] = dar.get("p50")
+            dar_metrics["dar_p90"] = dar.get("p90")
+            dar_metrics["dar_p99"] = dar.get("p99")
+        if acc_len:
+            dar_metrics["acceptance_len_avg"] = acc_len.get("avg")
+            dar_metrics["acceptance_len_p50"] = acc_len.get("p50")
+
+        # Remove None values
+        dar_metrics = {k: v for k, v in dar_metrics.items() if v is not None}
+
+        if dar_metrics:
+            dar_by_scenario[scenario] = dar_metrics
+            print(f"  DAR [{scenario}]: {dar_metrics}")
+
+    return dar_by_scenario
+
+
 def extract_metrics(data, file_info):
     """Extract metrics from a benchmark result JSON into unified format."""
     scenario = file_info.get("scenario", "unknown")
@@ -196,6 +249,18 @@ def main():
     if not results:
         print("ERROR: No results extracted", file=sys.stderr)
         sys.exit(1)
+
+    # Import DAR results if any dar_*.json files exist
+    dar_by_scenario = import_dar_results(args.results_dir)
+    if dar_by_scenario:
+        merged = 0
+        for r in results:
+            scenario = r.get("scenario")
+            if scenario in dar_by_scenario:
+                r.update(dar_by_scenario[scenario])
+                merged += 1
+        print(f"  Merged DAR data into {merged} result entries "
+              f"({len(dar_by_scenario)} scenarios)")
 
     # Determine date
     run_date = max(dates) if dates else datetime.now().strftime("%Y%m%d")

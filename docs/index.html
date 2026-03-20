@@ -338,8 +338,10 @@ function buildRepoFileLinks(d, run) {
   const fileTag = `${quant}_${d.config}_${d.scenario}_ep${d.ep_size || 1}_c${d.conc}${d.dp_attention ? '_dp' : ''}`;
   const configUrl = `${REPO_BASE}/${dirName}/config_${fileTag}.yml`;
   const resultUrl = `${REPO_BASE}/${dirName}/result_${fileTag}.json`;
+  const logUrl = `${REPO_BASE}/${dirName}/server_${fileTag}.trimmed.log`;
   return `<a href="${configUrl}" target="_blank" style="color:var(--accent-blue);text-decoration:none;margin-right:12px" title="Config YAML">Config</a>` +
-    `<a href="${resultUrl}" target="_blank" style="color:var(--accent-green);text-decoration:none" title="Result JSON">Result</a>`;
+    `<a href="${resultUrl}" target="_blank" style="color:var(--accent-green);text-decoration:none;margin-right:12px" title="Result JSON">Result</a>` +
+    `<a href="${logUrl}" target="_blank" style="color:var(--accent-orange);text-decoration:none" title="Server Log (trimmed)">Log</a>`;
 }
 
 function buildDetailHTML(d, run) {
