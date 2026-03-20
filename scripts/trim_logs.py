@@ -274,10 +274,24 @@ def format_output(sections, source_name, total_lines):
             out.append(f"  {line}")
         out.append("")
 
-    # Errors section (only if any)
+    # Errors section (only if any) — deduplicate across ranks
     if "errors" in sections:
         out.append("[ERRORS]")
+        seen_errors = set()
         for line in sections["errors"]:
+            # Skip stack trace noise: hex addresses, C++ template symbols
+            if re.match(r"^\d+\s+0x[0-9a-f]+\s", line):
+                continue
+            if "std::_Function_handler" in line or "std::vector<c10::IValue" in line:
+                continue
+            if line.startswith("^^^"):
+                continue
+            # Normalize: strip rank number and timestamp for dedup
+            normalized = re.sub(r"\[RANK \d+\]", "[RANK *]", line)
+            normalized = re.sub(r"\[\d{2}/\d{2}/\d{4}-\d{2}:\d{2}:\d{2}\]", "[*]", normalized)
+            if normalized in seen_errors:
+                continue
+            seen_errors.add(normalized)
             out.append(f"  {line}")
         out.append("")
 
