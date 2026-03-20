@@ -199,7 +199,6 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
   </div>
   <div class="chart-grid">
     <div class="chart-card hero"><h3 id="perf-chart-title">Output Throughput by Configuration</h3><div class="chart-wrap"><canvas id="chart-perf-bar"></canvas></div></div>
-    <div class="chart-card hero"><h3>Interactive Performance vs Token Throughput</h3><div class="chart-wrap"><canvas id="chart-interactive"></canvas></div></div>
   </div>
   <div style="margin-top:var(--gap-lg)">
     <div style="display:flex;gap:var(--gap-sm);align-items:center;margin-bottom:var(--gap-sm);flex-wrap:wrap">
@@ -532,7 +531,7 @@ const charts = {};
 function destroyChart(id) {
   if (charts[id]) { charts[id].destroy(); delete charts[id]; }
   // Also clear any orphaned Chart instance on the canvas (e.g. from prior crash)
-  const canvasMap = {'perfBar': 'chart-perf-bar', 'interactive': 'chart-interactive', 'interactive2': 'chart-interactive2', 'tradeoffTpot': 'chart-tradeoff-tpot', 'tradeoffTtft': 'chart-tradeoff-ttft', 'tput': 'chart-tput', 'tpot': 'chart-tpot', 'ttft': 'chart-ttft'};
+  const canvasMap = {'perfBar': 'chart-perf-bar', 'interactive2': 'chart-interactive2', 'tradeoffTpot': 'chart-tradeoff-tpot', 'tradeoffTtft': 'chart-tradeoff-ttft', 'tput': 'chart-tput', 'tpot': 'chart-tpot', 'ttft': 'chart-ttft'};
   if (canvasMap[id]) {
     const el = document.getElementById(canvasMap[id]);
     const existing = el && Chart.getChart(el);
@@ -886,8 +885,8 @@ function shortSeriesName(sk) {
 
 /* --- Interactive Performance vs Token Throughput (line chart) --- */
 function buildInteractiveChart(data, canvasId, chartKey, scenarioFilter) {
-  canvasId = canvasId || 'chart-interactive';
-  chartKey = chartKey || 'interactive';
+  canvasId = canvasId || 'chart-interactive2';
+  chartKey = chartKey || 'interactive2';
   destroyChart(chartKey);
   const canvas = document.getElementById(canvasId);
   const filtered = tradeoffFilter(data, scenarioFilter);
@@ -1208,7 +1207,6 @@ function refresh() {
   const activeTab = document.querySelector('.tab.active')?.dataset.tab;
   if (activeTab === 'performance') {
     buildPerfBarChart(data);
-    buildInteractiveChart(data);
     buildPerfTable(data);
   } else if (activeTab === 'scatter') {
     buildTradeoffScenarioSelector(data);
