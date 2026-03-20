@@ -535,12 +535,12 @@ collect_dar() {
 
     kill_server
 
-    # Generate synthetic dataset (50 prompts, short ISL/OSL for speed)
+    # Generate synthetic dataset (1000 prompts, ISL~1024 / OSL=1024 to match real workload)
     local dar_dataset="$RESULT_DIR/dar_dataset_${dar_tag}.jsonl"
     python3 -c "
 import json
-for i in range(50):
-    print(json.dumps({'task_id': i, 'prompt': 'Write a detailed story about ' + 'adventure ' * 100, 'output_tokens': 256}))
+for i in range(1000):
+    print(json.dumps({'task_id': i, 'prompt': 'Write a detailed story about ' + 'adventure ' * 100, 'output_tokens': 1024}))
 " > "$dar_dataset"
 
     # Build config YAML for trtllm-bench (minimal, with MTP)
@@ -590,7 +590,7 @@ EOF
         --dataset "$dar_dataset" \
         --tp $TP --ep $ep_size \
         --max_seq_len 8192 \
-        --num_requests 50 \
+        --num_requests 1000 \
         --warmup 2 \
         --concurrency 8 \
         --streaming \
