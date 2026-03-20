@@ -1,0 +1,8 @@
+cuda_graph_config:
+    enable_padding: true
+    max_batch_size: 1
+print_iter_log: true
+kv_cache_config:
+    free_gpu_memory_fraction: 0.5
+    enable_block_reuse: false
+stream_interval: 10

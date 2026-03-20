@@ -539,6 +539,10 @@ run_configs() {
 run_configs
 generate_summary
 
+# Trim server logs for repo storage
+log "Trimming server logs..."
+python3 "$SCRIPT_DIR/trim_logs.py" "$RESULT_DIR"
+
 log "============================================================"
 log "  ALL BENCHMARKS COMPLETE"
 log "  Results in: $RESULT_DIR/"
