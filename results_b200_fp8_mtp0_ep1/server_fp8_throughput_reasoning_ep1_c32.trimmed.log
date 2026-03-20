@@ -1,0 +1,153 @@
+=== HEAD (first 100 lines) ===
+/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Skipping import of cpp extensions due to incompatible torch version 2.9.0a0+145a3a7bda.nv25.10 for torchao version 0.15.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+/usr/local/lib/python3.12/dist-packages/modelopt/torch/__init__.py:36: UserWarning: transformers version 4.57.1 is incompatible with nvidia-modelopt and may cause issues. Please install recommended version with `pip install nvidia-modelopt[hf]` if working with HF models.
+  _warnings.warn(
+[TensorRT-LLM] TensorRT LLM version: 1.2.0rc6.post3
+/usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py:104: UserWarning: Field name "schema" in "ResponseFormat" shadows an attribute in parent "OpenAIBaseModel"
+  class ResponseFormat(OpenAIBaseModel):
+[03/17/2026-11:19:58] [TRT-LLM] [W] Overriding moe_config 
+[03/17/2026-11:19:58] [TRT-LLM] [W] Overriding kv_cache_config 
+[03/17/2026-11:19:58] [TRT-LLM] [I] Using LLM with PyTorch backend
+[03/17/2026-11:19:58] [TRT-LLM] [I] neither checkpoint_format nor checkpoint_loader were provided, checkpoint_format will be set to HF.
+[03/17/2026-11:19:58] [TRT-LLM] [I] start MpiSession with 8 workers
+[03/17/2026-11:19:58] [TRT-LLM] [I] Found quantization_config field in /home/models/models--DeepSeek-R1-0528/config.json, pre-quantized checkpoint is used.
+The argument `trust_remote_code` is to be used with Auto classes. It has no effect here and is ignored.
+You are using a model of type deepseek_v3 to instantiate a model of type . This is not supported for all configurations of models and can yield errors.
+`torch_dtype` is deprecated! Use `dtype` instead!
+[03/17/2026-11:19:58] [TRT-LLM] [W] Orchestrator is creating IPC executor
+[33;20mrank 0 using MpiPoolSession to spawn MPI processes
+[0m[03/17/2026-11:19:58] [TRT-LLM] [I] Generating a new HMAC key for server proxy_request_queue
+[03/17/2026-11:19:58] [TRT-LLM] [I] Generating a new HMAC key for server worker_init_status_queue
+[03/17/2026-11:19:58] [TRT-LLM] [I] Generating a new HMAC key for server proxy_result_queue
+[03/17/2026-11:19:58] [TRT-LLM] [I] Generating a new HMAC key for server proxy_stats_queue
+[03/17/2026-11:19:58] [TRT-LLM] [I] Generating a new HMAC key for server proxy_kv_cache_events_queue
+/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Skipping import of cpp extensions due to incompatible torch version 2.9.0a0+145a3a7bda.nv25.10 for torchao version 0.15.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+Skipping import of cpp extensions due to incompatible torch version 2.9.0a0+145a3a7bda.nv25.10 for torchao version 0.15.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+Skipping import of cpp extensions due to incompatible torch version 2.9.0a0+145a3a7bda.nv25.10 for torchao version 0.15.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+Skipping import of cpp extensions due to incompatible torch version 2.9.0a0+145a3a7bda.nv25.10 for torchao version 0.15.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+Skipping import of cpp extensions due to incompatible torch version 2.9.0a0+145a3a7bda.nv25.10 for torchao version 0.15.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+Skipping import of cpp extensions due to incompatible torch version 2.9.0a0+145a3a7bda.nv25.10 for torchao version 0.15.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+Skipping import of cpp extensions due to incompatible torch version 2.9.0a0+145a3a7bda.nv25.10 for torchao version 0.15.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+Skipping import of cpp extensions due to incompatible torch version 2.9.0a0+145a3a7bda.nv25.10 for torchao version 0.15.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+Multiple distributions found for package optimum. Picked distribution: optimum
+Multiple distributions found for package modelopt. Picked distribution: nvidia-modelopt
+Multiple distributions found for package optimum. Picked distribution: optimum
+Multiple distributions found for package modelopt. Picked distribution: nvidia-modelopt
+Multiple distributions found for package optimum. Picked distribution: optimum
+Multiple distributions found for package modelopt. Picked distribution: nvidia-modelopt
+Multiple distributions found for package optimum. Picked distribution: optimum
+Multiple distributions found for package optimum. Picked distribution: optimum
+Multiple distributions found for package modelopt. Picked distribution: nvidia-modelopt
+Multiple distributions found for package modelopt. Picked distribution: nvidia-modelopt
+Multiple distributions found for package optimum. Picked distribution: optimum
+Multiple distributions found for package modelopt. Picked distribution: nvidia-modelopt
+Multiple distributions found for package optimum. Picked distribution: optimum
+Multiple distributions found for package modelopt. Picked distribution: nvidia-modelopt
+Multiple distributions found for package optimum. Picked distribution: optimum
+Multiple distributions found for package modelopt. Picked distribution: nvidia-modelopt
+/usr/local/lib/python3.12/dist-packages/modelopt/torch/__init__.py:36: UserWarning: transformers version 4.57.1 is incompatible with nvidia-modelopt and may cause issues. Please install recommended version with `pip install nvidia-modelopt[hf]` if working with HF models.
+  _warnings.warn(
+/usr/local/lib/python3.12/dist-packages/modelopt/torch/__init__.py:36: UserWarning: transformers version 4.57.1 is incompatible with nvidia-modelopt and may cause issues. Please install recommended version with `pip install nvidia-modelopt[hf]` if working with HF models.
+  _warnings.warn(
+/usr/local/lib/python3.12/dist-packages/modelopt/torch/__init__.py:36: UserWarning: transformers version 4.57.1 is incompatible with nvidia-modelopt and may cause issues. Please install recommended version with `pip install nvidia-modelopt[hf]` if working with HF models.
+  _warnings.warn(
+/usr/local/lib/python3.12/dist-packages/modelopt/torch/__init__.py:36: UserWarning: transformers version 4.57.1 is incompatible with nvidia-modelopt and may cause issues. Please install recommended version with `pip install nvidia-modelopt[hf]` if working with HF models.
+  _warnings.warn(
+/usr/local/lib/python3.12/dist-packages/modelopt/torch/__init__.py:36: UserWarning: transformers version 4.57.1 is incompatible with nvidia-modelopt and may cause issues. Please install recommended version with `pip install nvidia-modelopt[hf]` if working with HF models.
+  _warnings.warn(
+/usr/local/lib/python3.12/dist-packages/modelopt/torch/__init__.py:36: UserWarning: transformers version 4.57.1 is incompatible with nvidia-modelopt and may cause issues. Please install recommended version with `pip install nvidia-modelopt[hf]` if working with HF models.
+  _warnings.warn(
+/usr/local/lib/python3.12/dist-packages/modelopt/torch/__init__.py:36: UserWarning: transformers version 4.57.1 is incompatible with nvidia-modelopt and may cause issues. Please install recommended version with `pip install nvidia-modelopt[hf]` if working with HF models.
+  _warnings.warn(
+/usr/local/lib/python3.12/dist-packages/modelopt/torch/__init__.py:36: UserWarning: transformers version 4.57.1 is incompatible with nvidia-modelopt and may cause issues. Please install recommended version with `pip install nvidia-modelopt[hf]` if working with HF models.
+  _warnings.warn(
+[TensorRT-LLM] TensorRT LLM version: 1.2.0rc6.post3
+[TensorRT-LLM] TensorRT LLM version: 1.2.0rc6.post3
+[TensorRT-LLM] TensorRT LLM version: 1.2.0rc6.post3
+[TensorRT-LLM] TensorRT LLM version: 1.2.0rc6.post3
+[TensorRT-LLM] TensorRT LLM version: 1.2.0rc6.post3
+[TensorRT-LLM] TensorRT LLM version: 1.2.0rc6.post3
+[TensorRT-LLM] TensorRT LLM version: 1.2.0rc6.post3
+[TensorRT-LLM] TensorRT LLM version: 1.2.0rc6.post3
+/usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py:104: UserWarning: Field name "schema" in "ResponseFormat" shadows an attribute in parent "OpenAIBaseModel"
+  class ResponseFormat(OpenAIBaseModel):
+/usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py:104: UserWarning: Field name "schema" in "ResponseFormat" shadows an attribute in parent "OpenAIBaseModel"
+  class ResponseFormat(OpenAIBaseModel):
+/usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py:104: UserWarning: Field name "schema" in "ResponseFormat" shadows an attribute in parent "OpenAIBaseModel"
+  class ResponseFormat(OpenAIBaseModel):
+/usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py:104: UserWarning: Field name "schema" in "ResponseFormat" shadows an attribute in parent "OpenAIBaseModel"
+  class ResponseFormat(OpenAIBaseModel):
+/usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py:104: UserWarning: Field name "schema" in "ResponseFormat" shadows an attribute in parent "OpenAIBaseModel"
+  class ResponseFormat(OpenAIBaseModel):
+/usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py:104: UserWarning: Field name "schema" in "ResponseFormat" shadows an attribute in parent "OpenAIBaseModel"
+  class ResponseFormat(OpenAIBaseModel):
+
+=== TAIL (last 50 lines) ===
+[03/17/2026-11:49:36] [TRT-LLM] [RANK 0] [I] iter = 84292, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.078025817871094ms, prev_device_step_time = 9.141247749328613ms, timestamp = 2026-03-17 11:49:36, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:36] [TRT-LLM] [RANK 0] [I] iter = 84293, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.053230285644531ms, prev_device_step_time = 9.138272285461426ms, timestamp = 2026-03-17 11:49:36, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:36] [TRT-LLM] [RANK 0] [I] iter = 84294, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.082794189453125ms, prev_device_step_time = 9.145888328552246ms, timestamp = 2026-03-17 11:49:36, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:36] [TRT-LLM] [RANK 0] [I] iter = 84295, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.08207893371582ms, prev_device_step_time = 9.132863998413086ms, timestamp = 2026-03-17 11:49:36, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:36] [TRT-LLM] [RANK 0] [I] iter = 84296, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 8.971691131591797ms, prev_device_step_time = 9.129311561584473ms, timestamp = 2026-03-17 11:49:36, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:36] [TRT-LLM] [RANK 0] [I] iter = 84297, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.071588516235352ms, prev_device_step_time = 9.13526439666748ms, timestamp = 2026-03-17 11:49:36, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84298, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.041786193847656ms, prev_device_step_time = 9.132831573486328ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84299, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.048223495483398ms, prev_device_step_time = 9.139904022216797ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84300, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.087562561035156ms, prev_device_step_time = 9.144096374511719ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84301, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.056329727172852ms, prev_device_step_time = 9.141792297363281ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84302, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.067058563232422ms, prev_device_step_time = 9.144448280334473ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84303, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.07278060913086ms, prev_device_step_time = 9.14419174194336ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84304, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.094476699829102ms, prev_device_step_time = 9.144831657409668ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84305, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.006261825561523ms, prev_device_step_time = 9.14345645904541ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84306, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.053230285644531ms, prev_device_step_time = 9.132448196411133ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84307, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.05752182006836ms, prev_device_step_time = 9.144672393798828ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84308, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.085416793823242ms, prev_device_step_time = 9.14633560180664ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84309, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.06825065612793ms, prev_device_step_time = 9.138463973999023ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84310, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.045839309692383ms, prev_device_step_time = 9.143232345581055ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84311, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.071588516235352ms, prev_device_step_time = 9.13548755645752ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84312, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.06229019165039ms, prev_device_step_time = 9.141183853149414ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84313, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.055852890014648ms, prev_device_step_time = 9.123040199279785ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84314, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.072303771972656ms, prev_device_step_time = 9.133119583129883ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84315, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.080886840820312ms, prev_device_step_time = 9.140671730041504ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84316, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.007692337036133ms, prev_device_step_time = 9.14742374420166ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84317, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.057044982910156ms, prev_device_step_time = 9.141632080078125ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84318, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.070158004760742ms, prev_device_step_time = 9.13203239440918ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84319, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.08350944519043ms, prev_device_step_time = 9.151679992675781ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84320, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.056329727172852ms, prev_device_step_time = 9.144672393798828ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84321, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.068012237548828ms, prev_device_step_time = 9.139391899108887ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84322, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.052753448486328ms, prev_device_step_time = 9.136159896850586ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84323, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.079933166503906ms, prev_device_step_time = 9.145279884338379ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84324, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.064674377441406ms, prev_device_step_time = 9.143808364868164ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84325, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.09280776977539ms, prev_device_step_time = 9.145440101623535ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84326, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 8.979558944702148ms, prev_device_step_time = 9.135135650634766ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84327, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.06825065612793ms, prev_device_step_time = 9.151424407958984ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84328, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.078502655029297ms, prev_device_step_time = 9.137503623962402ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84329, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.053468704223633ms, prev_device_step_time = 9.13424015045166ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84330, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.081602096557617ms, prev_device_step_time = 9.142463684082031ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 2, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 2}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84331, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 9.182929992675781ms, prev_device_step_time = 9.132255554199219ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 1, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 1}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84332, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 8.723735809326172ms, prev_device_step_time = 8.912128448486328ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 1, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 1}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84333, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 8.808374404907227ms, prev_device_step_time = 8.900735855102539ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 1, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 1}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84334, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 8.834123611450195ms, prev_device_step_time = 8.906944274902344ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 1, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 1}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84335, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 8.838653564453125ms, prev_device_step_time = 8.910016059875488ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 1, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 1}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84336, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 8.744239807128906ms, prev_device_step_time = 8.904576301574707ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 1, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 1}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84337, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 8.806943893432617ms, prev_device_step_time = 8.90220832824707ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 1, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 1}
+[03/17/2026-11:49:37] [TRT-LLM] [RANK 0] [I] iter = 84338, global_rank = 0, rank = 0, currank_total_requests = 0/0, host_step_time = 8.70370864868164ms, prev_device_step_time = 8.892607688903809ms, timestamp = 2026-03-17 11:49:37, num_scheduled_requests: 0, states = {'num_ctx_requests': 0, 'num_ctx_tokens': 0, 'num_generation_tokens': 1}
+[32mINFO[0m:     Shutting down
+[32mINFO[0m:     Waiting for application shutdown.
+[03/17/2026-11:49:39] [TRT-LLM] [E] Failed to send object: None
