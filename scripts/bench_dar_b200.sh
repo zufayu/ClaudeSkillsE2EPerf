@@ -195,12 +195,12 @@ EOF
     set -x
     trtllm-bench --model "$MODEL_FP8" \
         --model_path "$MODEL_FP8" \
+        throughput \
         --backend pytorch \
         --extra_llm_api_options "$CONFIG_FILE" \
         --max_seq_len "$local_max_model_len" \
         --tp "$TP" \
         --ep "$EP" \
-        throughput \
         --dataset "$DATASET_FILE" \
         --concurrency "$CONCURRENCY" \
         --num_requests "$NUM_REQUESTS" \
