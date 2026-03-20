@@ -26,13 +26,8 @@ echo ""
 
 # ---- Step 1: Trim server logs ----
 echo "[1/4] Trimming server logs..."
-RESULT_DIRS=()
-for d in results_*/; do
-    [[ -d "$d" ]] && RESULT_DIRS+=("$d")
-done
-
-if [[ ${#RESULT_DIRS[@]} -gt 0 ]]; then
-    bash "$SCRIPT_DIR/trim_logs.sh" "${RESULT_DIRS[@]}"
+if ls -d results_*/ &>/dev/null; then
+    python3 "$SCRIPT_DIR/trim_logs.py" --all
 else
     echo "  No results_*/ directories found"
 fi
