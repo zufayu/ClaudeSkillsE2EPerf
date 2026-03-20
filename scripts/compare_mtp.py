@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
 """Compare MTP0 vs MTP3 benchmark results side-by-side.
 
-Shows throughput gain, latency reduction, and MTP acceptance rate.
+Shows throughput gain and latency reduction.
 
 Usage:
-    python scripts/compare_mtp.py runs/8xb200-fp8-*-mtp0.json runs/8xb200-fp8-*-mtp3.json
+    # Terminal table:
     python scripts/compare_mtp.py --mtp0 runs/mtp0.json --mtp3 runs/mtp3.json
+
+    # Markdown table (for pasting into reports):
+    python scripts/compare_mtp.py --mtp0 runs/mtp0.json --mtp3 runs/mtp3.json --md
+
+    # Cross-platform comparison (generates full report tables):
+    python scripts/compare_mtp.py --cross \
+        --b200-mtp0 runs/8xb200-fp8-*-mtp0*.json \
+        --b200-mtp3 runs/8xb200-fp8-*-mtp3*.json \
+        --mi355x-mtp0 runs/atom-mi355x-*.json \
+        --mi355x-mtp3 runs/atom-mi355x-*-mtp3.json \
+        --md
 """
 
 import argparse
@@ -27,105 +38,198 @@ def build_index(run):
     return idx
 
 
-def estimate_acceptance_rate(mtp0, mtp3, mtp_layers=3):
-    """Estimate MTP acceptance rate from TPOT ratio.
+SCENARIO_ORDER = {"chat": 0, "reasoning": 1, "summarize": 2}
+SCENARIO_ISL_OSL = {"chat": "1K/1K", "reasoning": "1K/8K", "summarize": "8K/1K"}
 
-    MTP speculative decoding proposes `mtp_layers` extra tokens per step.
-    If all accepted: speedup = (1 + mtp_layers)x on TPOT.
-    acceptance_rate ≈ (speedup - 1) / mtp_layers
-    where speedup = tpot_mtp0 / tpot_mtp3
-    """
-    tpot0 = mtp0.get("tpot_p50", 0)
-    tpot3 = mtp3.get("tpot_p50", 0)
-    if not tpot3 or not tpot0:
-        return None
-    speedup = tpot0 / tpot3
-    # Clamp: speedup can't exceed (1 + mtp_layers) theoretically
-    acceptance = (speedup - 1) / mtp_layers
-    return min(max(acceptance, 0), 1.0)
+
+def compute_pairs(idx0, idx3):
+    """Compute comparison rows for matched (scenario, conc) pairs."""
+    all_keys = sorted(
+        set(idx0.keys()) & set(idx3.keys()),
+        key=lambda k: (SCENARIO_ORDER.get(k[0], 9), k[1]),
+    )
+    rows = []
+    for scenario, conc in all_keys:
+        r0, r3 = idx0[(scenario, conc)], idx3[(scenario, conc)]
+        out0, out3 = r0["output_tps"], r3["output_tps"]
+        tpot0, tpot3 = r0["tpot_p50"], r3["tpot_p50"]
+        ttft0, ttft3 = r0["ttft_p50"], r3["ttft_p50"]
+        out_delta = (out3 - out0) / out0 * 100 if out0 else 0
+        tpot_delta = (tpot3 - tpot0) / tpot0 * 100 if tpot0 else 0
+        ttft_delta = (ttft3 - ttft0) / ttft0 * 100 if ttft0 else 0
+        rows.append({
+            "scenario": scenario, "conc": conc,
+            "out0": out0, "out3": out3, "out_delta": out_delta,
+            "tpot0": tpot0, "tpot3": tpot3, "tpot_delta": tpot_delta,
+            "ttft0": ttft0, "ttft3": ttft3, "ttft_delta": ttft_delta,
+        })
+    return rows
+
+
+def print_terminal(rows, label0, label3):
+    """Print comparison as terminal table."""
+    hdr = (
+        f"{'Scenario':<12} {'CONC':>5} | "
+        f"{'Out TPS':>9} {'Out TPS':>9} {'D%':>7} | "
+        f"{'TPOT p50':>9} {'TPOT p50':>9} {'D%':>7} | "
+        f"{'TTFT p50':>9} {'TTFT p50':>9} {'D%':>7}"
+    )
+    sub = (
+        f"{'':12} {'':>5} | "
+        f"{label0:>9} {label3:>9} {'':>7} | "
+        f"{label0:>9} {label3:>9} {'':>7} | "
+        f"{label0:>9} {label3:>9} {'':>7}"
+    )
+    sep = "-" * len(hdr)
+    print(sub)
+    print(hdr)
+    print(sep)
+    prev = None
+    for r in rows:
+        if prev and prev != r["scenario"]:
+            print(sep)
+        prev = r["scenario"]
+        print(
+            f"{r['scenario']:<12} {r['conc']:>5} | "
+            f"{r['out0']:>9.1f} {r['out3']:>9.1f} {r['out_delta']:>+6.1f}% | "
+            f"{r['tpot0']:>8.2f}ms {r['tpot3']:>8.2f}ms {r['tpot_delta']:>+6.1f}% | "
+            f"{r['ttft0']:>8.1f}ms {r['ttft3']:>8.1f}ms {r['ttft_delta']:>+6.1f}%"
+        )
+    print(sep)
+
+
+def print_md_single(rows, label0, label3):
+    """Print comparison as markdown table."""
+    print(f"| Scenario | Conc | {label0} TPS | {label3} TPS | TPS Gain | "
+          f"TPOT {label0} | TPOT {label3} | TPOT Chg |")
+    print("|----------|------|-----------|-----------|----------|"
+          "----------|----------|----------|")
+    prev = None
+    for r in rows:
+        if prev and prev != r["scenario"]:
+            print(f"| | | | | | | | |")
+        prev = r["scenario"]
+        print(
+            f"| {r['scenario']} | {r['conc']} | "
+            f"{r['out0']:.1f} | {r['out3']:.1f} | {r['out_delta']:+.1f}% | "
+            f"{r['tpot0']:.2f}ms | {r['tpot3']:.2f}ms | {r['tpot_delta']:+.1f}% |"
+        )
+
+
+def print_md_cross(b200_rows, mi355x_rows):
+    """Print cross-platform comparison as markdown tables, one per scenario."""
+    # Group by scenario
+    scenarios = []
+    seen = set()
+    for r in b200_rows + mi355x_rows:
+        if r["scenario"] not in seen:
+            scenarios.append(r["scenario"])
+            seen.add(r["scenario"])
+    scenarios.sort(key=lambda s: SCENARIO_ORDER.get(s, 9))
+
+    b200_by = {}
+    for r in b200_rows:
+        b200_by[(r["scenario"], r["conc"])] = r
+    mi_by = {}
+    for r in mi355x_rows:
+        mi_by[(r["scenario"], r["conc"])] = r
+
+    for scenario in scenarios:
+        isl_osl = SCENARIO_ISL_OSL.get(scenario, "?/?")
+        print(f"\n### {scenario.capitalize()} ({isl_osl})\n")
+        print("| Conc | B200 mtp0 | B200 mtp3 | B200 Gain | "
+              "355X mtp0 | 355X mtp3 | 355X Gain | Winner |")
+        print("|------|-----------|-----------|-----------|"
+              "-----------|-----------|-----------|--------|")
+
+        concs = sorted(set(
+            [k[1] for k in b200_by if k[0] == scenario] +
+            [k[1] for k in mi_by if k[0] == scenario]
+        ))
+
+        for conc in concs:
+            b = b200_by.get((scenario, conc))
+            m = mi_by.get((scenario, conc))
+
+            b_str0 = f"{b['out0']:.1f}" if b else "-"
+            b_str3 = f"{b['out3']:.1f}" if b else "-"
+            b_gain = f"{b['out_delta']:+.1f}%" if b else "-"
+            m_str0 = f"{m['out0']:.1f}" if m else "-"
+            m_str3 = f"{m['out3']:.1f}" if m else "-"
+            m_gain = f"{m['out_delta']:+.1f}%" if m else "-"
+
+            if b and m:
+                winner = "B200" if b["out_delta"] > m["out_delta"] else "355X"
+            elif b:
+                winner = "B200 only"
+            else:
+                winner = "355X only"
+
+            print(f"| {conc} | {b_str0} | {b_str3} | {b_gain} | "
+                  f"{m_str0} | {m_str3} | {m_gain} | {winner} |")
+
+    # Summary scoreboard
+    b200_wins = 0
+    mi_wins = 0
+    for key in set(b200_by.keys()) & set(mi_by.keys()):
+        if b200_by[key]["out_delta"] > mi_by[key]["out_delta"]:
+            b200_wins += 1
+        else:
+            mi_wins += 1
+    total = b200_wins + mi_wins
+    print(f"\n### Scoreboard\n")
+    print(f"| | B200 | 355X | Total |")
+    print(f"|------|------|------|-------|")
+    print(f"| TPS gain winner | {b200_wins} | {mi_wins} | {total} |")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Compare MTP0 vs MTP3 results")
-    parser.add_argument("--mtp0", required=True, help="MTP0 run JSON")
-    parser.add_argument("--mtp3", required=True, help="MTP3 run JSON")
-    parser.add_argument("--mtp-layers", type=int, default=3, help="Number of MTP layers (default: 3)")
+    parser.add_argument("--mtp0", help="MTP0 run JSON")
+    parser.add_argument("--mtp3", help="MTP3 run JSON")
+    parser.add_argument("--md", action="store_true", help="Output as markdown table")
+    parser.add_argument("--cross", action="store_true", help="Cross-platform comparison mode")
+    parser.add_argument("--b200-mtp0", help="B200 MTP0 run JSON (cross mode)")
+    parser.add_argument("--b200-mtp3", help="B200 MTP3 run JSON (cross mode)")
+    parser.add_argument("--mi355x-mtp0", help="MI355X MTP0 run JSON (cross mode)")
+    parser.add_argument("--mi355x-mtp3", help="MI355X MTP3 run JSON (cross mode)")
     args = parser.parse_args()
 
-    run0 = load_run(args.mtp0)
-    run3 = load_run(args.mtp3)
-    idx0 = build_index(run0)
-    idx3 = build_index(run3)
+    if args.cross:
+        if not all([args.b200_mtp0, args.b200_mtp3, args.mi355x_mtp0, args.mi355x_mtp3]):
+            parser.error("--cross requires --b200-mtp0, --b200-mtp3, --mi355x-mtp0, --mi355x-mtp3")
 
-    # Header
-    print(f"MTP0: {args.mtp0}")
-    print(f"MTP3: {args.mtp3}")
-    print(f"MTP layers: {args.mtp_layers}")
-    print()
-
-    hdr = (
-        f"{'Scenario':<12} {'CONC':>5} │ "
-        f"{'Out TPS':>9} {'Out TPS':>9} {'Δ%':>7} │ "
-        f"{'TPOT p50':>9} {'TPOT p50':>9} {'Δ%':>7} │ "
-        f"{'TTFT p50':>9} {'TTFT p50':>9} {'Δ%':>7} │ "
-        f"{'Accept':>7}"
-    )
-    sub = (
-        f"{'':12} {'':>5} │ "
-        f"{'mtp0':>9} {'mtp3':>9} {'':>7} │ "
-        f"{'mtp0':>9} {'mtp3':>9} {'':>7} │ "
-        f"{'mtp0':>9} {'mtp3':>9} {'':>7} │ "
-        f"{'rate':>7}"
-    )
-    sep = "─" * len(hdr)
-
-    print(sub)
-    print(hdr)
-    print(sep)
-
-    # All keys, sorted by scenario then conc
-    all_keys = sorted(set(list(idx0.keys()) + list(idx3.keys())),
-                      key=lambda k: ({"chat": 0, "reasoning": 1, "summarize": 2}.get(k[0], 9), k[1]))
-
-    prev_scenario = None
-    for scenario, conc in all_keys:
-        r0 = idx0.get((scenario, conc))
-        r3 = idx3.get((scenario, conc))
-
-        if not r0 or not r3:
-            continue
-
-        if prev_scenario and prev_scenario != scenario:
-            print(sep)
-        prev_scenario = scenario
-
-        out0 = r0["output_tps"]
-        out3 = r3["output_tps"]
-        out_delta = (out3 - out0) / out0 * 100 if out0 else 0
-
-        tpot0 = r0["tpot_p50"]
-        tpot3 = r3["tpot_p50"]
-        tpot_delta = (tpot3 - tpot0) / tpot0 * 100 if tpot0 else 0
-
-        ttft0 = r0["ttft_p50"]
-        ttft3 = r3["ttft_p50"]
-        ttft_delta = (ttft3 - ttft0) / ttft0 * 100 if ttft0 else 0
-
-        acc = estimate_acceptance_rate(r0, r3, args.mtp_layers)
-        acc_str = f"{acc:.1%}" if acc is not None else "N/A"
-
-        print(
-            f"{scenario:<12} {conc:>5} │ "
-            f"{out0:>9.1f} {out3:>9.1f} {out_delta:>+6.1f}% │ "
-            f"{tpot0:>8.2f}ms {tpot3:>8.2f}ms {tpot_delta:>+6.1f}% │ "
-            f"{ttft0:>8.1f}ms {ttft3:>8.1f}ms {ttft_delta:>+6.1f}% │ "
-            f"{acc_str:>7}"
+        b200_rows = compute_pairs(
+            build_index(load_run(args.b200_mtp0)),
+            build_index(load_run(args.b200_mtp3)),
+        )
+        mi_rows = compute_pairs(
+            build_index(load_run(args.mi355x_mtp0)),
+            build_index(load_run(args.mi355x_mtp3)),
         )
 
-    print(sep)
-    print()
-    print("Δ%: positive = MTP3 higher (better for TPS, worse for latency)")
-    print("Accept rate: estimated from TPOT speedup = (tpot_mtp0/tpot_mtp3 - 1) / mtp_layers")
+        if args.md:
+            print_md_cross(b200_rows, mi_rows)
+        else:
+            print("=== B200 ===")
+            print_terminal(b200_rows, "mtp0", "mtp3")
+            print("\n=== MI355X ===")
+            print_terminal(mi_rows, "mtp0", "mtp3")
+    else:
+        if not args.mtp0 or not args.mtp3:
+            parser.error("--mtp0 and --mtp3 are required (or use --cross mode)")
+
+        run0 = load_run(args.mtp0)
+        run3 = load_run(args.mtp3)
+        rows = compute_pairs(build_index(run0), build_index(run3))
+
+        label0 = run0.get("env_tag", "mtp0")
+        label3 = run3.get("env_tag", "mtp3")
+
+        if args.md:
+            print_md_single(rows, label0, label3)
+        else:
+            print_terminal(rows, label0, label3)
 
 
 if __name__ == "__main__":
