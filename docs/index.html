@@ -325,7 +325,27 @@ function sourceHTML(run) {
   return srcList.map(s => s === 'ci-nightly' ? '<span class="badge ci">CI</span>' : '<span class="badge manual">Manual</span>').join('');
 }
 
+const REPO_BASE = 'https://github.com/zufayu/ClaudeSkillsE2EPerf/blob/main';
+
+function buildRepoFileLinks(d, run) {
+  const envTag = d.env_tag || run?.env_tag;
+  if (!envTag || !d.scenario || !d.config) return '';
+  // Map env_tag to results directory: mtp0-ep1 → results_b200_fp8_mtp0_ep1
+  const platform = (run?.platform || '').toLowerCase().replace(/[×x]/g, '');
+  const quant = (run?.quantization || 'fp8').toLowerCase();
+  const dirName = `results_b200_${quant}_${envTag.replace(/-/g, '_')}`;
+  // Build file tag: fp8_throughput_chat_ep1_c4[_dp]
+  const fileTag = `${quant}_${d.config}_${d.scenario}_ep${d.ep_size || 1}_c${d.conc}${d.dp_attention ? '_dp' : ''}`;
+  const configUrl = `${REPO_BASE}/${dirName}/config_${fileTag}.yml`;
+  const logUrl = `${REPO_BASE}/${dirName}/server_${fileTag}.log`;
+  const resultUrl = `${REPO_BASE}/${dirName}/result_${fileTag}.json`;
+  return `<a href="${configUrl}" target="_blank" style="color:var(--accent-blue);text-decoration:none;margin-right:12px" title="Config YAML">Config</a>` +
+    `<a href="${logUrl}" target="_blank" style="color:var(--accent-orange);text-decoration:none;margin-right:12px" title="Server Log">Log</a>` +
+    `<a href="${resultUrl}" target="_blank" style="color:var(--accent-green);text-decoration:none" title="Result JSON">Result</a>`;
+}
+
 function buildDetailHTML(d, run) {
+  const repoLinks = buildRepoFileLinks(d, run);
   const items = [
     ['Config', d.config || '-'],
     ['EP Size', d.ep_size != null ? d.ep_size : '-'],
@@ -349,8 +369,8 @@ function buildDetailHTML(d, run) {
     ['Docker Image', run?.docker_image || '-'],
     ['GPU Count', run?.gpu_count || '-'],
     ['Date', run?.date || '-'],
-    ['Benchmark Cmd', run?.benchmark_cmd ? `<code style="font-size:10px;word-break:break-all">${run.benchmark_cmd}</code>` : '-'],
   ];
+  if (repoLinks) items.push(['Files', repoLinks]);
   return '<div class="detail-content">' +
     items.map(([l,v]) => `<div class="detail-item"><span class="detail-label">${l}</span><span class="detail-value">${v}</span></div>`).join('') +
     '</div>';
@@ -392,7 +412,7 @@ function getFiltered() {
       const sKey = `${r.isl}/${r.osl}`;
       if (!state.scenarios.has(sKey)) continue;
       if (!state.concs.has(String(r.conc))) continue;
-      out.push({...r, series_key: run.series_key, platform: run.platform, date: run.date, source: run.source, framework: run.framework, quantization: run.quantization, sources: run.sources, gpu_count: run.gpu_count, commit: run.commit, commit_url: run.commit_url, model: run.model});
+      out.push({...r, series_key: run.series_key, platform: run.platform, date: run.date, source: run.source, framework: run.framework, quantization: run.quantization, sources: run.sources, gpu_count: run.gpu_count, commit: run.commit, commit_url: run.commit_url, model: run.model, env_tag: run.env_tag});
     }
   }
   return out;
@@ -1070,6 +1090,7 @@ function buildDataTable(data) {
     <th class="num">TTFT</th>
     <th>Source</th>
     <th>Config</th>
+    <th>Files</th>
   </tr>`;
 
   const sorted = [...data].sort((a, b) => {
@@ -1103,8 +1124,10 @@ function buildDataTable(data) {
     rows += `<td class="num heat-cell" style="background:${ttftBg}">${fmtNum(d.ttft_p50, 0)}</td>`;
     rows += `<td>${sourceHTML(run || d)}</td>`;
     rows += `<td><code>${d.config || '-'}</code></td>`;
+    const fileLinks = buildRepoFileLinks(d, run);
+    rows += `<td>${fileLinks || '-'}</td>`;
     rows += `</tr>`;
-    rows += `<tr class="detail-row" id="${rid}"><td colspan="12">${buildDetailHTML(d, run)}</td></tr>`;
+    rows += `<tr class="detail-row" id="${rid}"><td colspan="13">${buildDetailHTML(d, run)}</td></tr>`;
   }
   tbody.innerHTML = rows;
 
