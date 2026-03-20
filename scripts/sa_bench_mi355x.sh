@@ -433,8 +433,8 @@ generate_summary() {
 # DeepSeek R1 Benchmark Results (ATOM/vLLM)
 ## MI355X 8×GPU
 
-| Config | Quant | Scenario | CONC | Output TPS | Out TPS/GPU | Total TPS | Interactivity | TTFT p50 (ms) | TPOT p50 (ms) | ITL p50 (ms) | E2E p50 (ms) |
-|--------|-------|----------|------|------------|-------------|-----------|---------------|---------------|---------------|--------------|--------------|
+| Config | Quant | Scenario | CONC | Output TPS | Out TPS/GPU | Total TPS | Interactivity | TTFT p50 (ms) | TPOT p50 (ms) | ITL p50 (ms) | E2E p50 (ms) | DAR |
+|--------|-------|----------|------|------------|-------------|-----------|---------------|---------------|---------------|--------------|--------------|-----|
 HEADER
 
     for f in "$RESULT_DIR"/result_*.json; do
@@ -469,9 +469,11 @@ try:
     e2e_p50 = data.get('e2el_p50', data.get('median_e2el_ms', 0))
 
     label = f'{config}{mtp}'
-    print(f'| {label} | {quant.upper()} | {scenario} | {conc} | {out_tps:.1f} | {out_tps_gpu:.1f} | {total_tps:.1f} | {interactivity:.2f} | {ttft_p50:.1f} | {tpot_p50:.1f} | {itl_p50:.1f} | {e2e_p50:.0f} |')
+    dar = data.get('dar_p50')
+    dar_str = f'{dar:.2%}' if dar is not None else '-'
+    print(f'| {label} | {quant.upper()} | {scenario} | {conc} | {out_tps:.1f} | {out_tps_gpu:.1f} | {total_tps:.1f} | {interactivity:.2f} | {ttft_p50:.1f} | {tpot_p50:.1f} | {itl_p50:.1f} | {e2e_p50:.0f} | {dar_str} |')
 except Exception as e:
-    print(f'| ERROR | - | $f | - | - | - | - | - | - | - | - | {e} |', file=sys.stderr)
+    print(f'| ERROR | - | $f | - | - | - | - | - | - | - | - | - | {e} |', file=sys.stderr)
 " >> "$summary_file" 2>/dev/null || true
     done
 

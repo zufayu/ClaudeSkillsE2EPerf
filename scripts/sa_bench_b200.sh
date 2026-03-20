@@ -350,6 +350,15 @@ batch_wait_max_tokens_ratio: 0.8
 EOF
     fi
 
+    # Enable perf metrics for DAR collection when MTP is active
+    if [[ $MTP_LAYERS -gt 0 ]]; then
+        local perf_metrics_max=$(( conc * 10 + 100 ))
+        cat >> "$config_file" << EOF
+return_perf_metrics: true
+perf_metrics_max_requests: $perf_metrics_max
+EOF
+    fi
+
     # --- Compute MAX_NUM_TOKENS and MAX_MODEL_LEN ---
     local max_batch_size=$CUDA_GRAPH_MAX_BATCH_SIZE
     local max_num_tokens
@@ -462,6 +471,70 @@ EOF
         run_benchmark_serving "${bench_args[@]}" || \
             log "  WARN: Benchmark failed for $tag"
 
+        # --- Collect DAR (Draft Acceptance Rate) for MTP configs ---
+        if [[ $MTP_LAYERS -gt 0 ]]; then
+            log "  Collecting DAR from /perf_metrics..."
+            local dar_json
+            dar_json=$(curl -s "http://0.0.0.0:${PORT}/perf_metrics" 2>/dev/null || echo "[]")
+
+            DAR_JSON="$dar_json" \
+            RESULT_JSON_PATH="$RESULT_DIR/${result_filename}.json" \
+            python3 << 'DAREOF'
+import json, os, sys
+
+dar_raw = os.environ["DAR_JSON"]
+result_path = os.environ["RESULT_JSON_PATH"]
+
+try:
+    metrics = json.loads(dar_raw)
+except json.JSONDecodeError:
+    print("  WARN: Failed to parse /perf_metrics response")
+    sys.exit(0)
+
+# Extract per-request acceptance rates
+acceptance_rates = []
+total_accepted = 0
+total_draft = 0
+for item in metrics:
+    pm = item.get("perf_metrics", {})
+    sd = pm.get("speculative_decoding", {})
+    if sd and sd.get("total_draft_tokens", 0) > 0:
+        acceptance_rates.append(sd["acceptance_rate"])
+        total_accepted += sd["total_accepted_draft_tokens"]
+        total_draft += sd["total_draft_tokens"]
+
+if not acceptance_rates:
+    print("  WARN: No speculative decoding metrics found in /perf_metrics")
+    sys.exit(0)
+
+# Compute statistics
+acceptance_rates.sort()
+n = len(acceptance_rates)
+dar_mean = sum(acceptance_rates) / n
+dar_p50 = acceptance_rates[n // 2]
+dar_p99 = acceptance_rates[int(n * 0.99)]
+dar_overall = total_accepted / total_draft if total_draft > 0 else 0
+
+print(f"  DAR: mean={dar_mean:.4f}, p50={dar_p50:.4f}, p99={dar_p99:.4f}, "
+      f"overall={dar_overall:.4f} ({total_accepted}/{total_draft} tokens, {n} requests)")
+
+# Inject into result JSON
+if os.path.exists(result_path):
+    with open(result_path) as f:
+        data = json.load(f)
+    data["dar_mean"] = round(dar_mean, 4)
+    data["dar_p50"] = round(dar_p50, 4)
+    data["dar_p99"] = round(dar_p99, 4)
+    data["dar_overall"] = round(dar_overall, 4)
+    data["dar_total_accepted_tokens"] = total_accepted
+    data["dar_total_draft_tokens"] = total_draft
+    data["dar_num_requests"] = n
+    with open(result_path, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"  Injected DAR into {result_path}")
+DAREOF
+        fi
+
         # --- Inject reproduce commands into result JSON ---
         local result_json="$RESULT_DIR/${result_filename}.json"
         if [[ -f "$result_json" ]]; then
@@ -562,8 +635,8 @@ generate_summary() {
 # DeepSeek R1 Benchmark Results (InferenceX-style)
 ## B200 ${gpu_count}×GPU
 
-| Config | Quant | Scenario | EP | CONC | Output TPS | Out TPS/GPU | Total TPS/GPU | Interactivity | TTFT p50 (ms) | TPOT p50 (ms) | ITL p50 (ms) | E2E p50 (ms) |
-|--------|-------|----------|-----|------|------------|-------------|---------------|---------------|---------------|---------------|--------------|--------------|
+| Config | Quant | Scenario | EP | CONC | Output TPS | Out TPS/GPU | Total TPS/GPU | Interactivity | TTFT p50 (ms) | TPOT p50 (ms) | ITL p50 (ms) | E2E p50 (ms) | DAR |
+|--------|-------|----------|-----|------|------------|-------------|---------------|---------------|---------------|---------------|--------------|--------------|-----|
 EOF
 
     for f in "$RESULT_DIR"/result_*.json; do
@@ -604,9 +677,11 @@ try:
     itl_p50 = data.get('itl_p50', data.get('median_itl_ms', 0))
     e2e_p50 = data.get('e2el_p50', data.get('median_e2el_ms', 0))
 
-    print(f'| {config} | {quant} | {scenario} | {ep} | {conc} | {out_tps:.1f} | {out_tps_gpu:.1f} | {total_tps_gpu:.1f} | {interactivity:.2f} | {ttft_p50:.0f} | {tpot_p50:.1f} | {itl_p50:.1f} | {e2e_p50:.0f} |')
+    dar = data.get('dar_p50')
+    dar_str = f'{dar:.2%}' if dar is not None else '-'
+    print(f'| {config} | {quant} | {scenario} | {ep} | {conc} | {out_tps:.1f} | {out_tps_gpu:.1f} | {total_tps_gpu:.1f} | {interactivity:.2f} | {ttft_p50:.0f} | {tpot_p50:.1f} | {itl_p50:.1f} | {e2e_p50:.0f} | {dar_str} |')
 except Exception as e:
-    print(f'| ERROR | - | $f | - | - | - | - | - | - | - | - | - | {e} |', file=sys.stderr)
+    print(f'| ERROR | - | $f | - | - | - | - | - | - | - | - | - | - | {e} |', file=sys.stderr)
 " >> "$summary_file" 2>/dev/null || true
     done
 
