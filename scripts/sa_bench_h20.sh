@@ -241,15 +241,6 @@ batch_wait_max_tokens_ratio: 0.8
 EOF
     fi
 
-    # Enable perf metrics for DAR collection when MTP is active
-    if [[ $MTP_LAYERS -gt 0 ]]; then
-        local perf_metrics_max=$(( conc * 10 + 100 ))
-        cat >> "$config_file" << EOF
-return_perf_metrics: true
-perf_metrics_max_requests: $perf_metrics_max
-EOF
-    fi
-
     # --- Compute MAX_NUM_TOKENS and MAX_MODEL_LEN ---
     local max_batch_size=$CUDA_GRAPH_MAX_BATCH_SIZE
     local max_num_tokens
@@ -299,9 +290,6 @@ EOF
 
     log "  Starting server: TP=$TP, EP=$ep_size, MAX_NUM_TOKENS=$max_num_tokens"
 
-    # Set TRTLLM_KVCACHE_TIME_OUTPUT_PATH to enable per-request perf metrics
-    # (needed for DAR collection via /perf_metrics endpoint on completions API)
-    TRTLLM_KVCACHE_TIME_OUTPUT_PATH=/tmp/dar_metrics \
     PYTHONNOUSERSITE=1 mpirun -n 1 --oversubscribe --allow-run-as-root \
         trtllm-serve "$model" --port="$PORT" \
         --trust_remote_code \
@@ -346,84 +334,12 @@ EOF
         if [[ -n "$BENCH_SERVING_DIR" ]]; then
             bench_args+=(--bench-serving-dir "$BENCH_SERVING_DIR")
         fi
+        if [[ $MTP_LAYERS -gt 0 ]]; then
+            bench_args+=(--use-chat-template)
+        fi
 
         run_benchmark_serving "${bench_args[@]}" || \
             log "  WARN: Benchmark failed for $tag"
-
-        # --- Collect DAR (Draft Acceptance Rate) for MTP configs ---
-        if [[ $MTP_LAYERS -gt 0 ]]; then
-            log "  Collecting DAR from /perf_metrics..."
-            local dar_file="$RESULT_DIR/perf_metrics_${tag}.json"
-            local dar_result_path="$RESULT_DIR/${result_filename}.json"
-            curl -s "http://0.0.0.0:${PORT}/perf_metrics" > "$dar_file" 2>/dev/null || echo "[]" > "$dar_file"
-            log "  DAR response saved to $dar_file ($(wc -c < "$dar_file") bytes)"
-
-            python3 - "$dar_file" "$dar_result_path" << 'DAREOF'
-import json, sys
-
-dar_file = sys.argv[1]
-result_path = sys.argv[2]
-
-try:
-    with open(dar_file) as f:
-        metrics = json.load(f)
-except (json.JSONDecodeError, FileNotFoundError) as e:
-    print(f"  WARN: Failed to read /perf_metrics: {e}")
-    sys.exit(0)
-
-print(f"  /perf_metrics returned {len(metrics)} items")
-
-# Extract per-request acceptance rates
-acceptance_rates = []
-total_accepted = 0
-total_draft = 0
-for item in metrics:
-    pm = item.get("perf_metrics", {})
-    if pm is None:
-        continue
-    sd = pm.get("speculative_decoding", {})
-    if sd and sd.get("total_draft_tokens", 0) > 0:
-        acceptance_rates.append(sd["acceptance_rate"])
-        total_accepted += sd["total_accepted_draft_tokens"]
-        total_draft += sd["total_draft_tokens"]
-
-if not acceptance_rates:
-    # Debug: show first item structure
-    if metrics:
-        pm = metrics[0].get("perf_metrics")
-        print(f"  DEBUG: first item perf_metrics type={type(pm).__name__}, keys={list(pm.keys()) if isinstance(pm, dict) else 'N/A'}")
-    print("  WARN: No speculative decoding metrics found in /perf_metrics")
-    sys.exit(0)
-
-# Compute statistics
-acceptance_rates.sort()
-n = len(acceptance_rates)
-dar_mean = sum(acceptance_rates) / n
-dar_p50 = acceptance_rates[n // 2]
-dar_p99 = acceptance_rates[int(n * 0.99)]
-dar_overall = total_accepted / total_draft if total_draft > 0 else 0
-
-print(f"  DAR: mean={dar_mean:.4f}, p50={dar_p50:.4f}, p99={dar_p99:.4f}, "
-      f"overall={dar_overall:.4f} ({total_accepted}/{total_draft} tokens, {n} requests)")
-
-# Inject into result JSON
-try:
-    with open(result_path) as f:
-        data = json.load(f)
-    data["dar_mean"] = round(dar_mean, 4)
-    data["dar_p50"] = round(dar_p50, 4)
-    data["dar_p99"] = round(dar_p99, 4)
-    data["dar_overall"] = round(dar_overall, 4)
-    data["dar_total_accepted_tokens"] = total_accepted
-    data["dar_total_draft_tokens"] = total_draft
-    data["dar_num_requests"] = n
-    with open(result_path, "w") as f:
-        json.dump(data, f, indent=2)
-    print(f"  Injected DAR into {result_path}")
-except Exception as e:
-    print(f"  WARN: Failed to inject DAR: {e}")
-DAREOF
-        fi
 
         # --- Inject reproduce commands into result JSON ---
         local result_json="$RESULT_DIR/${result_filename}.json"
@@ -470,6 +386,159 @@ PYEOF
 
     stop_gpu_monitor
     kill_server
+}
+
+# ======================== DAR Collection via trtllm-bench =====================
+# Collect Draft Acceptance Rate by running trtllm-bench throughput with the
+# same MTP config. This uses the LLM API directly (not HTTP server), which
+# gives access to decoding_iter for DAR calculation.
+#
+# Arguments:
+#   $1 = model path
+#   $2 = ep_size
+#   $3 = mtp_layers
+collect_dar() {
+    local model=$1 ep_size=$2 mtp_layers=$3
+
+    if [[ $mtp_layers -le 0 ]]; then
+        return 0
+    fi
+
+    local dar_tag="fp8_mtp${mtp_layers}_ep${ep_size}"
+    log "========================================================"
+    log " DAR COLLECTION: $dar_tag (trtllm-bench throughput)"
+    log "========================================================"
+
+    kill_server
+
+    # Generate synthetic dataset (50 prompts, short ISL/OSL for speed)
+    local dar_dataset="$RESULT_DIR/dar_dataset_${dar_tag}.jsonl"
+    python3 -c "
+import json
+for i in range(50):
+    print(json.dumps({'task_id': i, 'prompt': 'Write a detailed story about ' + 'adventure ' * 100, 'output_tokens': 256}))
+" > "$dar_dataset"
+
+    # Build config YAML for trtllm-bench (minimal, with MTP)
+    local dar_config="$RESULT_DIR/dar_config_${dar_tag}.yml"
+    local dp_attn="false"
+    [[ $ep_size -gt 1 ]] && dp_attn="true"
+
+    local moe_backend="CUTLASS"
+
+    cat > "$dar_config" << EOF
+print_iter_log: true
+kv_cache_config:
+    dtype: fp8
+    free_gpu_memory_fraction: 0.7
+    enable_block_reuse: false
+moe_config:
+    backend: $moe_backend
+enable_attention_dp: $dp_attn
+speculative_config:
+    decoding_type: MTP
+    num_nextn_predict_layers: $mtp_layers
+EOF
+
+    if [[ "$dp_attn" == "true" ]]; then
+        cat >> "$dar_config" << EOF
+attention_dp_config:
+    batching_wait_iters: 0
+    enable_balance: true
+    timeout_iters: 60
+EOF
+    fi
+
+    local dar_report="$RESULT_DIR/dar_report_${dar_tag}.json"
+    local dar_log="$RESULT_DIR/dar_bench_${dar_tag}.log"
+
+    log "  Running trtllm-bench throughput for DAR measurement..."
+    PYTHONNOUSERSITE=1 trtllm-bench \
+        -m "$model" \
+        throughput \
+        --backend pytorch \
+        --dataset "$dar_dataset" \
+        --tp $TP --ep $ep_size \
+        --max_seq_len 8192 \
+        --num_requests 50 \
+        --warmup 2 \
+        --concurrency 8 \
+        --streaming \
+        --kv_cache_free_gpu_mem_fraction 0.7 \
+        --extra_llm_api_options "$dar_config" \
+        --report_json "$dar_report" \
+        > "$dar_log" 2>&1
+    local rc=$?
+
+    if [[ $rc -ne 0 ]]; then
+        log "  WARN: trtllm-bench DAR collection failed (rc=$rc)"
+        tail -20 "$dar_log"
+        return 0
+    fi
+
+    if [[ ! -f "$dar_report" ]]; then
+        log "  WARN: DAR report not generated"
+        return 0
+    fi
+
+    # Parse DAR from report and inject into all matching result JSONs
+    python3 - "$dar_report" "$RESULT_DIR" "$mtp_layers" "$ep_size" << 'DAREOF'
+import json, sys, glob, os
+
+report_path = sys.argv[1]
+result_dir = sys.argv[2]
+mtp_layers = int(sys.argv[3])
+ep_size = sys.argv[4]
+
+with open(report_path) as f:
+    report = json.load(f)
+
+decoding = report.get("decoding_stats")
+if not decoding:
+    print("  WARN: No decoding_stats in trtllm-bench report")
+    sys.exit(0)
+
+dar_pct = decoding.get("draft_acceptance_rate_percentiles")
+al_pct = decoding.get("acceptance_length_percentiles")
+if not dar_pct:
+    print("  WARN: No draft_acceptance_rate_percentiles in report")
+    sys.exit(0)
+
+dar_avg = dar_pct.get("average", 0)
+dar_p50 = dar_pct.get("p50", 0)
+dar_p99 = dar_pct.get("p99", 0)
+al_avg = al_pct.get("average", 0) if al_pct else 0
+
+print(f"  DAR from trtllm-bench: avg={dar_avg:.4f}, p50={dar_p50:.4f}, p99={dar_p99:.4f}, acceptance_length={al_avg:.2f}")
+
+# Find all latency result JSONs for this ep_size
+pattern = os.path.join(result_dir, f"result_fp8_latency_*_ep{ep_size}_c*.json")
+matches = glob.glob(pattern)
+
+if not matches:
+    print(f"  WARN: No result files matched pattern {pattern}")
+    sys.exit(0)
+
+injected = 0
+for result_path in matches:
+    try:
+        with open(result_path) as f:
+            data = json.load(f)
+        data["dar_avg"] = round(dar_avg, 4)
+        data["dar_p50"] = round(dar_p50, 4)
+        data["dar_p99"] = round(dar_p99, 4)
+        data["dar_acceptance_length"] = round(al_avg, 2)
+        data["dar_source"] = "trtllm-bench"
+        with open(result_path, "w") as f:
+            json.dump(data, f, indent=2)
+        injected += 1
+    except Exception as e:
+        print(f"  WARN: Failed to inject DAR into {result_path}: {e}")
+
+print(f"  Injected DAR into {injected}/{len(matches)} result files")
+DAREOF
+
+    log "  DAR collection complete for $dar_tag"
 }
 
 # ======================== Config Dispatchers ===================================
@@ -617,7 +686,21 @@ run_configs() {
     esac
 }
 
+# Collect DAR for latency (MTP) configs after all serving benchmarks.
+collect_dar_for_configs() {
+    case "$CONFIGS" in
+        fp8-latency|all)
+            for ep_size in $EP_SIZES; do
+                local mtp=3; [[ $ep_size -gt 1 ]] && mtp=1
+                collect_dar "$MODEL" "$ep_size" "$mtp"
+            done
+            ;;
+        # throughput configs have no MTP, skip DAR
+    esac
+}
+
 run_configs
+collect_dar_for_configs
 generate_summary
 
 # Trim server logs for repo storage
