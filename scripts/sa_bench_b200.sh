@@ -51,6 +51,9 @@ TP=8
 SCENARIO_FILTER="all"        # all | chat | reasoning | summarize
 CONC_FILTER=""               # empty = use default sweep; "256" or "4 128 256" = specific values
 NUM_WARMUPS=""                # empty = auto (SA default: 8); or explicit number
+DAR_NUM_REQUESTS=200          # number of requests for DAR measurement
+DAR_CONCURRENCY=32            # concurrency for DAR measurement
+DAR_WARMUP=5                  # warmup requests for DAR measurement
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -65,6 +68,9 @@ while [[ $# -gt 0 ]]; do
         --scenario)         SCENARIO_FILTER="$2"; shift 2 ;;
         --concurrency)      CONC_FILTER="$2"; shift 2 ;;
         --num-warmups)      NUM_WARMUPS="$2"; shift 2 ;;
+        --dar-num-requests) DAR_NUM_REQUESTS="$2"; shift 2 ;;
+        --dar-concurrency)  DAR_CONCURRENCY="$2"; shift 2 ;;
+        --dar-warmup)       DAR_WARMUP="$2"; shift 2 ;;
         -h|--help)
             echo "Usage: bash sa_bench_b200.sh --model-fp4 <path> --model-fp8 <path> [options]"
             echo ""
@@ -82,6 +88,11 @@ while [[ $# -gt 0 ]]; do
             echo "  --scenario SCENARIO     chat|reasoning|summarize|all (default: all)"
             echo "  --concurrency \"C1 C2\"   Concurrency values to run (default: sweep 1 4 8 16 32 64 128 256)"
             echo "  --num-warmups N         Number of warmup requests (default: 8, matching SA)"
+            echo ""
+            echo "DAR collection (for latency/MTP configs):"
+            echo "  --dar-num-requests N    Number of requests for DAR measurement (default: 200)"
+            echo "  --dar-concurrency N     Concurrency for DAR trtllm-bench run (default: 32)"
+            echo "  --dar-warmup N          Warmup requests for DAR measurement (default: 5)"
             echo ""
             echo "Examples:"
             echo "  # Reproduce SA B200 TRT FP4 c=256 EP=8 chat point:"
@@ -528,23 +539,6 @@ collect_dar() {
         return 0
     fi
 
-    local dar_tag="${quant}_mtp${mtp_layers}_ep${ep_size}"
-    log "========================================================"
-    log " DAR COLLECTION: $dar_tag (trtllm-bench throughput)"
-    log "========================================================"
-
-    kill_server
-
-    # Generate synthetic dataset (1000 prompts, ISL~1024 / OSL=1024 to match real workload)
-    local dar_dataset="$RESULT_DIR/dar_dataset_${dar_tag}.jsonl"
-    python3 -c "
-import json
-for i in range(1000):
-    print(json.dumps({'task_id': i, 'prompt': 'Write a detailed story about ' + 'adventure ' * 100, 'output_tokens': 1024}))
-" > "$dar_dataset"
-
-    # Build config YAML for trtllm-bench (minimal, with MTP)
-    local dar_config="$RESULT_DIR/dar_config_${dar_tag}.yml"
     local dp_attn="false"
     [[ $ep_size -gt 1 ]] && dp_attn="true"
 
@@ -556,11 +550,42 @@ for i in range(1000):
         [[ "$dp_attn" == "true" ]] && moe_backend="DEEPGEMM"
     fi
 
-    cat > "$dar_config" << EOF
+    log "========================================================"
+    log " DAR COLLECTION: ${quant} mtp=${mtp_layers} ep=${ep_size}"
+    log "   concurrency=$DAR_CONCURRENCY  requests=$DAR_NUM_REQUESTS  warmup=$DAR_WARMUP"
+    log "========================================================"
+
+    kill_server
+
+    # Loop over scenarios (respects --scenario filter)
+    for scenario_entry in "${SCENARIOS[@]}"; do
+        IFS=':' read -r isl osl scenario_tag <<< "$scenario_entry"
+        local dar_tag="${quant}_mtp${mtp_layers}_ep${ep_size}_${scenario_tag}"
+
+        log "  ---- DAR: $scenario_tag (ISL=$isl, OSL=$osl) ----"
+
+        # --- Generate dataset with random tokens (avoids inflated DAR from repeated text) ---
+        local dar_dataset="$RESULT_DIR/dar_dataset_${dar_tag}.jsonl"
+        python3 "$SCRIPT_DIR/gen_dataset.py" \
+            --tokenizer "$model" \
+            --fixed_input_len "$isl" \
+            --output_tokens "$osl" \
+            --num_requests "$DAR_NUM_REQUESTS" \
+            --input_mode random \
+            --output "$dar_dataset"
+
+        # --- Build config YAML ---
+        local dar_config="$RESULT_DIR/dar_config_${dar_tag}.yml"
+        local dar_max_seq_len=10240
+        if [[ $((isl + osl)) -le 2048 ]]; then
+            dar_max_seq_len=8192
+        fi
+
+        cat > "$dar_config" << EOF
 print_iter_log: true
 kv_cache_config:
     dtype: fp8
-    free_gpu_memory_fraction: 0.7
+    free_gpu_memory_fraction: 0.8
     enable_block_reuse: false
 moe_config:
     backend: $moe_backend
@@ -568,51 +593,70 @@ enable_attention_dp: $dp_attn
 speculative_config:
     decoding_type: MTP
     num_nextn_predict_layers: $mtp_layers
+cuda_graph_config:
+    enable_padding: true
+    max_batch_size: $DAR_CONCURRENCY
 EOF
 
-    if [[ "$dp_attn" == "true" ]]; then
+        # Piecewise CUDA graphs
+        local dar_max_num_tokens=$(( ((mtp_layers + 1) * DAR_CONCURRENCY + isl + 64 + 63) / 64 * 64 ))
+        [[ $dar_max_num_tokens -lt 8192 ]] && dar_max_num_tokens=8192
+        local dar_capture_tokens=(1 2 4 8 16 32 64 128)
+        dar_capture_tokens+=( $(seq 256 256 $dar_max_num_tokens) )
+        if [[ $((dar_max_num_tokens % 256)) -ne 0 ]]; then
+            dar_capture_tokens+=($dar_max_num_tokens)
+        fi
+        local dar_capture_list
+        dar_capture_list=$(printf "%s, " "${dar_capture_tokens[@]}")
         cat >> "$dar_config" << EOF
+torch_compile_config:
+    capture_num_tokens: [${dar_capture_list%, }]
+    enable_piecewise_cuda_graph: true
+EOF
+
+        if [[ "$dp_attn" == "true" ]]; then
+            cat >> "$dar_config" << EOF
 attention_dp_config:
     batching_wait_iters: 0
     enable_balance: true
     timeout_iters: 60
 EOF
-    fi
+        fi
 
-    local dar_report="$RESULT_DIR/dar_report_${dar_tag}.json"
-    local dar_log="$RESULT_DIR/dar_bench_${dar_tag}.log"
+        # --- Run trtllm-bench ---
+        local dar_report="$RESULT_DIR/dar_report_${dar_tag}.json"
+        local dar_log="$RESULT_DIR/dar_bench_${dar_tag}.log"
 
-    log "  Running trtllm-bench throughput for DAR measurement..."
-    PYTHONNOUSERSITE=1 trtllm-bench \
-        -m "$model" \
-        throughput \
-        --backend pytorch \
-        --dataset "$dar_dataset" \
-        --tp $TP --ep $ep_size \
-        --max_seq_len 8192 \
-        --num_requests 1000 \
-        --warmup 2 \
-        --concurrency 8 \
-        --streaming \
-        --kv_cache_free_gpu_mem_fraction 0.7 \
-        --extra_llm_api_options "$dar_config" \
-        --report_json "$dar_report" \
-        > "$dar_log" 2>&1
-    local rc=$?
+        log "  Running trtllm-bench throughput for DAR ($scenario_tag)..."
+        trtllm-bench --model "$model" \
+            --model_path "$model" \
+            throughput \
+            --backend pytorch \
+            --extra_llm_api_options "$dar_config" \
+            --max_seq_len "$dar_max_seq_len" \
+            --tp $TP \
+            --ep $ep_size \
+            --dataset "$dar_dataset" \
+            --concurrency $DAR_CONCURRENCY \
+            --num_requests "$DAR_NUM_REQUESTS" \
+            --report_json "$dar_report" \
+            --warmup "$DAR_WARMUP" \
+            > "$dar_log" 2>&1
+        local rc=$?
 
-    if [[ $rc -ne 0 ]]; then
-        log "  WARN: trtllm-bench DAR collection failed (rc=$rc)"
-        tail -20 "$dar_log"
-        return 0
-    fi
+        if [[ $rc -ne 0 ]]; then
+            log "  WARN: trtllm-bench DAR failed for $scenario_tag (rc=$rc)"
+            tail -20 "$dar_log"
+            continue
+        fi
 
-    if [[ ! -f "$dar_report" ]]; then
-        log "  WARN: DAR report not generated"
-        return 0
-    fi
+        if [[ ! -f "$dar_report" ]]; then
+            log "  WARN: DAR report not generated for $scenario_tag"
+            continue
+        fi
 
-    # Parse DAR from report and inject into all matching result JSONs
-    python3 - "$dar_report" "$RESULT_DIR" "$quant" "$mtp_layers" "$ep_size" << 'DAREOF'
+        # --- Parse DAR and inject into matching result JSONs ---
+        python3 - "$dar_report" "$RESULT_DIR" "$quant" "$mtp_layers" "$ep_size" "$scenario_tag" << 'DAREOF'
 import json, sys, glob, os
 
 report_path = sys.argv[1]
@@ -620,6 +664,7 @@ result_dir = sys.argv[2]
 quant = sys.argv[3]
 mtp_layers = int(sys.argv[4])
 ep_size = sys.argv[5]
+scenario_tag = sys.argv[6]
 
 with open(report_path) as f:
     report = json.load(f)
@@ -640,11 +685,11 @@ dar_p50 = dar_pct.get("p50", 0)
 dar_p99 = dar_pct.get("p99", 0)
 al_avg = al_pct.get("average", 0) if al_pct else 0
 
-print(f"  DAR from trtllm-bench: avg={dar_avg:.4f}, p50={dar_p50:.4f}, p99={dar_p99:.4f}, acceptance_length={al_avg:.2f}")
+print(f"  DAR [{scenario_tag}]: avg={dar_avg:.4f}, p50={dar_p50:.4f}, p99={dar_p99:.4f}, acceptance_length={al_avg:.2f}")
 
-# Find all latency result JSONs for this quant and ep_size
-# Pattern: result_{quant}_latency_*_ep{ep_size}_c*.json
-pattern = os.path.join(result_dir, f"result_{quant}_latency_*_ep{ep_size}_c*.json")
+# Inject into result JSONs matching this specific scenario
+# Pattern: result_{quant}_latency_{scenario}_ep{ep_size}_c*.json
+pattern = os.path.join(result_dir, f"result_{quant}_latency_{scenario_tag}_ep{ep_size}_c*.json")
 matches = glob.glob(pattern)
 
 if not matches:
@@ -670,7 +715,10 @@ for result_path in matches:
 print(f"  Injected DAR into {injected}/{len(matches)} result files")
 DAREOF
 
-    log "  DAR collection complete for $dar_tag"
+        log "  DAR complete for $scenario_tag"
+    done
+
+    log "  DAR collection complete for ${quant} ep=${ep_size}"
 }
 
 # ======================== Config Dispatchers ===================================
