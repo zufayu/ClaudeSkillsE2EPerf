@@ -136,7 +136,7 @@ for scenario_entry in "${SCENARIOS[@]}"; do
         --fixed_input_len "$ISL" \
         --output_tokens "$OSL" \
         --num_requests "$NUM_REQUESTS" \
-        --input_mode fixed_len \
+        --input_mode random \
         --output "$DATASET_FILE"
 
     # --- Step 2: Generate MTP config YAML ---

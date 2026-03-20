@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import random
 import sys
 
 
@@ -19,8 +20,8 @@ def main():
                         default="benchmark_dataset.json",
                         help="Output JSONL file path")
     parser.add_argument("--input_mode", type=str, default="synthetic",
-                        choices=["synthetic", "fixed_len"],
-                        help="Input generation mode")
+                        choices=["synthetic", "fixed_len", "random"],
+                        help="Input generation mode (random: random tokens for realistic DAR)")
     parser.add_argument("--fixed_input_len", type=int, default=512,
                         help="Fixed input length when input_mode=fixed_len")
     args = parser.parse_args()
@@ -47,11 +48,16 @@ def main():
         if args.input_mode == "synthetic":
             prompt = prompts[i % len(prompts)]
             input_ids = tokenizer.encode(prompt)
-        else:
+        elif args.input_mode == "fixed_len":
             # Generate fixed-length input by repeating tokens
             base = tokenizer.encode("Repeat this text for benchmarking. ")
             input_ids = (base * (args.fixed_input_len // len(base) + 1)
                          )[:args.fixed_input_len]
+        else:  # random
+            # Random tokens from vocab for realistic DAR measurement
+            vocab_size = tokenizer.vocab_size
+            input_ids = [random.randint(100, vocab_size - 1)
+                         for _ in range(args.fixed_input_len)]
 
         dataset.append({
             "task_id": i,
