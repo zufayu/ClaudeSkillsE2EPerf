@@ -162,6 +162,29 @@ cuda_graph_config:
 print_iter_log: true
 EOF
 
+    # --- Piecewise CUDA Graphs (significant perf improvement) ---
+    local max_num_tokens
+    if [[ $MTP_LAYERS -gt 0 ]]; then
+        max_num_tokens=$(( ((MTP_LAYERS + 1) * CONCURRENCY + ISL + 64 + 63) / 64 * 64 ))
+    else
+        max_num_tokens=$(( (CONCURRENCY + ISL + 64 + 63) / 64 * 64 ))
+    fi
+    [[ $max_num_tokens -lt 8192 ]] && max_num_tokens=8192
+
+    local capture_tokens=(1 2 4 8 16 32 64 128)
+    capture_tokens+=( $(seq 256 256 $max_num_tokens) )
+    if [[ $((max_num_tokens % 256)) -ne 0 ]]; then
+        capture_tokens+=($max_num_tokens)
+    fi
+    local capture_list
+    capture_list=$(printf "%s, " "${capture_tokens[@]}")
+
+    cat >> "$CONFIG_FILE" << EOF
+torch_compile_config:
+    capture_num_tokens: [${capture_list%, }]
+    enable_piecewise_cuda_graph: true
+EOF
+
     # --- Step 3: Run trtllm-bench ---
     REPORT_FILE="$RESULT_DIR/dar_${QUANT}_${CONFIG_NAME}_${SCENARIO_TAG}.json"
     log "  Running trtllm-bench: concurrency=$CONCURRENCY, requests=$NUM_REQUESTS"
@@ -171,6 +194,7 @@ EOF
 
     set -x
     trtllm-bench --model "$MODEL_FP8" \
+        --model_path "$MODEL_FP8" \
         --backend pytorch \
         --extra_llm_api_options "$CONFIG_FILE" \
         --max_seq_len "$local_max_model_len" \
