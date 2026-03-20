@@ -163,7 +163,7 @@ print_iter_log: true
 EOF
 
     # --- Piecewise CUDA Graphs (significant perf improvement) ---
-    local max_num_tokens
+    max_num_tokens=0
     if [[ $MTP_LAYERS -gt 0 ]]; then
         max_num_tokens=$(( ((MTP_LAYERS + 1) * CONCURRENCY + ISL + 64 + 63) / 64 * 64 ))
     else
@@ -171,12 +171,12 @@ EOF
     fi
     [[ $max_num_tokens -lt 8192 ]] && max_num_tokens=8192
 
-    local capture_tokens=(1 2 4 8 16 32 64 128)
+    capture_tokens=(1 2 4 8 16 32 64 128)
     capture_tokens+=( $(seq 256 256 $max_num_tokens) )
     if [[ $((max_num_tokens % 256)) -ne 0 ]]; then
         capture_tokens+=($max_num_tokens)
     fi
-    local capture_list
+    capture_list=""
     capture_list=$(printf "%s, " "${capture_tokens[@]}")
 
     cat >> "$CONFIG_FILE" << EOF
