@@ -368,6 +368,15 @@ function buildDetailHTML(d, run) {
     ['Num Prompts', d.num_prompts || '-'],
     ['Completed', d.completed || '-'],
     ['Duration', d.duration != null ? fmtNum(d.duration) + ' s' : '-'],
+  ];
+  // DAR fields: only show when data exists (MTP configs)
+  if (d.dar_avg != null) {
+    items.push(['DAR avg', fmtNum(d.dar_avg, 4)]);
+    if (d.dar_p50 != null) items.push(['DAR p50', fmtNum(d.dar_p50, 4)]);
+    if (d.dar_p99 != null) items.push(['DAR p99', fmtNum(d.dar_p99, 4)]);
+    if (d.dar_acceptance_length != null) items.push(['Acceptance Length', fmtNum(d.dar_acceptance_length, 2)]);
+  }
+  items.push(
     ['Framework', run?.framework || '-'],
     ['Docker Image', run?.docker_image || '-'],
     ['GPU Count', run?.gpu_count || '-'],
