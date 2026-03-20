@@ -419,6 +419,9 @@ EOF
 
     log "  Starting server: TP=$TP, EP=$ep_size, MAX_NUM_TOKENS=$max_num_tokens"
 
+    # Set TRTLLM_KVCACHE_TIME_OUTPUT_PATH to enable per-request perf metrics
+    # (needed for DAR collection via /perf_metrics endpoint on completions API)
+    TRTLLM_KVCACHE_TIME_OUTPUT_PATH=/tmp/dar_metrics \
     PYTHONNOUSERSITE=1 mpirun -n 1 --oversubscribe --allow-run-as-root \
         trtllm-serve "$model" --port="$PORT" \
         --trust_remote_code \
@@ -463,9 +466,6 @@ EOF
         )
         if [[ -n "$BENCH_SERVING_DIR" ]]; then
             bench_args+=(--bench-serving-dir "$BENCH_SERVING_DIR")
-        fi
-        if [[ $MTP_LAYERS -gt 0 ]]; then
-            bench_args+=(--use-chat-template)
         fi
 
         run_benchmark_serving "${bench_args[@]}" || \
