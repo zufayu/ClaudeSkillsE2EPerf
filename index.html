@@ -381,7 +381,7 @@ function buildDetailHTML(d, run) {
     ['Docker Image', run?.docker_image || '-'],
     ['GPU Count', run?.gpu_count || '-'],
     ['Date', run?.date || '-'],
-  ];
+  );
   if (repoLinks) items.push(['Files', repoLinks]);
   return '<div class="detail-content">' +
     items.map(([l,v]) => `<div class="detail-item"><span class="detail-label">${l}</span><span class="detail-value">${v}</span></div>`).join('') +
