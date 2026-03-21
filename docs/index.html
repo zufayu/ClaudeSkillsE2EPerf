@@ -1297,7 +1297,7 @@ function init() {
   refresh();
 }
 
-init();
+window._dashboardInit = init;
 
 })();
 </script>
@@ -1312,6 +1312,7 @@ init();
     document.getElementById('pw-gate').classList.add('hidden');
     document.getElementById('main-content').style.display='';
     sessionStorage.setItem('pw-ok','1');
+    if(window._dashboardInit){window._dashboardInit();window._dashboardInit=null;}
   }
   if(sessionStorage.getItem('pw-ok')==='1'){unlock();}
   document.getElementById('pw-btn').addEventListener('click', async()=>{
