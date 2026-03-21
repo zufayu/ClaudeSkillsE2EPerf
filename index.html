@@ -179,6 +179,9 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
     <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px" id="meta-line">Loading...</div>
   </div>
   <div class="filter-bar" id="filter-bar"></div>
+  <a href="https://github.com/zufayu/ClaudeSkillsE2EPerf/tree/main/reports" target="_blank"
+     style="font-size:12px;color:var(--accent-blue);text-decoration:none;border:1px solid var(--border);border-radius:6px;padding:6px 12px;white-space:nowrap"
+     onmouseover="this.style.background='var(--bg-tertiary)'" onmouseout="this.style.background='none'">Analysis Reports</a>
 </header>
 
 <!-- KPI row -->
@@ -199,7 +202,6 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
   </div>
   <div class="chart-grid">
     <div class="chart-card hero"><h3 id="perf-chart-title">Output Throughput by Configuration</h3><div class="chart-wrap"><canvas id="chart-perf-bar"></canvas></div></div>
-    <div class="chart-card hero"><h3>Interactive Performance vs Token Throughput</h3><div class="chart-wrap"><canvas id="chart-interactive"></canvas></div></div>
   </div>
   <div style="margin-top:var(--gap-lg)">
     <div style="display:flex;gap:var(--gap-sm);align-items:center;margin-bottom:var(--gap-sm);flex-wrap:wrap">
@@ -326,7 +328,27 @@ function sourceHTML(run) {
   return srcList.map(s => s === 'ci-nightly' ? '<span class="badge ci">CI</span>' : '<span class="badge manual">Manual</span>').join('');
 }
 
+const REPO_BASE = 'https://github.com/zufayu/ClaudeSkillsE2EPerf/blob/main';
+
+function buildRepoFileLinks(d, run) {
+  const envTag = d.env_tag || run?.env_tag;
+  if (!envTag || !d.scenario || !d.config) return '';
+  // Map env_tag to results directory: mtp0-ep1 → results_b200_fp8_mtp0_ep1
+  const platform = (run?.platform || '').toLowerCase().replace(/[×x]/g, '');
+  const quant = (run?.quantization || 'fp8').toLowerCase();
+  const dirName = `results_b200_${quant}_${envTag.replace(/-/g, '_')}`;
+  // Build file tag: fp8_throughput_chat_ep1_c4[_dp]
+  const fileTag = `${quant}_${d.config}_${d.scenario}_ep${d.ep_size || 1}_c${d.conc}${d.dp_attention ? '_dp' : ''}`;
+  const configUrl = `${REPO_BASE}/${dirName}/config_${fileTag}.yml`;
+  const resultUrl = `${REPO_BASE}/${dirName}/result_${fileTag}.json`;
+  const logUrl = `${REPO_BASE}/${dirName}/server_${fileTag}.trimmed.log`;
+  return `<a href="${configUrl}" target="_blank" style="color:var(--accent-blue);text-decoration:none;margin-right:12px" title="Config YAML">Config</a>` +
+    `<a href="${resultUrl}" target="_blank" style="color:var(--accent-green);text-decoration:none;margin-right:12px" title="Result JSON">Result</a>` +
+    `<a href="${logUrl}" target="_blank" style="color:var(--accent-orange);text-decoration:none" title="Server Log (trimmed)">Log</a>`;
+}
+
 function buildDetailHTML(d, run) {
+  const repoLinks = buildRepoFileLinks(d, run);
   const items = [
     ['Config', d.config || '-'],
     ['EP Size', d.ep_size != null ? d.ep_size : '-'],
@@ -346,12 +368,21 @@ function buildDetailHTML(d, run) {
     ['Num Prompts', d.num_prompts || '-'],
     ['Completed', d.completed || '-'],
     ['Duration', d.duration != null ? fmtNum(d.duration) + ' s' : '-'],
+  ];
+  // DAR fields: only show when data exists (MTP configs)
+  if (d.dar_avg != null) {
+    items.push(['DAR avg', fmtNum(d.dar_avg, 4)]);
+    if (d.dar_p50 != null) items.push(['DAR p50', fmtNum(d.dar_p50, 4)]);
+    if (d.dar_p99 != null) items.push(['DAR p99', fmtNum(d.dar_p99, 4)]);
+    if (d.dar_acceptance_length != null) items.push(['Acceptance Length', fmtNum(d.dar_acceptance_length, 2)]);
+  }
+  items.push(
     ['Framework', run?.framework || '-'],
     ['Docker Image', run?.docker_image || '-'],
     ['GPU Count', run?.gpu_count || '-'],
     ['Date', run?.date || '-'],
-    ['Benchmark Cmd', run?.benchmark_cmd ? `<code style="font-size:10px;word-break:break-all">${run.benchmark_cmd}</code>` : '-'],
   ];
+  if (repoLinks) items.push(['Files', repoLinks]);
   return '<div class="detail-content">' +
     items.map(([l,v]) => `<div class="detail-item"><span class="detail-label">${l}</span><span class="detail-value">${v}</span></div>`).join('') +
     '</div>';
@@ -393,7 +424,7 @@ function getFiltered() {
       const sKey = `${r.isl}/${r.osl}`;
       if (!state.scenarios.has(sKey)) continue;
       if (!state.concs.has(String(r.conc))) continue;
-      out.push({...r, series_key: run.series_key, platform: run.platform, date: run.date, source: run.source, framework: run.framework, quantization: run.quantization, sources: run.sources, gpu_count: run.gpu_count, commit: run.commit, commit_url: run.commit_url, model: run.model});
+      out.push({...r, series_key: run.series_key, platform: run.platform, date: run.date, source: run.source, framework: run.framework, quantization: run.quantization, sources: run.sources, gpu_count: run.gpu_count, commit: run.commit, commit_url: run.commit_url, model: run.model, env_tag: run.env_tag});
     }
   }
   return out;
@@ -532,7 +563,7 @@ const charts = {};
 function destroyChart(id) {
   if (charts[id]) { charts[id].destroy(); delete charts[id]; }
   // Also clear any orphaned Chart instance on the canvas (e.g. from prior crash)
-  const canvasMap = {'perfBar': 'chart-perf-bar', 'interactive': 'chart-interactive', 'interactive2': 'chart-interactive2', 'tradeoffTpot': 'chart-tradeoff-tpot', 'tradeoffTtft': 'chart-tradeoff-ttft', 'tput': 'chart-tput', 'tpot': 'chart-tpot', 'ttft': 'chart-ttft'};
+  const canvasMap = {'perfBar': 'chart-perf-bar', 'interactive2': 'chart-interactive2', 'tradeoffTpot': 'chart-tradeoff-tpot', 'tradeoffTtft': 'chart-tradeoff-ttft', 'tput': 'chart-tput', 'tpot': 'chart-tpot', 'ttft': 'chart-ttft'};
   if (canvasMap[id]) {
     const el = document.getElementById(canvasMap[id]);
     const existing = el && Chart.getChart(el);
@@ -886,8 +917,8 @@ function shortSeriesName(sk) {
 
 /* --- Interactive Performance vs Token Throughput (line chart) --- */
 function buildInteractiveChart(data, canvasId, chartKey, scenarioFilter) {
-  canvasId = canvasId || 'chart-interactive';
-  chartKey = chartKey || 'interactive';
+  canvasId = canvasId || 'chart-interactive2';
+  chartKey = chartKey || 'interactive2';
   destroyChart(chartKey);
   const canvas = document.getElementById(canvasId);
   const filtered = tradeoffFilter(data, scenarioFilter);
@@ -1071,6 +1102,7 @@ function buildDataTable(data) {
     <th class="num">TTFT</th>
     <th>Source</th>
     <th>Config</th>
+    <th>Files</th>
   </tr>`;
 
   const sorted = [...data].sort((a, b) => {
@@ -1104,8 +1136,10 @@ function buildDataTable(data) {
     rows += `<td class="num heat-cell" style="background:${ttftBg}">${fmtNum(d.ttft_p50, 0)}</td>`;
     rows += `<td>${sourceHTML(run || d)}</td>`;
     rows += `<td><code>${d.config || '-'}</code></td>`;
+    const fileLinks = buildRepoFileLinks(d, run);
+    rows += `<td>${fileLinks || '-'}</td>`;
     rows += `</tr>`;
-    rows += `<tr class="detail-row" id="${rid}"><td colspan="12">${buildDetailHTML(d, run)}</td></tr>`;
+    rows += `<tr class="detail-row" id="${rid}"><td colspan="13">${buildDetailHTML(d, run)}</td></tr>`;
   }
   tbody.innerHTML = rows;
 
@@ -1208,7 +1242,6 @@ function refresh() {
   const activeTab = document.querySelector('.tab.active')?.dataset.tab;
   if (activeTab === 'performance') {
     buildPerfBarChart(data);
-    buildInteractiveChart(data);
     buildPerfTable(data);
   } else if (activeTab === 'scatter') {
     buildTradeoffScenarioSelector(data);
@@ -1264,7 +1297,7 @@ function init() {
   refresh();
 }
 
-init();
+window._dashboardInit = init;
 
 })();
 </script>
@@ -1279,6 +1312,7 @@ init();
     document.getElementById('pw-gate').classList.add('hidden');
     document.getElementById('main-content').style.display='';
     sessionStorage.setItem('pw-ok','1');
+    if(window._dashboardInit){window._dashboardInit();window._dashboardInit=null;}
   }
   if(sessionStorage.getItem('pw-ok')==='1'){unlock();}
   document.getElementById('pw-btn').addEventListener('click', async()=>{
