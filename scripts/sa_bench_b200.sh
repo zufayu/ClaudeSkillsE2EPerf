@@ -342,6 +342,8 @@ EOF
 speculative_config:
     decoding_type: MTP
     num_nextn_predict_layers: $MTP_LAYERS
+return_perf_metrics: true
+perf_metrics_max_requests: $((conc * 10 + 100))
 EOF
     fi
 
@@ -473,6 +475,47 @@ EOF
         run_benchmark_serving "${bench_args[@]}" || \
             log "  WARN: Benchmark failed for $tag"
 
+        # --- Collect DAR from /perf_metrics (MTP only) ---
+        if [[ $MTP_LAYERS -gt 0 ]]; then
+            local perf_metrics_json="$RESULT_DIR/perf_metrics_${tag}.json"
+            if curl -s --max-time 10 "http://localhost:${PORT}/perf_metrics" -o "$perf_metrics_json" 2>/dev/null; then
+                local dar_result
+                dar_result=$(python3 -c "
+import json, sys
+try:
+    with open('$perf_metrics_json') as f:
+        metrics = json.load(f)
+    rates = [m['perf_metrics']['speculative_decoding']['acceptance_rate']
+             for m in metrics
+             if 'speculative_decoding' in m.get('perf_metrics', {})]
+    if rates:
+        rates.sort()
+        p50 = rates[len(rates)//2]
+        p99_idx = min(int(len(rates)*0.99), len(rates)-1)
+        p99 = rates[p99_idx]
+        total_accepted = sum(m['perf_metrics']['speculative_decoding']['total_accepted_draft_tokens']
+                             for m in metrics if 'speculative_decoding' in m.get('perf_metrics', {}))
+        total_draft = sum(m['perf_metrics']['speculative_decoding']['total_draft_tokens']
+                          for m in metrics if 'speculative_decoding' in m.get('perf_metrics', {}))
+        overall = total_accepted / total_draft if total_draft > 0 else 0
+        print(json.dumps({'dar_avg': round(overall, 4), 'dar_p50': round(p50, 4), 'dar_p99': round(p99, 4), 'dar_source': 'perf_metrics', 'dar_num_requests': len(rates)}))
+    else:
+        print('{}')
+except Exception as e:
+    print('{}', file=sys.stderr)
+    print(f'  WARN: Failed to parse DAR from perf_metrics: {e}', file=sys.stderr)
+" 2>&1)
+                if [[ -n "$dar_result" && "$dar_result" != "{}" ]]; then
+                    log "  DAR from /perf_metrics: $dar_result"
+                else
+                    log "  WARN: No DAR data in /perf_metrics"
+                fi
+            else
+                log "  WARN: Failed to curl /perf_metrics"
+                local dar_result="{}"
+            fi
+        fi
+
         # --- Inject reproduce commands into result JSON ---
         local result_json="$RESULT_DIR/${result_filename}.json"
         if [[ -f "$result_json" ]]; then
@@ -482,12 +525,14 @@ EOF
                 docker_image="unknown-docker"
             fi
 
-            # Merge reproduce info into result JSON
+            # Merge reproduce info + DAR into result JSON
+            local dar_json="${dar_result:-{\}}"
             RESULT_JSON="$result_json" \
             SERVER_CMD="$server_cmd" \
             BENCH_ARGS="${bench_args[*]}" \
             CONFIG_FILE="$config_file" \
             DOCKER_IMG="$docker_image" \
+            DAR_JSON="$dar_json" \
             python3 << 'PYEOF'
 import json, sys, os
 
@@ -496,6 +541,7 @@ server_cmd = os.environ["SERVER_CMD"]
 bench_args_str = os.environ["BENCH_ARGS"]
 config_file = os.environ["CONFIG_FILE"]
 docker_image = os.environ["DOCKER_IMG"]
+dar_json = os.environ.get("DAR_JSON", "{}")
 
 with open(result_path) as f:
     data = json.load(f)
@@ -508,6 +554,15 @@ data["benchmark_cmd"] = "benchmark_serving.py " + bench_args_str
 data["config_yaml"] = config_yaml
 if docker_image:
     data["docker_image"] = docker_image
+
+# Inject DAR from /perf_metrics if available
+try:
+    dar = json.loads(dar_json)
+    if dar:
+        data.update(dar)
+        print(f"  Injected DAR: avg={dar.get('dar_avg')}, p50={dar.get('dar_p50')}, p99={dar.get('dar_p99')}")
+except (json.JSONDecodeError, TypeError):
+    pass
 
 with open(result_path, "w") as f:
     json.dump(data, f, indent=2)
