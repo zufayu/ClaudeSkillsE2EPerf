@@ -919,6 +919,11 @@ generate_summary
 log "Trimming server logs..."
 python3 "$SCRIPT_DIR/trim_logs.py" "$RESULT_DIR"
 
+# Regression comparison with previous commit
+log "Running regression comparison..."
+python3 "$SCRIPT_DIR/compare_results.py" "$RESULT_DIR" \
+    --output "$RESULT_DIR/regression_report.txt" || true
+
 log "============================================================"
 log "  ALL BENCHMARKS COMPLETE"
 log "  Results in: $RESULT_DIR/"
