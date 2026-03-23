@@ -196,9 +196,9 @@ def main():
     parser.add_argument("--model", default="DeepSeek-R1-0528", help="Model name")
     parser.add_argument("--gpu-count", type=int, default=8, help="Number of GPUs")
     parser.add_argument("--tag", default=None, help="Optional config tag filter (e.g. fp4-throughput)")
-    parser.add_argument("--env-tag", default=None,
+    parser.add_argument("--env-tag", required=True,
                         help='Environment tag to distinguish runs on the same platform '
-                             '(e.g. "docker-v2", "nightly-0318", "branch-fix-kv"). '
+                             '(e.g. "mtp3-ep1", "mtp0-ep1"). '
                              'Appears in series_key for side-by-side comparison.')
     parser.add_argument("--output", default=None, help="Output JSON path (auto-generated if not set)")
     parser.add_argument("--source", default="manual", help='Data source: "manual" or "ci"')
