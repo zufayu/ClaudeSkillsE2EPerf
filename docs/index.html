@@ -432,6 +432,7 @@ const state = {
   compareCmp: allSeries[1] || '',
   tableCols: new Set(allSeries.slice(0, 2)),  // default: show only Ref+Cmp in table
   tradeoffScenario: '__all__',  // scenario filter for tradeoff tab
+  scatterSubtab: 'interactive',
 };
 
 function getFiltered() {
@@ -1010,20 +1011,20 @@ function buildConcScalingChart(data, scenarioFilter) {
       borderColor: c.border, backgroundColor: c.bg,
       borderWidth: 2, borderDash: dash,
       pointStyle: 'circle', pointRadius: 5, pointHoverRadius: 8,
-      fill: false, tension: 0.2, showLine: true,
+      fill: false, tension: 0.2,
       yAxisID: 'yTput',
     });
 
-    // TPOT line (triangles, right Y-axis)
+    // TPOT line (triangles, right Y-axis) — use semi-transparent color to distinguish from Tput
     const tpotPoints = g.points.filter(p => p.tpot > 0);
     if (tpotPoints.length > 0) {
       datasets.push({
         label: label + ' TPOT',
         data: tpotPoints.map(p => ({x: p.conc, y: p.tpot})),
-        borderColor: c.border, backgroundColor: 'transparent',
-        borderWidth: 1.5, borderDash: dash.length ? dash : [4, 2],
+        borderColor: c.bg, backgroundColor: c.bg,
+        borderWidth: 1.5, borderDash: [4, 2],
         pointStyle: 'triangle', pointRadius: 6, pointHoverRadius: 9,
-        fill: false, tension: 0.2, showLine: true,
+        fill: false, tension: 0.2,
         yAxisID: 'yTpot',
       });
     }
@@ -1313,7 +1314,6 @@ document.querySelectorAll('#tabs > .tab').forEach(tab => {
 });
 
 /* Scatter subtab switching */
-state.scatterSubtab = 'interactive';
 document.querySelectorAll('#scatter-subtabs .tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('#scatter-subtabs .tab').forEach(t => t.classList.remove('active'));
@@ -1321,7 +1321,8 @@ document.querySelectorAll('#scatter-subtabs .tab').forEach(tab => {
     state.scatterSubtab = tab.dataset.subtab;
     document.querySelectorAll('.scatter-subtab-content').forEach(c => c.style.display = 'none');
     document.getElementById('subtab-' + tab.dataset.subtab).style.display = '';
-    refresh();
+    // Delay refresh slightly so canvas gets correct dimensions after display change
+    requestAnimationFrame(() => refresh());
   });
 });
 
