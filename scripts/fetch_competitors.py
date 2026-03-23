@@ -227,24 +227,29 @@ def fetch_atom_ci_details(commit_sha, token=None):
         print(f"  WARN: Failed to query CI runs: {e}", file=sys.stderr)
         return {}, {}
 
-    # Find a successful run
+    # Find a completed run (accept "failure" too — individual jobs may still
+    # have succeeded; job-level filtering happens below)
     run_id = None
     for r in runs_data.get("workflow_runs", []):
-        if r.get("conclusion") == "success":
+        if r.get("conclusion") in ("success", "failure"):
             run_id = r["id"]
+            concl = r.get("conclusion")
+            if concl == "failure":
+                print(f"  NOTE: Run {run_id} for commit {commit_sha[:8]} "
+                      f"has conclusion=failure (some jobs may have failed)")
             break
 
     if not run_id:
-        # Fallback: find latest successful run (commit may not match exactly)
+        # Fallback: find latest completed run (commit may not match exactly)
         fallback_url = (f"https://api.github.com/repos/{ATOM_REPO}/actions/workflows/"
                         f"{ATOM_BENCHMARK_WORKFLOW_ID}/runs?status=completed&per_page=10")
         try:
             fallback_data = _gh_api(fallback_url, token)
             for r in fallback_data.get("workflow_runs", []):
-                if r.get("conclusion") == "success":
+                if r.get("conclusion") in ("success", "failure"):
                     run_id = r["id"]
                     print(f"  NOTE: No run for commit {commit_sha[:8]}, "
-                          f"using latest successful run {run_id}")
+                          f"using latest completed run {run_id}")
                     break
         except (HTTPError, URLError):
             pass

@@ -1,5 +1,5 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-03-23T09:20:01.816588",
+  "generated_at": "2026-03-23T09:41:29.917868",
   "runs": [
     {
       "run_id": "8xb200-fp8-20260321-mtp0-ep1",
@@ -2233,15 +2233,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 85.64,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.5515,
+          "avg_toks_fwd": 2.65,
+          "dar_accepted_tokens": 26470,
+          "dar_total_draft_tokens": 48000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.1849,
+            "1": 0.2871,
+            "2": 0.2168,
+            "3": 0.3113
           },
           "dar_source": "atom-ci-log"
         },
@@ -2260,15 +2260,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 102.77,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.4978,
+          "avg_toks_fwd": 2.49,
+          "dar_accepted_tokens": 52272,
+          "dar_total_draft_tokens": 105000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.2161,
+            "1": 0.3204,
+            "2": 0.2174,
+            "3": 0.2461
           },
           "dar_source": "atom-ci-log"
         },
@@ -2287,15 +2287,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 128.8,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.4797,
+          "avg_toks_fwd": 2.44,
+          "dar_accepted_tokens": 100737,
+          "dar_total_draft_tokens": 210000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.2339,
+            "1": 0.3277,
+            "2": 0.2038,
+            "3": 0.2346
           },
           "dar_source": "atom-ci-log"
         },
@@ -2314,15 +2314,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 168.97,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.4923,
+          "avg_toks_fwd": 2.48,
+          "dar_accepted_tokens": 206759,
+          "dar_total_draft_tokens": 420000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.222,
+            "1": 0.3261,
+            "2": 0.2049,
+            "3": 0.247
           },
           "dar_source": "atom-ci-log"
         },
@@ -2341,15 +2341,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 231.33,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.4861,
+          "avg_toks_fwd": 2.46,
+          "dar_accepted_tokens": 422937,
+          "dar_total_draft_tokens": 870000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.2263,
+            "1": 0.3296,
+            "2": 0.2033,
+            "3": 0.2407
           },
           "dar_source": "atom-ci-log"
         },
@@ -2368,15 +2368,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 337.62,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.4878,
+          "avg_toks_fwd": 2.46,
+          "dar_accepted_tokens": 847359,
+          "dar_total_draft_tokens": 1737000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.2265,
+            "1": 0.3273,
+            "2": 0.2025,
+            "3": 0.2438
           },
           "dar_source": "atom-ci-log"
         },
@@ -2395,15 +2395,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 552.13,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.4864,
+          "avg_toks_fwd": 2.46,
+          "dar_accepted_tokens": 1673868,
+          "dar_total_draft_tokens": 3441000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.2234,
+            "1": 0.3325,
+            "2": 0.2055,
+            "3": 0.2386
           },
           "dar_source": "atom-ci-log"
         },
@@ -2422,13 +2422,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 86.63,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.685,
+          "avg_toks_fwd": 3.05,
+          "dar_accepted_tokens": 236312,
+          "dar_total_draft_tokens": 345000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.0758,
+            "1": 0.2503,
+            "2": 0.2169,
+            "3": 0.4569
           },
           "dar_source": "atom-ci-log"
         },
@@ -2447,13 +2449,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 102.9,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.6477,
+          "avg_toks_fwd": 2.94,
+          "dar_accepted_tokens": 460484,
+          "dar_total_draft_tokens": 711000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.0743,
+            "1": 0.2995,
+            "2": 0.2352,
+            "3": 0.3911
           },
           "dar_source": "atom-ci-log"
         },
@@ -2472,13 +2476,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 126.09,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.6527,
+          "avg_toks_fwd": 2.96,
+          "dar_accepted_tokens": 935950,
+          "dar_total_draft_tokens": 1434000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.0723,
+            "1": 0.2915,
+            "2": 0.2421,
+            "3": 0.3942
           },
           "dar_source": "atom-ci-log"
         },
@@ -2497,13 +2503,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 172.89,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.6541,
+          "avg_toks_fwd": 2.96,
+          "dar_accepted_tokens": 1903393,
+          "dar_total_draft_tokens": 2910000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.0751,
+            "1": 0.2861,
+            "2": 0.2403,
+            "3": 0.3986
           },
           "dar_source": "atom-ci-log"
         },
@@ -2522,13 +2530,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 284.51,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.6425,
+          "avg_toks_fwd": 2.93,
+          "dar_accepted_tokens": 3741546,
+          "dar_total_draft_tokens": 5823000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.0775,
+            "1": 0.3012,
+            "2": 0.2373,
+            "3": 0.3839
           },
           "dar_source": "atom-ci-log"
         },
@@ -2547,13 +2557,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 328.97,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.6295,
+          "avg_toks_fwd": 2.89,
+          "dar_accepted_tokens": 7416034,
+          "dar_total_draft_tokens": 11781000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.0828,
+            "1": 0.313,
+            "2": 0.2371,
+            "3": 0.3671
           },
           "dar_source": "atom-ci-log"
         },
@@ -2572,13 +2584,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 540.4,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.6325,
+          "avg_toks_fwd": 2.9,
+          "dar_accepted_tokens": 15108217,
+          "dar_total_draft_tokens": 23886000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.0781,
+            "1": 0.3118,
+            "2": 0.2445,
+            "3": 0.3656
           },
           "dar_source": "atom-ci-log"
         },
@@ -2597,13 +2611,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 369.78,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.6358,
+          "avg_toks_fwd": 2.91,
+          "dar_accepted_tokens": 28612,
+          "dar_total_draft_tokens": 45000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.1502,
+            "1": 0.2358,
+            "2": 0.1703,
+            "3": 0.4437
           },
           "dar_source": "atom-ci-log"
         },
@@ -2622,13 +2638,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 398.97,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.5563,
+          "avg_toks_fwd": 2.67,
+          "dar_accepted_tokens": 55078,
+          "dar_total_draft_tokens": 99000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.2068,
+            "1": 0.2631,
+            "2": 0.1843,
+            "3": 0.3458
           },
           "dar_source": "atom-ci-log"
         },
@@ -2647,13 +2665,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 526.3,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.5489,
+          "avg_toks_fwd": 2.65,
+          "dar_accepted_tokens": 110320,
+          "dar_total_draft_tokens": 201000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.1929,
+            "1": 0.2917,
+            "2": 0.1914,
+            "3": 0.324
           },
           "dar_source": "atom-ci-log"
         },
@@ -2672,13 +2692,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 727.65,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.5472,
+          "avg_toks_fwd": 2.64,
+          "dar_accepted_tokens": 218332,
+          "dar_total_draft_tokens": 399000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.1983,
+            "1": 0.2897,
+            "2": 0.1841,
+            "3": 0.3279
           },
           "dar_source": "atom-ci-log"
         },
@@ -2697,13 +2719,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 1101.16,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.5757,
+          "avg_toks_fwd": 2.73,
+          "dar_accepted_tokens": 447285,
+          "dar_total_draft_tokens": 777000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.1821,
+            "1": 0.2799,
+            "2": 0.1671,
+            "3": 0.371
           },
           "dar_source": "atom-ci-log"
         },
@@ -2722,13 +2746,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 1886.38,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.5389,
+          "avg_toks_fwd": 2.62,
+          "dar_accepted_tokens": 868184,
+          "dar_total_draft_tokens": 1611000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.208,
+            "1": 0.2874,
+            "2": 0.1844,
+            "3": 0.3201
           },
           "dar_source": "atom-ci-log"
         },
@@ -2747,13 +2773,15 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 4584.88,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_accepted_tokens": 849106,
-          "dar_total_draft_tokens": 1734000,
+          "dar_avg": 0.541,
+          "avg_toks_fwd": 2.62,
+          "dar_accepted_tokens": 1768916,
+          "dar_total_draft_tokens": 3270000,
           "dar_distribution": {
-            "0": 0.2245,
-            "1": 0.3291,
-            "2": 0.1991,
-            "3": 0.2472
+            "0": 0.1988,
+            "1": 0.2964,
+            "2": 0.1878,
+            "3": 0.3169
           },
           "dar_source": "atom-ci-log"
         }
