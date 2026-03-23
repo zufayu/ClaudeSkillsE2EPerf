@@ -222,10 +222,21 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
 <!-- Tab: Throughput vs Latency -->
 <div class="tab-content" id="tab-scatter">
   <div class="metric-selector" id="tradeoff-scenario-selector"></div>
-  <div class="chart-grid">
-    <div class="chart-card hero"><h3>Interactive Performance vs Token Throughput</h3><div class="chart-wrap"><canvas id="chart-interactive2"></canvas></div></div>
-    <div class="chart-card half"><h3>Output Throughput vs TPOT</h3><div class="chart-wrap"><canvas id="chart-tradeoff-tpot"></canvas></div></div>
-    <div class="chart-card half"><h3>Output Throughput vs TTFT</h3><div class="chart-wrap"><canvas id="chart-tradeoff-ttft"></canvas></div></div>
+  <div class="tabs" id="scatter-subtabs" style="margin-bottom:var(--gap-md)">
+    <div class="tab active" data-subtab="interactive">Interactive vs Token Throughput</div>
+    <div class="tab" data-subtab="concurrency">Concurrency Scaling</div>
+  </div>
+  <div class="scatter-subtab-content" id="subtab-interactive">
+    <div class="chart-grid">
+      <div class="chart-card hero"><h3>DeepSeek-R1-0528 — Interactive vs Token Throughput</h3><div class="chart-wrap"><canvas id="chart-interactive2"></canvas></div></div>
+      <div class="chart-card half"><h3>Output Throughput vs TPOT</h3><div class="chart-wrap"><canvas id="chart-tradeoff-tpot"></canvas></div></div>
+      <div class="chart-card half"><h3>Output Throughput vs TTFT</h3><div class="chart-wrap"><canvas id="chart-tradeoff-ttft"></canvas></div></div>
+    </div>
+  </div>
+  <div class="scatter-subtab-content" id="subtab-concurrency" style="display:none">
+    <div class="chart-grid">
+      <div class="chart-card hero"><h3>DeepSeek-R1-0528 — Concurrency Scaling</h3><div class="chart-wrap"><canvas id="chart-conc-scaling"></canvas></div></div>
+    </div>
   </div>
 </div>
 
@@ -570,7 +581,7 @@ const charts = {};
 function destroyChart(id) {
   if (charts[id]) { charts[id].destroy(); delete charts[id]; }
   // Also clear any orphaned Chart instance on the canvas (e.g. from prior crash)
-  const canvasMap = {'perfBar': 'chart-perf-bar', 'interactive2': 'chart-interactive2', 'tradeoffTpot': 'chart-tradeoff-tpot', 'tradeoffTtft': 'chart-tradeoff-ttft', 'tput': 'chart-tput', 'tpot': 'chart-tpot', 'ttft': 'chart-ttft'};
+  const canvasMap = {'perfBar': 'chart-perf-bar', 'interactive2': 'chart-interactive2', 'tradeoffTpot': 'chart-tradeoff-tpot', 'tradeoffTtft': 'chart-tradeoff-ttft', 'concScaling': 'chart-conc-scaling', 'tput': 'chart-tput', 'tpot': 'chart-tpot', 'ttft': 'chart-ttft'};
   if (canvasMap[id]) {
     const el = document.getElementById(canvasMap[id]);
     const existing = el && Chart.getChart(el);
@@ -967,6 +978,99 @@ function buildInteractiveChart(data, canvasId, chartKey, scenarioFilter) {
   });
 }
 
+/* --- Concurrency Scaling Chart (dual Y-axis: Throughput + TPOT) --- */
+function buildConcScalingChart(data, scenarioFilter) {
+  destroyChart('concScaling');
+  const canvas = document.getElementById('chart-conc-scaling');
+  if (!canvas) return;
+  const filtered = tradeoffFilter(data, scenarioFilter);
+
+  // Group by series + scenario
+  const grouped = {};
+  for (const d of filtered) {
+    if (d.output_tps <= 0) continue;
+    const scenario = `${d.isl}/${d.osl}`;
+    const sk = d.series_key + ' ' + scenario;
+    if (!grouped[sk]) grouped[sk] = {series: d.series_key, scenario, points: []};
+    grouped[sk].points.push({conc: d.conc, tput: d.output_tps, tpot: d.tpot_p50 || 0});
+  }
+
+  const datasets = [];
+  for (const [key, g] of Object.entries(grouped)) {
+    g.points.sort((a, b) => a.conc - b.conc);
+    const c = getColor(g.series);
+    const sName = SCENARIO_NAME[g.scenario] || g.scenario;
+    const dash = SCENARIO_DASH[g.scenario] || [];
+    const label = `${shortSeriesName(g.series)} ${sName}`;
+
+    // Throughput line (circles, left Y-axis)
+    datasets.push({
+      label: label + ' Tput',
+      data: g.points.map(p => ({x: p.conc, y: p.tput})),
+      borderColor: c.border, backgroundColor: c.bg,
+      borderWidth: 2, borderDash: dash,
+      pointStyle: 'circle', pointRadius: 5, pointHoverRadius: 8,
+      fill: false, tension: 0.2, showLine: true,
+      yAxisID: 'yTput',
+    });
+
+    // TPOT line (triangles, right Y-axis)
+    const tpotPoints = g.points.filter(p => p.tpot > 0);
+    if (tpotPoints.length > 0) {
+      datasets.push({
+        label: label + ' TPOT',
+        data: tpotPoints.map(p => ({x: p.conc, y: p.tpot})),
+        borderColor: c.border, backgroundColor: 'transparent',
+        borderWidth: 1.5, borderDash: dash.length ? dash : [4, 2],
+        pointStyle: 'triangle', pointRadius: 6, pointHoverRadius: 9,
+        fill: false, tension: 0.2, showLine: true,
+        yAxisID: 'yTpot',
+      });
+    }
+  }
+
+  charts['concScaling'] = new Chart(canvas, {
+    type: 'line',
+    data: {datasets},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: {
+          type: 'logarithmic',
+          title: {display: true, text: 'Concurrency', color: '#7e8094'},
+          ticks: {color: '#7e8094', callback: v => v},
+          grid: {color: '#262733'},
+        },
+        yTput: {
+          type: 'linear', position: 'left',
+          title: {display: true, text: 'Throughput (tok/s)', color: '#5b9cf5'},
+          ticks: {color: '#5b9cf5'},
+          grid: {color: '#262733'},
+        },
+        yTpot: {
+          type: 'linear', position: 'right',
+          title: {display: true, text: 'TPOT (ms)', color: '#f25c4e'},
+          ticks: {color: '#f25c4e'},
+          grid: {drawOnChartArea: false},
+        },
+      },
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const axis = ctx.dataset.yAxisID;
+              const unit = axis === 'yTput' ? 'tok/s' : 'ms';
+              return `${ctx.dataset.label}: ${fmtNum(ctx.parsed.y)} ${unit} (c=${ctx.parsed.x})`;
+            }
+          }
+        },
+        legend: {labels: {color: '#bfc1d0', usePointStyle: true}},
+        datalabels: {display: false}
+      }
+    }
+  });
+}
+
 /* --- Tradeoff Charts (line: Throughput vs Latency, connected by concurrency) --- */
 function buildTradeoffChart(canvasId, chartKey, data, xField, xLabel, scenarioFilter) {
   destroyChart(chartKey);
@@ -1198,12 +1302,25 @@ document.getElementById('copy-csv-btn').addEventListener('click', () => {
 /* ================================================================
    8. TABS
    ================================================================ */
-document.querySelectorAll('.tab').forEach(tab => {
+document.querySelectorAll('#tabs > .tab').forEach(tab => {
   tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('#tabs > .tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    refresh();
+  });
+});
+
+/* Scatter subtab switching */
+state.scatterSubtab = 'interactive';
+document.querySelectorAll('#scatter-subtabs .tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('#scatter-subtabs .tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    state.scatterSubtab = tab.dataset.subtab;
+    document.querySelectorAll('.scatter-subtab-content').forEach(c => c.style.display = 'none');
+    document.getElementById('subtab-' + tab.dataset.subtab).style.display = '';
     refresh();
   });
 });
@@ -1253,9 +1370,13 @@ function refresh() {
   } else if (activeTab === 'scatter') {
     buildTradeoffScenarioSelector(data);
     const sf = state.tradeoffScenario;
-    buildInteractiveChart(data, 'chart-interactive2', 'interactive2', sf);
-    buildTradeoffChart('chart-tradeoff-tpot', 'tradeoffTpot', data, 'tpot_p50', 'TPOT p50 (ms)', sf);
-    buildTradeoffChart('chart-tradeoff-ttft', 'tradeoffTtft', data, 'ttft_p50', 'TTFT p50 (ms)', sf);
+    if (state.scatterSubtab === 'concurrency') {
+      buildConcScalingChart(data, sf);
+    } else {
+      buildInteractiveChart(data, 'chart-interactive2', 'interactive2', sf);
+      buildTradeoffChart('chart-tradeoff-tpot', 'tradeoffTpot', data, 'tpot_p50', 'TPOT p50 (ms)', sf);
+      buildTradeoffChart('chart-tradeoff-ttft', 'tradeoffTtft', data, 'ttft_p50', 'TTFT p50 (ms)', sf);
+    }
   } else if (activeTab === 'trends') {
     buildTrendsSeriesSelector();
     buildLineChart('chart-tput', 'tput', data, 'output_tps', 'Output Throughput (tok/s)');
