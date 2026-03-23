@@ -344,7 +344,7 @@ def convert_atom_to_runs(atom_data):
             results.append(result)
 
         run_key = f"atom-mi355x-{model_clean.lower()}{mtp_tag}"
-        mtp_env_tag = f"mtp{m.group(1)}" if (is_mtp and m) else "mtp0"
+        mtp_env_tag = f"mtp{m.group(1)}-ep{gpu_count}" if (is_mtp and m) else f"mtp0-ep{gpu_count}"
         runs[run_key] = {
             "run_id": run_key,
             "platform": f"{gpu_count}×MI355X",

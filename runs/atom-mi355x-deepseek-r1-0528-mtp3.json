@@ -4,7 +4,7 @@
   "framework": "ATOM (613e57af)",
   "model": "DeepSeek-R1-0528",
   "quantization": "FP8",
-  "env_tag": "mtp3",
+  "env_tag": "mtp3-ep8",
   "gpu_count": 8,
   "source": "ci-nightly",
   "date": "2026-03-23",

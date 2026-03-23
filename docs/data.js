@@ -1,5 +1,5 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-03-23T06:04:57.618390",
+  "generated_at": "2026-03-23T06:06:29.238975",
   "runs": [
     {
       "run_id": "8xb200-fp8-20260321-mtp0-ep1",
@@ -2075,7 +2075,7 @@ window.DASHBOARD_DATA = {
     },
     {
       "run_id": "atom-mi355x-deepseek-r1-0528-mtp3",
-      "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 (ATOM) [mtp3]",
+      "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 (ATOM) [mtp3-ep8]",
       "platform": "8\u00d7MI355X",
       "framework": "ATOM (613e57af)",
       "model": "DeepSeek-R1-0528",
@@ -2088,7 +2088,7 @@ window.DASHBOARD_DATA = {
       "date": "2026-03-23",
       "commit": "613e57afbe0b24621ef25da2ca065b231f2e9519",
       "commit_url": "https://github.com/ROCm/ATOM/commit/613e57afbe0b24621ef25da2ca065b231f2e9519",
-      "env_tag": "mtp3",
+      "env_tag": "mtp3-ep8",
       "docker_image": "",
       "benchmark_cmd": "",
       "results": [
@@ -2663,7 +2663,7 @@ window.DASHBOARD_DATA = {
     },
     {
       "run_id": "atom-mi355x-deepseek-r1-0528",
-      "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 (ATOM) [mtp0]",
+      "series_key": "8\u00d7MI355X DeepSeek-R1-0528 FP8 (ATOM) [mtp0-ep8]",
       "platform": "8\u00d7MI355X",
       "framework": "ATOM (613e57af)",
       "model": "DeepSeek-R1-0528",
@@ -2676,7 +2676,7 @@ window.DASHBOARD_DATA = {
       "date": "2026-03-23",
       "commit": "613e57afbe0b24621ef25da2ca065b231f2e9519",
       "commit_url": "https://github.com/ROCm/ATOM/commit/613e57afbe0b24621ef25da2ca065b231f2e9519",
-      "env_tag": "mtp0",
+      "env_tag": "mtp0-ep8",
       "docker_image": "",
       "benchmark_cmd": "",
       "results": [
