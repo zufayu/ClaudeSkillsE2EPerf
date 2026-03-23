@@ -3,7 +3,19 @@
 > **Last updated:** 2026-03-23
 > **Data date:** 2026-03-21/22 (B200), 2026-03-23 (355X)
 > **Model:** DeepSeek-R1-0528 FP8, 8-GPU TP=8
-> **B200 framework:** TRT-LLM 1.2.0rc6 | **MI355X framework:** ATOM (613e57af)
+> **B200 framework:** TRT-LLM 1.2.0rc6（NVIDIA TensorRT-LLM，C++ runtime + speculative decoding）
+> **MI355X framework:** ATOM (commit 613e57af)（ROCm/ATOM，基于 vLLM 的 PyTorch serving 后端）
+
+## DAR 跨平台对比的方法论限制
+
+> **重要：** B200 (TRT-LLM) 与 355X (ATOM) 的 DAR 对比是**工程选型参考**，不代表同一投机算法下的理论接受率对比。以下因素导致两者 DAR 不严格可比：
+>
+> 1. **执行栈不同：** TRT-LLM 使用 C++ runtime + 自有调度器 + CUDA kernel；ATOM 基于 vLLM PyTorch 路径 + ROCm HIP kernel。调度策略、采样实现、投机解码的验证/拒绝逻辑均可能不同。
+> 2. **DAR 采集环境不同：** B200 DAR 来自 `trtllm-bench` 离线 LLM API（非 HTTP serving），每场景仅单一值；355X DAR 来自 ATOM CI 的 serving benchmark，per-concurrency 采集。
+> 3. **采样与确定性：** 两个 benchmark 均使用随机输入 token（SemiAnalysis InferenceX 方法论），但采样参数（greedy vs top-k/top-p）、random seed 未对齐。FP8 量化在不同硬件上的精度差异也可能影响 token 预测分布，进而影响 DAR。
+> 4. **MTP 配置：** 两者均为 MTP3（3 个 draft token），但投机模型的实现细节（draft head 架构、权重加载方式）可能不同。
+>
+> **结论限定：** 本报告的 DAR 对比反映的是**两个完整系统（硬件 + 框架 + 配置）在相同 workload 下的端到端接受率差异**。DAR 差距来自后端实现与调度的综合影响，不代表单一算法的优劣。
 
 ## 核心结论
 
@@ -95,16 +107,22 @@
 
 **规律：** B200 领先缩小的点（reasoning/summarize）恰好是 355X DAR 较高的场景（55-65%），与 B200 DAR（73-80%）差距较小。B200 领先扩大的点（chat 高并发）恰好是 355X DAR 最低的场景（48-49%），B200 DAR 优势最大。**DAR 差距与 TPS 领先变化高度一致。**
 
-### 2. DAR 数据来源与可信度
+### 2. DAR 数据来源与可比性
 
-**B200 DAR 来源：** `trtllm-bench throughput` 离线基准测试，200 requests，avg_concurrent=30。这是**离线环境**，不经过 HTTP serving 路径，scheduler 行为与实际 serving 不同。B200 有 3 个场景的 DAR 数据，但**每个场景仅单一值**（不区分并发）。
+> 跨平台 DAR 对比的方法论限制见文档开头。
 
-**355X DAR 来源：** ATOM CI benchmark run（#23408094038），覆盖全部 3 个场景 × 7 个并发级别 = **21 个 per-concurrency DAR 数据点**。从 CI job log 中的 `[MTP Stats]` 行提取。
+**B200 DAR 来源：** `trtllm-bench throughput` 离线基准测试（TRT-LLM C++ runtime，非 HTTP serving），200 requests，avg_concurrent=30。每场景仅单一值（不区分并发）。采样方式：随机输入 token，greedy/top-k 参数未记录。
 
-**可比性分析：**
-1. B200 DAR 为离线值，不代表 serving 实际行为；355X DAR 直接来自 serving benchmark，更贴近真实
-2. 355X per-concurrency DAR 波动仅 ±3%（同场景内），说明 DAR 主要由模型+场景决定，并发影响有限
-3. B200 每场景仅一个 DAR 值（离线 avg_conc≈30），缺少 per-concurrency 数据
+**355X DAR 来源：** ATOM CI benchmark run #23408094038（vLLM PyTorch runtime，HTTP serving 路径），覆盖 3 场景 × 7 并发 = **21 个数据点**。从 job log `[MTP Stats]` 累计行提取。采样方式：随机输入 token，参数由 ATOM CI 配置决定。
+
+**同平台内的可信度：**
+1. 355X per-concurrency DAR 波动仅 ±3%（同场景内），说明 DAR 主要由模型+场景决定，与并发关系不大
+2. B200 每场景仅一个离线值，无法验证是否随并发变化
+
+**跨平台对比的局限性：**
+1. 采集环境不同（离线 vs serving），不能排除环境差异对 DAR 的影响
+2. TRT-LLM 与 ATOM/vLLM 的投机解码实现（验证/拒绝逻辑、batch 管理）不同，DAR 差异可能部分来自框架实现而非硬件能力
+3. 本报告的 DAR 差距（如 chat: 80% vs 49%）反映的是完整系统差异，不能简单归因于"硬件更强"或"算法更优"
 
 **DAR 效率分析（实际 TPS 增益 / 理论最大增益）：**
 
@@ -152,7 +170,7 @@ Reasoning 场景 355X 几乎追平 B200。原因已确认：**355X reasoning DAR
 
 ## DAR 原始数据
 
-### B200（trtllm-bench 离线测试，200 requests，avg_conc≈30）
+### B200（TRT-LLM C++ runtime，trtllm-bench 离线测试，200 requests，avg_conc≈30）
 
 | 场景 | DAR avg | DAR p50 | Acc Len avg | Acc Len p50 |
 |------|---------|---------|-------------|-------------|
@@ -160,7 +178,7 @@ Reasoning 场景 355X 几乎追平 B200。原因已确认：**355X reasoning DAR
 | reasoning | 73.8% | 73.4% | 3.21 / 4 | 3.20 / 4 |
 | summarize | 72.9% | 73.7% | 3.19 / 4 | 3.21 / 4 |
 
-### 355X（ATOM CI benchmark run #23408094038，per-scenario per-concurrency）
+### 355X（ATOM/vLLM PyTorch runtime，CI serving benchmark #23408094038，per-scenario per-concurrency）
 
 | 场景 | Conc | DAR avg | avg_toks_fwd |
 |------|------|---------|-------------|
@@ -221,6 +239,7 @@ B200 DAR 来自 trtllm-bench 离线环境（每场景仅单一值），而 355X 
 
 | 日期 | 变更 |
 |------|------|
+| 2026-03-23 v5 | 增加跨平台 DAR 对比的方法论限制章节：明确 TRT-LLM (C++ runtime) vs ATOM (vLLM PyTorch runtime) 的执行栈差异、采集环境差异、采样/确定性问题。限定结论为工程选型参考，非严格算法对比 |
 | 2026-03-23 v4 | **355X per-scenario per-concurrency DAR 补全**：从 ATOM CI run #23408094038 提取全部 21 个 DAR 数据点。核心发现：reasoning DAR 65% 接近 B200 的 74%，解释了 reasoning TPS 接近的现象。重写全部 DAR 分析章节，消除"矛盾"结论 |
 | 2026-03-23 v3 | 修正关键错误：355X DAR 49% 并非全局值，而是仅 chat 1024/1024 c=128。重构 DAR 矛盾分析为 chat-only 同场景对比，标注 reasoning/summarize DAR 对比无效。重排优先级（P0→补全 355X 多场景 DAR，P1→B200 serving DAR） |
 | 2026-03-23 v2 | 重写分析：发现 DAR 与 TPS 增益的逻辑矛盾，B200 高 DAR 未转化为预期优势。增加 DAR 效率分析、B200 领先变化追踪。修正 import_results.py DAR 提取 bug |
