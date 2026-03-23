@@ -490,25 +490,61 @@ def main():
                         parts.append(f"DP-Attn={dp}")
                         print(f"  Applied config to {run_key}: {', '.join(parts)}")
 
-            # Inject AR into MTP results
+            # Inject AR into MTP results — match by (isl, osl) for per-scenario DAR
             if ar_map:
                 for run_key, run in runs.items():
                     if "-mtp" not in run_key:
                         continue
                     run_model = run.get("model", "")
-                    matching_ar = None
+
+                    # Build AR lookup with cascading specificity:
+                    #   1. Exact match: (isl, osl, conc)
+                    #   2. Scenario match: (isl, osl)
+                    #   3. Fallback: first matching model
+                    exact_ar = {}     # (isl, osl, conc) -> ar
+                    scenario_ar = {}  # (isl, osl) -> ar
+                    fallback_ar = None
                     for (model_name, isl, osl, conc), ar in ar_map.items():
                         if run_model in model_name and "MXFP4" not in model_name:
-                            matching_ar = ar
-                            break
-                    if not matching_ar:
-                        matching_ar = next(iter(ar_map.values()), None)
+                            exact_ar[(isl, osl, conc)] = ar
+                            scenario_ar[(isl, osl)] = ar
+                            if fallback_ar is None:
+                                fallback_ar = ar
 
-                    if matching_ar:
-                        for result in run["results"]:
-                            result.update(matching_ar)
-                        print(f"  Applied AR={matching_ar['dar_avg']:.4f} to all "
-                              f"{len(run['results'])} results for {run_key}")
+                    if not exact_ar and not scenario_ar and not fallback_ar:
+                        fallback_ar = next(iter(ar_map.values()), None)
+
+                    matched_exact = 0
+                    matched_scenario = 0
+                    fallen_back = 0
+                    for result in run["results"]:
+                        r_isl = result.get("isl")
+                        r_osl = result.get("osl")
+                        r_conc = result.get("conc")
+                        ar = (exact_ar.get((r_isl, r_osl, r_conc))
+                              or scenario_ar.get((r_isl, r_osl))
+                              or fallback_ar)
+                        if ar:
+                            result.update(ar)
+                            if (r_isl, r_osl, r_conc) in exact_ar:
+                                matched_exact += 1
+                            elif (r_isl, r_osl) in scenario_ar:
+                                matched_scenario += 1
+                            else:
+                                fallen_back += 1
+
+                    # Report per-scenario DAR values
+                    if scenario_ar:
+                        ar_details = ", ".join(
+                            f"{isl}/{osl}={ar['dar_avg']:.4f}"
+                            for (isl, osl), ar in sorted(scenario_ar.items())
+                        )
+                        print(f"  Applied per-scenario AR to {run_key}: {ar_details}"
+                              f" ({matched_exact} exact, {matched_scenario} scenario, "
+                              f"{fallen_back} fallback)")
+                    elif fallback_ar:
+                        print(f"  Applied AR={fallback_ar['dar_avg']:.4f} to all "
+                              f"{len(run['results'])} results for {run_key} (single value)")
 
         for run_key, run in runs.items():
             if args.dry_run:
