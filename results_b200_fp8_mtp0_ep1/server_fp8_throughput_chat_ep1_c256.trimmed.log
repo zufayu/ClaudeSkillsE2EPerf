@@ -1,18 +1,52 @@
-=== Trimmed: 15708 -> 22 lines ===
+=== Trimmed: 15782 -> 22 lines ===
 === Source: server_fp8_throughput_chat_ep1_c256.log ===
 
 ======================================================================
 REPRODUCE INFO (from result JSON)
 ======================================================================
+Docker Image: unknown-docker
+
+Server Command:
+  PYTHONNOUSERSITE=1 mpirun -n 1 --oversubscribe --allow-run-as-root trtllm-serve /home/models/models--DeepSeek-R1-0528 --port=8888 --trust_remote_code --backend=pytorch --max_seq_len=8192 --max_num_tokens=8192 --tp_size=8 --ep_size=1 --extra_llm_api_options=./results_b200_fp8_mtp0/config_fp8_throughput_chat_ep1_c256.yml
+
+Extra LLM API Config (YAML):
+  cuda_graph_config:
+      enable_padding: true
+      max_batch_size: 256
+  enable_attention_dp: false
+  print_iter_log: true
+  kv_cache_config:
+      dtype: fp8
+      free_gpu_memory_fraction: 0.7
+      enable_block_reuse: false
+  stream_interval: 10
+  moe_config:
+      backend: TRTLLM
+  batch_wait_timeout_iters: 40
+  batch_wait_max_tokens_ratio: 0.8
+  torch_compile_config:
+      capture_num_tokens: [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2304, 2560, 2816, 3072, 3328, 3584, 3840, 4096, 4352, 4608, 4864, 5120, 5376, 5632, 5888, 6144, 6400, 6656, 6912, 7168, 7424, 7680, 7936, 8192]
+      enable_piecewise_cuda_graph: true
+
+Benchmark Command:
+  benchmark_serving.py --model /home/models/models--DeepSeek-R1-0528 --port 8888 --backend openai --input-len 1024 --output-len 1024 --random-range-ratio 0.8 --num-prompts 2560 --max-concurrency 256 --num-warmups 8 --result-filename result_fp8_throughput_chat_ep1_c256 --result-dir ./results_b200_fp8_mtp0 --metadata max_model_len=8192 kv_cache_dtype=fp8 kv_cache_free_mem_fraction=0.7 tensor_parallel_size=8 ep_size=1 dp_attention=false moe_backend=TRTLLM mtp_layers=0 piecewise_cuda_graphs=true random_range_ratio=0.8
 
 Key Config:
   model_id: /home/models/models--DeepSeek-R1-0528
+  max_model_len: 8192
+  tensor_parallel_size: 8
+  ep_size: 1
+  dp_attention: false
+  moe_backend: TRTLLM
+  mtp_layers: 0
+  piecewise_cuda_graphs: true
+  kv_cache_free_mem_fraction: 0.7
   max_concurrency: 256
   num_prompts: 2560
 
-RESULT: OK - 2560/2560 completed, output_throughput=7707.6 tok/s
-  median_ttft_ms: 414.85199199814815
-  median_tpot_ms: 31.834719402106657
+RESULT: OK - 2560/2560 completed, output_throughput=7706.9 tok/s
+  median_ttft_ms: 405.37395200226456
+  median_tpot_ms: 31.823880656039993
 ======================================================================
 
 [SERVER RUNTIME]
@@ -111,7 +145,7 @@ RESULT: OK - 2560/2560 completed, output_throughput=7707.6 tok/s
 
 [ERRORS]
   You are using a model of type deepseek_v3 to instantiate a model of type . This is not supported for all configurations of models and can yield errors.
-  [03/17/2026-09:26:50] [TRT-LLM] [E] Failed to send object: None
+  [03/21/2026-11:21:53] [TRT-LLM] [E] Failed to send object: None
 
 [STATUS]
   Server startup: OK

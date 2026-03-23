@@ -13,3 +13,5 @@ moe_config:
 speculative_config:
     decoding_type: MTP
     num_nextn_predict_layers: 3
+return_perf_metrics: true
+perf_metrics_max_requests: 110

@@ -1,23 +1,52 @@
-=== Trimmed: 12775 -> 22 lines ===
+=== Trimmed: 12785 -> 22 lines ===
 === Source: server_fp8_throughput_summarize_ep1_c8.log ===
 
 ======================================================================
 REPRODUCE INFO (from result JSON)
 ======================================================================
+Docker Image: unknown-docker
+
+Server Command:
+  PYTHONNOUSERSITE=1 mpirun -n 1 --oversubscribe --allow-run-as-root trtllm-serve /home/models/models--DeepSeek-R1-0528 --port=8888 --trust_remote_code --backend=pytorch --max_seq_len=10240 --max_num_tokens=8320 --tp_size=8 --ep_size=1 --extra_llm_api_options=./results_b200_fp8_mtp0/config_fp8_throughput_summarize_ep1_c8.yml
+
+Extra LLM API Config (YAML):
+  cuda_graph_config:
+      enable_padding: true
+      max_batch_size: 8
+  enable_attention_dp: false
+  print_iter_log: true
+  kv_cache_config:
+      dtype: fp8
+      free_gpu_memory_fraction: 0.8
+      enable_block_reuse: false
+  stream_interval: 10
+  moe_config:
+      backend: TRTLLM
+
+Benchmark Command:
+  benchmark_serving.py --model /home/models/models--DeepSeek-R1-0528 --port 8888 --backend openai --input-len 8192 --output-len 1024 --random-range-ratio 0.8 --num-prompts 80 --max-concurrency 8 --num-warmups 8 --result-filename result_fp8_throughput_summarize_ep1_c8 --result-dir ./results_b200_fp8_mtp0 --metadata max_model_len=10240 kv_cache_dtype=fp8 kv_cache_free_mem_fraction=0.8 tensor_parallel_size=8 ep_size=1 dp_attention=false moe_backend=TRTLLM mtp_layers=0 piecewise_cuda_graphs=false random_range_ratio=0.8
 
 Key Config:
-  model_id: /home/models/models--DeepSeek-R1-0528/
+  model_id: /home/models/models--DeepSeek-R1-0528
+  max_model_len: 10240
+  tensor_parallel_size: 8
+  ep_size: 1
+  dp_attention: false
+  moe_backend: TRTLLM
+  mtp_layers: 0
+  piecewise_cuda_graphs: false
+  kv_cache_free_mem_fraction: 0.8
   max_concurrency: 8
   num_prompts: 80
 
-RESULT: OK - 80/80 completed, output_throughput=672.9 tok/s
-  median_ttft_ms: 251.16933201206848
-  median_tpot_ms: 11.416135480499308
+RESULT: OK - 80/80 completed, output_throughput=674.0 tok/s
+  median_ttft_ms: 251.31962646264583
+  median_tpot_ms: 11.370382405615384
 ======================================================================
 
 [SERVER RUNTIME]
   LLM Args:
-    model='/home/models/models--DeepSeek-R1-0528/'
+    model='/home/models/models--DeepSeek-R1-0528'
     tokenizer=None
     tokenizer_mode='auto'
     skip_tokenizer_init=False
@@ -53,12 +82,12 @@ RESULT: OK - 80/80 completed, output_throughput=672.9 tok/s
     speculative_config=None
     max_batch_size=2048
     max_input_len=1024
-    max_seq_len=9472
+    max_seq_len=10240
     max_beam_width=1
     max_num_tokens=8320
     gather_generation_logits=False
     num_postprocess_workers=0
-    postprocess_tokenizer_dir='/home/models/models--DeepSeek-R1-0528/'
+    postprocess_tokenizer_dir='/home/models/models--DeepSeek-R1-0528'
     reasoning_parser=None
     decoding_config=None
     mpi_session=None
@@ -100,7 +129,7 @@ RESULT: OK - 80/80 completed, output_throughput=672.9 tok/s
     disable_flashinfer_sampling=False
   Attention: AttentionRuntimeFeatures(chunked_prefill=False, cache_reuse=False, has_speculative_draft_tokens=False, chunk_size=8320, chunked_prefill_buffer_batch_size=4)
   Runtime: max_seq_len=8352, max_num_requests=2048, max_num_tokens=8320, max_batch_size=2048
-  Runtime: max_seq_len=9473, max_num_requests=2048, max_num_tokens=8320, max_batch_size=2048
+  Runtime: max_seq_len=10241, max_num_requests=2048, max_num_tokens=8320, max_batch_size=2048
 
 [MEMORY]
   Model weights (torch): 81.86 GiB
@@ -111,7 +140,7 @@ RESULT: OK - 80/80 completed, output_throughput=672.9 tok/s
 
 [ERRORS]
   You are using a model of type deepseek_v3 to instantiate a model of type . This is not supported for all configurations of models and can yield errors.
-  [03/19/2026-09:27:11] [TRT-LLM] [E] Failed to send object: None
+  [03/21/2026-18:53:19] [TRT-LLM] [E] Failed to send object: None
 
 [STATUS]
   Server startup: OK

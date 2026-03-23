@@ -1,0 +1,129 @@
+{
+    "engine": {
+        "model": "/home/models/models--DeepSeek-R1-0528",
+        "model_path": "/home/models/models--DeepSeek-R1-0528",
+        "engine_dir": "None",
+        "revision": null,
+        "version": "1.2",
+        "backend": "Pytorch",
+        "dtype": "bfloat16",
+        "kv_cache_dtype": "FP8",
+        "quantization": "FP8_BLOCK_SCALES"
+    },
+    "machine": {
+        "name": "NVIDIA B200",
+        "memory.total": 178.35107421875,
+        "clocks.mem": 3.996
+    },
+    "world_info": {
+        "tp_size": 8,
+        "pp_size": 1,
+        "ep_size": 1,
+        "world_size": 8,
+        "max_batch_size": 96,
+        "max_num_tokens": 8288,
+        "scheduling_policy": "GUARANTEED_NO_EVICT",
+        "kv_cache_percentage": 0.8,
+        "issue_rate": 4.72929874175e+17
+    },
+    "request_info": {
+        "num_requests": 200,
+        "avg_num_concurrent_requests": 30.66098889262966,
+        "avg_input_length": 8192.0,
+        "avg_output_length": 1024.0
+    },
+    "performance": {
+        "total_latency_ms": 102769.72722,
+        "avg_request_latency_ms": 15755.107323954999,
+        "request_throughput_req_s": 1.946098383348419,
+        "system_output_throughput_tok_s": 1992.804744548781,
+        "system_total_throughput_tok_s": 17935.242700939027,
+        "output_throughput_per_user_tok_s": 69.57830708469567,
+        "output_throughput_per_gpu_tok_s": 249.10059306859762,
+        "request_latency_percentiles_ms": {
+            "p50": 15109.429242,
+            "p90": 21837.654624,
+            "p95": 23097.154586999997,
+            "p99": 25523.469756,
+            "minimum": 6241.854163999999,
+            "maximum": 25928.318021,
+            "average": 15755.107323954999
+        }
+    },
+    "decoding_stats": {
+        "mode": "MTP",
+        "num_draft_tokens_percentiles": {
+            "p50": 960.0,
+            "p90": 1386.0,
+            "p95": 1470.0,
+            "p99": 1506.0,
+            "minimum": 777.0,
+            "maximum": 1509.0,
+            "average": 1005.54
+        },
+        "num_accepted_draft_tokens_percentiles": {
+            "p50": 705.0,
+            "p90": 761.0,
+            "p95": 762.0,
+            "p99": 765.0,
+            "minimum": 521.0,
+            "maximum": 765.0,
+            "average": 688.82
+        },
+        "draft_acceptance_rate_percentiles": {
+            "p50": 0.7366771159874608,
+            "p90": 0.9645120405576679,
+            "p95": 0.9694656488549618,
+            "p99": 0.9845559845559846,
+            "minimum": 0.3452617627567926,
+            "maximum": 0.9845559845559846,
+            "average": 0.728688902446048
+        },
+        "acceptance_length_percentiles": {
+            "p50": 3.2100313479623823,
+            "p90": 3.893536121673004,
+            "p95": 3.9083969465648853,
+            "p99": 3.9536679536679538,
+            "minimum": 2.0357852882703775,
+            "maximum": 3.9536679536679538,
+            "average": 3.186066707338144
+        }
+    },
+    "dataset": {
+        "isl_stats": {
+            "p50": 8192.0,
+            "p90": 8192.0,
+            "p95": 8192.0,
+            "p99": 8192.0,
+            "minimum": 8192.0,
+            "maximum": 8192.0,
+            "average": 8192.0
+        },
+        "osl_stats": {
+            "p50": 1024.0,
+            "p90": 1024.0,
+            "p95": 1024.0,
+            "p99": 1024.0,
+            "minimum": 1024.0,
+            "maximum": 1024.0,
+            "average": 1024.0
+        },
+        "seq_len_stats": {
+            "p50": 9216.0,
+            "p90": 9216.0,
+            "p95": 9216.0,
+            "p99": 9216.0,
+            "minimum": 9216.0,
+            "maximum": 9216.0,
+            "average": 9216.0
+        },
+        "num_requests": 200,
+        "dataset_path": "/home/ubuntu/zufa/ClaudeSkillsE2EPerf/results_b200_fp8_mtp3/dar_dataset_fp8_mtp3_ep1_summarize.jsonl",
+        "max_isl": 8192,
+        "max_osl": 1024,
+        "max_sequence_length": 9216,
+        "avg_isl": 8192,
+        "avg_osl": 1024,
+        "avg_sequence_length": 9216
+    }
+}

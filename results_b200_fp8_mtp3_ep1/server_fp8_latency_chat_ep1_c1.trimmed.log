@@ -1,10 +1,10 @@
-=== Trimmed: 13390 -> 25 lines ===
+=== Trimmed: 13350 -> 25 lines ===
 === Source: server_fp8_latency_chat_ep1_c1.log ===
 
 ======================================================================
 REPRODUCE INFO (from result JSON)
 ======================================================================
-Docker Image: nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post3
+Docker Image: unknown-docker
 
 Server Command:
   PYTHONNOUSERSITE=1 mpirun -n 1 --oversubscribe --allow-run-as-root trtllm-serve /home/models/models--DeepSeek-R1-0528 --port=8888 --trust_remote_code --backend=pytorch --max_seq_len=8192 --max_num_tokens=8192 --tp_size=8 --ep_size=1 --extra_llm_api_options=./results_b200_fp8_mtp3/config_fp8_latency_chat_ep1_c1.yml
@@ -25,6 +25,8 @@ Extra LLM API Config (YAML):
   speculative_config:
       decoding_type: MTP
       num_nextn_predict_layers: 3
+  return_perf_metrics: true
+  perf_metrics_max_requests: 110
 
 Benchmark Command:
   benchmark_serving.py --model /home/models/models--DeepSeek-R1-0528 --port 8888 --backend openai --input-len 1024 --output-len 1024 --random-range-ratio 0.8 --num-prompts 20 --max-concurrency 1 --num-warmups 8 --result-filename result_fp8_latency_chat_ep1_c1 --result-dir ./results_b200_fp8_mtp3 --metadata max_model_len=8192 kv_cache_dtype=fp8 kv_cache_free_mem_fraction=0.8 tensor_parallel_size=8 ep_size=1 dp_attention=false moe_backend=TRTLLM mtp_layers=3 piecewise_cuda_graphs=false random_range_ratio=0.8 --use-chat-template
@@ -42,9 +44,9 @@ Key Config:
   max_concurrency: 1
   num_prompts: 20
 
-RESULT: OK - 20/20 completed, output_throughput=231.8 tok/s
-  median_ttft_ms: 71.62680049077608
-  median_tpot_ms: 4.260756803526465
+RESULT: OK - 20/20 completed, output_throughput=231.5 tok/s
+  median_ttft_ms: 67.80186004471034
+  median_tpot_ms: 4.270222029874914
 ======================================================================
 
 [SERVER RUNTIME]
@@ -96,7 +98,7 @@ RESULT: OK - 20/20 completed, output_throughput=231.8 tok/s
     mpi_session=None
     otlp_traces_endpoint=None
     backend='pytorch'
-    return_perf_metrics=False
+    return_perf_metrics=True
     orchestrator_type=None
     env_overrides=None
     garbage_collection_gen0_threshold=20000
@@ -111,7 +113,7 @@ RESULT: OK - 20/20 completed, output_throughput=231.8 tok/s
     enable_iter_perf_stats=False
     enable_iter_req_stats=False
     print_iter_log=True
-    perf_metrics_max_requests=0
+    perf_metrics_max_requests=110
     batch_wait_timeout_ms=0
     batch_wait_timeout_iters=0
     batch_wait_max_tokens_ratio=0
@@ -143,10 +145,10 @@ RESULT: OK - 20/20 completed, output_throughput=231.8 tok/s
 
 [ERRORS]
   You are using a model of type deepseek_v3 to instantiate a model of type . This is not supported for all configurations of models and can yield errors.
-  [03/19/2026-12:32:42] [TRT-LLM] [E] Failed to send object: None
+  [03/21/2026-20:38:36] [TRT-LLM] [E] Failed to send object: None
 
 [WARNINGS]
-  [03/19/2026-12:20:50] [TRT-LLM] [RANK 0] [W] Falling back to greedy decoding for MTP. If you want to use non-greedy sampling, please set allow_advanced_sampling=True.
+  [03/21/2026-20:27:08] [TRT-LLM] [RANK 0] [W] Falling back to greedy decoding for MTP. If you want to use non-greedy sampling, please set allow_advanced_sampling=True.
 
 [STATUS]
   Server startup: OK

@@ -1,4 +1,4 @@
-=== Trimmed: 5917 -> 19 lines ===
+=== Trimmed: 5868 -> 19 lines ===
 === Source: server_fp8_throughput_summarize_ep8_c128_dp.log ===
 
 [SERVER RUNTIME]
@@ -7,14 +7,14 @@
 
 [ERRORS]
   You are using a model of type deepseek_v3 to instantiate a model of type . This is not supported for all configurations of models and can yield errors.
-  [03/19/2026-20:35:46] [TRT-LLM] [RANK 0] [E] Failed to initialize executor on rank 0: DeepGEMM only supports Hopper (SM90) architectures, but current device compute capability is 100. (../include/tensorrt_llm/deep_gemm/compiler.cuh:330)
-  [03/19/2026-20:35:46] [TRT-LLM] [RANK 3] [E] Failed to initialize executor on rank 3: DeepGEMM only supports Hopper (SM90) architectures, but current device compute capability is 100. (../include/tensorrt_llm/deep_gemm/compiler.cuh:330)
-  [03/19/2026-20:35:46] [TRT-LLM] [RANK 0] [E] Traceback (most recent call last):
+  [03/22/2026-04:54:28] [TRT-LLM] [RANK 5] [E] Failed to initialize executor on rank 5: DeepGEMM only supports Hopper (SM90) architectures, but current device compute capability is 100. (../include/tensorrt_llm/deep_gemm/compiler.cuh:330)
+  [03/22/2026-04:54:28] [TRT-LLM] [RANK 6] [E] Failed to initialize executor on rank 6: DeepGEMM only supports Hopper (SM90) architectures, but current device compute capability is 100. (../include/tensorrt_llm/deep_gemm/compiler.cuh:330)
+  [03/22/2026-04:54:28] [TRT-LLM] [RANK 2] [E] Failed to initialize executor on rank 2: DeepGEMM only supports Hopper (SM90) architectures, but current device compute capability is 100. (../include/tensorrt_llm/deep_gemm/compiler.cuh:330)
+  [03/22/2026-04:54:28] [TRT-LLM] [RANK 5] [E] Traceback (most recent call last):
   RuntimeError: DeepGEMM only supports Hopper (SM90) architectures, but current device compute capability is 100. (../include/tensorrt_llm/deep_gemm/compiler.cuh:330)
-  File "/usr/local/lib/python3.12/dist-package[03/19/2026-20:35:46] [TRT-LLM] [RANK 3] [E] Traceback (most recent call last):
-  File "/usr/local/l[03/19/2026-20:35:46] [TRT-LLM] [RANK 5] [E] Traceback (most recent call last):
-  [03/19/2026-20:35:46] [TRT-LLM] [E] Executor worker initialization error: Traceback (most recent call last):
-  [03/19/2026-20:35:46] [TRT-LLM] [RANK 6] [E] Failed to initialize executor on rank 6: DeepGEMM only supports Hopper (SM90) architectures, but current device compute capability is 100. (../include/tensorrt_llm/deep_gemm/compiler.cuh:330)
+  File "/usr/local/lib/python3.12/dist-package[03/22/2026-04:54:28] [TRT-LLM] [RANK 0] [E] Traceback (most recent call last):
+  40    [03/22/2026-04:54:28] [TRT-LLM] [RANK 2] [E] Traceback (most recent call last):
+  [03/22/2026-04:54:28] [TRT-LLM] [E] Executor worker initialization error: Traceback (most recent call last):
   The above exception was the direct cause of the following exception:
   Traceback (most recent call last):
   raise RuntimeError(
