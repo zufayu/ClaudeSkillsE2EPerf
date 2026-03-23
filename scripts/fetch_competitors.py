@@ -331,7 +331,7 @@ def convert_atom_to_runs(atom_data):
                 "conc": conc,
                 "scenario": scenario,
                 "config": f"{'mtp3-' if is_mtp else ''}throughput",
-                "ep_size": 0,
+                "ep_size": gpu_count,
                 "dp_attention": False,
                 "output_tps": metrics.get("output_tps", 0),
                 "total_tps": metrics.get("total_tps", 0),
