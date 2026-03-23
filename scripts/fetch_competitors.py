@@ -331,7 +331,7 @@ def convert_atom_to_runs(atom_data):
                 "conc": conc,
                 "scenario": scenario,
                 "config": f"{'mtp3-' if is_mtp else ''}throughput",
-                "ep_size": gpu_count,
+                "ep_size": 1,
                 "dp_attention": False,
                 "output_tps": metrics.get("output_tps", 0),
                 "total_tps": metrics.get("total_tps", 0),
@@ -344,7 +344,7 @@ def convert_atom_to_runs(atom_data):
             results.append(result)
 
         run_key = f"atom-mi355x-{model_clean.lower()}{mtp_tag}"
-        mtp_env_tag = f"mtp{m.group(1)}-ep{gpu_count}" if (is_mtp and m) else f"mtp0-ep{gpu_count}"
+        mtp_env_tag = f"mtp{m.group(1)}-ep1" if (is_mtp and m) else "mtp0-ep1"
         runs[run_key] = {
             "run_id": run_key,
             "platform": f"{gpu_count}×MI355X",
