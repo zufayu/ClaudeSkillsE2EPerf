@@ -331,12 +331,19 @@ function sourceHTML(run) {
 const REPO_BASE = 'https://github.com/zufayu/ClaudeSkillsE2EPerf/blob/main';
 
 function buildRepoFileLinks(d, run) {
+  // CI data has no local result files
+  if (run?.source === 'ci-nightly') return '';
   const envTag = d.env_tag || run?.env_tag;
   if (!envTag || !d.scenario || !d.config) return '';
-  // Map env_tag to results directory: mtp0-ep1 → results_b200_fp8_mtp0_ep1
-  const platform = (run?.platform || '').toLowerCase().replace(/[×x]/g, '');
+  // Map platform+quant+env_tag to results directory
+  const platform = (run?.platform || '').toLowerCase();
+  let platformDir;
+  if (platform.includes('b200')) platformDir = 'b200';
+  else if (platform.includes('h20')) platformDir = 'h20';
+  else if (platform.includes('mi355')) platformDir = 'mi355x';
+  else return '';
   const quant = (run?.quantization || 'fp8').toLowerCase();
-  const dirName = `results_b200_${quant}_${envTag.replace(/-/g, '_')}`;
+  const dirName = `results_${platformDir}_${quant}_${envTag.replace(/-/g, '_')}`;
   // Build file tag: fp8_throughput_chat_ep1_c4[_dp]
   const fileTag = `${quant}_${d.config}_${d.scenario}_ep${d.ep_size || 1}_c${d.conc}${d.dp_attention ? '_dp' : ''}`;
   const configUrl = `${REPO_BASE}/${dirName}/config_${fileTag}.yml`;
