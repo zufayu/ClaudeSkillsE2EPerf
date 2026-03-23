@@ -1,5 +1,5 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-03-23T08:47:34.802030",
+  "generated_at": "2026-03-23T09:20:01.816588",
   "runs": [
     {
       "run_id": "8xb200-fp8-20260321-mtp0-ep1",
@@ -2422,8 +2422,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 86.63,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
@@ -2449,8 +2447,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 102.9,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
@@ -2476,8 +2472,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 126.09,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
@@ -2503,8 +2497,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 172.89,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
@@ -2530,8 +2522,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 284.51,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
@@ -2557,8 +2547,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 328.97,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
@@ -2584,8 +2572,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 540.4,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
@@ -2611,8 +2597,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 369.78,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
@@ -2638,8 +2622,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 398.97,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
@@ -2665,8 +2647,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 526.3,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
@@ -2692,8 +2672,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 727.65,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
@@ -2719,8 +2697,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 1101.16,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
@@ -2746,8 +2722,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 1886.38,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
@@ -2773,8 +2747,6 @@ window.DASHBOARD_DATA = {
           "ttft_p50": 4584.88,
           "itl_p50": 0,
           "e2el_p50": 0,
-          "dar_avg": 0.4897,
-          "avg_toks_fwd": 2.47,
           "dar_accepted_tokens": 849106,
           "dar_total_draft_tokens": 1734000,
           "dar_distribution": {
