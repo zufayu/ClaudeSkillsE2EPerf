@@ -1,5 +1,5 @@
 {
-  "run_id": "8xb200-fp8-20260322",
+  "run_id": "8xb200-fp8-20260322-mtp3-ep1",
   "platform": "8\u00d7B200",
   "framework": "TRT-LLM 1.2.0rc6",
   "model": "DeepSeek-R1-0528",
@@ -996,5 +996,6 @@
       "acceptance_len_avg": 3.186066707338144,
       "acceptance_len_p50": 3.2100313479623823
     }
-  ]
+  ],
+  "env_tag": "mtp3-ep1"
 }

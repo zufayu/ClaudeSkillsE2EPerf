@@ -1,5 +1,5 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-03-23T08:16:02.171352",
+  "generated_at": "2026-03-23T08:47:34.802030",
   "runs": [
     {
       "run_id": "8xb200-fp8-20260321-mtp0-ep1",
@@ -1007,8 +1007,8 @@ window.DASHBOARD_DATA = {
       ]
     },
     {
-      "run_id": "8xb200-fp8-20260322",
-      "series_key": "8\u00d7B200 DeepSeek-R1-0528 FP8 (TRT-LLM)",
+      "run_id": "8xb200-fp8-20260322-mtp3-ep1",
+      "series_key": "8\u00d7B200 DeepSeek-R1-0528 FP8 (TRT-LLM) [mtp3-ep1]",
       "platform": "8\u00d7B200",
       "framework": "TRT-LLM 1.2.0rc6",
       "model": "DeepSeek-R1-0528",
@@ -1021,7 +1021,7 @@ window.DASHBOARD_DATA = {
       "date": "2026-03-22",
       "commit": "",
       "commit_url": "",
-      "env_tag": "",
+      "env_tag": "mtp3-ep1",
       "docker_image": "unknown-docker",
       "benchmark_cmd": "",
       "results": [
