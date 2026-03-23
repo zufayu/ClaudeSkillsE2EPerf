@@ -161,19 +161,62 @@ def _parse_mtp_stats(log_text):
     return result
 
 
-def fetch_atom_ar(commit_sha, token=None):
-    """Fetch acceptance rate from ATOM CI logs for MTP models.
+def _parse_launch_config(log_text):
+    """Extract TP/EP/DP config from CI job log.
 
-    Finds the benchmark workflow run matching commit_sha, downloads MTP job
-    logs, and parses [MTP Stats] for acceptance rate.
+    Parses the atom_test.sh launch command line for explicit flags.
+    ATOM defaults: ep_size=1 (unless --enable-expert-parallel), dp_size=1 (unless -dp N).
 
-    Returns dict mapping (model_name, isl, osl, conc) -> ar_dict.
+    Returns dict with tp_size, ep_size, dp_attention.
+    """
+    result = {}
+
+    for line in log_text.split("\n"):
+        if "atom_test.sh launch" in line:
+            # Extract the args portion after "atom_test.sh launch $model_path"
+            args_match = re.search(r"atom_test\.sh launch \S+\s+(.*)", line)
+            if args_match:
+                # Clean ANSI codes and whitespace
+                raw_args = re.sub(r"\x1b\[[0-9;]*m", "", args_match.group(1)).strip()
+                result["launch_args"] = raw_args
+
+            tp_match = re.search(r"-tp\s+(\d+)", line)
+            if tp_match:
+                result["tp_size"] = int(tp_match.group(1))
+
+            # EP: default 1, only >1 if --enable-expert-parallel
+            if "--enable-expert-parallel" in line:
+                result["ep_size"] = result.get("tp_size", 8)
+            else:
+                result["ep_size"] = 1
+
+            # DP: default 1, only >1 if -dp N / --data-parallel-size N
+            dp_match = re.search(r"(?:-dp|--data-parallel-size)\s+(\d+)", line)
+            if dp_match:
+                result["dp_attention"] = int(dp_match.group(1)) > 1
+            else:
+                result["dp_attention"] = False
+
+            break
+
+    return result
+
+
+def fetch_atom_ci_details(commit_sha, token=None):
+    """Fetch AR and launch config from ATOM CI logs.
+
+    Finds the benchmark workflow run matching commit_sha, downloads job
+    logs, and parses MTP Stats + launch config (TP/EP).
+
+    Returns (ar_map, config_map) where:
+      ar_map: {(model_name, isl, osl, conc): ar_dict}
+      config_map: {model_name: {tp_size, ep_size, dp_attention, ...}}
     """
     token = token or os.environ.get("GITHUB_TOKEN")
     if not token:
-        print("  SKIP: GITHUB_TOKEN not set, cannot fetch AR from CI logs",
+        print("  SKIP: GITHUB_TOKEN not set, cannot fetch from CI logs",
               file=sys.stderr)
-        return {}
+        return {}, {}
 
     # Find workflow run by commit SHA
     runs_url = (f"https://api.github.com/repos/{ATOM_REPO}/actions/workflows/"
@@ -182,7 +225,7 @@ def fetch_atom_ar(commit_sha, token=None):
         runs_data = _gh_api(runs_url, token)
     except (HTTPError, URLError) as e:
         print(f"  WARN: Failed to query CI runs: {e}", file=sys.stderr)
-        return {}
+        return {}, {}
 
     # Find a successful run
     run_id = None
@@ -208,7 +251,7 @@ def fetch_atom_ar(commit_sha, token=None):
 
     if not run_id:
         print(f"  WARN: No successful benchmark run found", file=sys.stderr)
-        return {}
+        return {}, {}
 
     # Get jobs for this run
     jobs_url = (f"https://api.github.com/repos/{ATOM_REPO}/actions/runs/"
@@ -217,18 +260,16 @@ def fetch_atom_ar(commit_sha, token=None):
         jobs_data = _gh_api(jobs_url, token)
     except (HTTPError, URLError) as e:
         print(f"  WARN: Failed to list jobs: {e}", file=sys.stderr)
-        return {}
+        return {}, {}
 
-    # Find MTP jobs and download their logs
     ar_map = {}
+    config_map = {}
     job_pattern = re.compile(
         r"^(.+?)\s+\(isl=(\d+)\s+osl=(\d+)\s+c=(\d+)\)$"
     )
 
     for job in jobs_data.get("jobs", []):
         name = job["name"]
-        if "MTP" not in name and "mtp" not in name:
-            continue
         if job.get("conclusion") != "success":
             continue
 
@@ -249,15 +290,31 @@ def fetch_atom_ar(commit_sha, token=None):
                   file=sys.stderr)
             continue
 
-        stats = _parse_mtp_stats(log_text)
-        if stats:
-            ar_map[(model_name, isl, osl, conc)] = stats
-            print(f"  AR [{model_name} {isl}/{osl} c={conc}]: "
-                  f"{stats['dar_avg']:.4f} ({stats['dar_avg']*100:.1f}%)")
-        else:
-            print(f"  WARN: No MTP Stats in log for {name}", file=sys.stderr)
+        # Extract launch config (TP/EP) - once per model variant
+        if model_name not in config_map:
+            cfg = _parse_launch_config(log_text)
+            if cfg:
+                config_map[model_name] = cfg
+                parts = []
+                if "tp_size" in cfg:
+                    parts.append(f"TP={cfg['tp_size']}")
+                if "ep_size" in cfg:
+                    parts.append(f"EP={cfg['ep_size']}")
+                if cfg.get("dp_attention"):
+                    parts.append("DP-Attn")
+                print(f"  Config [{model_name}]: {', '.join(parts)}")
 
-    return ar_map
+        # Extract MTP stats (AR) for MTP jobs only
+        if "MTP" in name or "mtp" in name:
+            stats = _parse_mtp_stats(log_text)
+            if stats:
+                ar_map[(model_name, isl, osl, conc)] = stats
+                print(f"  AR [{model_name} {isl}/{osl} c={conc}]: "
+                      f"{stats['dar_avg']:.4f} ({stats['dar_avg']*100:.1f}%)")
+            else:
+                print(f"  WARN: No MTP Stats in log for {name}", file=sys.stderr)
+
+    return ar_map, config_map
 
 
 def convert_atom_to_runs(atom_data):
@@ -325,17 +382,18 @@ def convert_atom_to_runs(atom_data):
 
             scenario = ISL_OSL_TO_SCENARIO.get((isl, osl), f"{isl}/{osl}")
 
+            output_tps = metrics.get("output_tps", 0)
             result = {
                 "isl": isl,
                 "osl": osl,
                 "conc": conc,
                 "scenario": scenario,
-                "config": f"{'mtp3-' if is_mtp else ''}throughput",
+                "config": None,
                 "ep_size": None,
-                "dp_attention": False,
-                "output_tps": metrics.get("output_tps", 0),
+                "dp_attention": None,
+                "output_tps": output_tps,
                 "total_tps": metrics.get("total_tps", 0),
-                "request_tps": 0,
+                "request_tps": round(output_tps / osl, 2) if osl else None,
                 "tpot_p50": metrics.get("tpot_p50", 0),
                 "ttft_p50": metrics.get("ttft_p50", 0),
                 "itl_p50": metrics.get("itl_p50", 0),
@@ -380,36 +438,77 @@ def main():
         KEEP_MODELS = {"DeepSeek-R1-0528"}
         runs = {k: v for k, v in runs.items() if v["model"] in KEEP_MODELS}
 
-        # Fetch acceptance rate from CI logs for MTP runs
-        mtp_runs = {k: v for k, v in runs.items() if "-mtp" in k}
-        if mtp_runs:
-            # Use commit SHA from any MTP run (they share the same CI run)
-            commit_sha = next(iter(mtp_runs.values())).get("commit", "")
-            if commit_sha:
-                print(f"\nFetching AR from CI logs (commit {commit_sha[:8]})...")
-                ar_map = fetch_atom_ar(commit_sha)
+        # Fetch AR + launch config from CI logs
+        commit_sha = next(iter(runs.values())).get("commit", "")
+        if commit_sha:
+            print(f"\nFetching CI details (commit {commit_sha[:8]})...")
+            ar_map, config_map = fetch_atom_ci_details(commit_sha)
 
-                # Inject AR into MTP results
-                if ar_map:
-                    for run_key, run in mtp_runs.items():
-                        # Find matching AR: prefer exact model match
-                        run_model = run.get("model", "")
-                        matching_ar = None
-                        for (model_name, isl, osl, conc), ar in ar_map.items():
-                            # Match "DeepSeek-R1-0528 MTP3" to run model "DeepSeek-R1-0528"
-                            if run_model in model_name and "MXFP4" not in model_name:
-                                matching_ar = ar
+            # Inject launch config (EP/TP) into all runs
+            if config_map:
+                for run_key, run in runs.items():
+                    # Find matching config by model name variant
+                    # CI job names: "DeepSeek-R1-0528 MTP3", "DeepSeek-R1-0528"
+                    run_model = run.get("model", "")
+                    is_mtp = "-mtp" in run_key
+                    # Try MTP variant first, then base model
+                    cfg = None
+                    for ci_name, c in config_map.items():
+                        if run_model in ci_name:
+                            if is_mtp and ("MTP" in ci_name or "mtp" in ci_name):
+                                cfg = c
                                 break
-                        if not matching_ar:
-                            # Fallback: use any available AR
-                            matching_ar = next(iter(ar_map.values()), None)
+                            elif not is_mtp and "MTP" not in ci_name and "mtp" not in ci_name:
+                                cfg = c
+                                break
+                    if cfg is None:
+                        # Fallback: any config with matching model
+                        for ci_name, c in config_map.items():
+                            if run_model in ci_name:
+                                cfg = c
+                                break
 
-                        if matching_ar:
-                            # AR is model-intrinsic, apply to all results
-                            for result in run["results"]:
-                                result.update(matching_ar)
-                            print(f"  Applied AR={matching_ar['dar_avg']:.4f} to all "
-                                  f"{len(run['results'])} results for {run_key}")
+                    if cfg:
+                        ep = cfg.get("ep_size")
+                        dp = cfg.get("dp_attention", False)
+                        tp = cfg.get("tp_size")
+                        launch_args = cfg.get("launch_args")
+                        for result in run["results"]:
+                            if ep is not None:
+                                result["ep_size"] = ep
+                            result["dp_attention"] = dp
+                            if launch_args:
+                                result["config"] = launch_args
+                        # Update env_tag with EP info
+                        if ep is not None:
+                            run["env_tag"] = f"{run['env_tag']}-ep{ep}"
+                        parts = []
+                        if tp is not None:
+                            parts.append(f"TP={tp}")
+                        if ep is not None:
+                            parts.append(f"EP={ep}")
+                        parts.append(f"DP-Attn={dp}")
+                        print(f"  Applied config to {run_key}: {', '.join(parts)}")
+
+            # Inject AR into MTP results
+            if ar_map:
+                for run_key, run in runs.items():
+                    if "-mtp" not in run_key:
+                        continue
+                    run_model = run.get("model", "")
+                    matching_ar = None
+                    for (model_name, isl, osl, conc), ar in ar_map.items():
+                        if run_model in model_name and "MXFP4" not in model_name:
+                            matching_ar = ar
+                            break
+                    if not matching_ar:
+                        matching_ar = next(iter(ar_map.values()), None)
+
+                    if matching_ar:
+                        for result in run["results"]:
+                            result.update(matching_ar)
+                        print(f"  Applied AR={matching_ar['dar_avg']:.4f} to all "
+                              f"{len(run['results'])} results for {run_key}")
 
         for run_key, run in runs.items():
             if args.dry_run:

@@ -359,8 +359,8 @@ function buildDetailHTML(d, run) {
   const items = [
     ['Config', d.config || '-'],
     ['EP Size', d.ep_size != null ? d.ep_size : '-'],
-    ['DP Attention', d.dp_attention ? 'Yes' : 'No'],
-    ['Request TPS', fmtNum(d.request_tps)],
+    ['DP Attention', d.dp_attention == null ? '-' : (d.dp_attention ? 'Yes' : 'No')],
+    ['Request TPS', d.request_tps == null ? '-' : fmtNum(d.request_tps)],
     ['Output TPS', fmtNum(d.output_tps)],
     ['TPOT p50', fmtNum(d.tpot_p50) + ' ms'],
     ['TPOT p99', d.tpot_p99 != null ? fmtNum(d.tpot_p99) + ' ms' : '-'],
