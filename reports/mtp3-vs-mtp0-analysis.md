@@ -7,11 +7,13 @@
 
 ## 核心结论
 
-**355X 从 MTP3 获得略大的相对 TPS 增益 (10/18 可比数据点胜出)，但差距显著缩小。** B200 的绝对 TPS 在所有可比点上仍然更高，且高并发下增益衰减在 chat/summarize 场景更慢。新增 reasoning c=64/128 数据后，B200 在此场景拿回更多分数，记分牌从 5:11 变为 8:10。
+1. **记分牌 8:10 (B200:355X)**，355X 在 18 个可比点中拿到更多相对增益。但这个指标意义有限——问题出在为什么 B200 的高 DAR 没有转化为预期优势。
+2. **B200 DAR (80%) 远高于 355X (49%)，但 MTP3 后 B200 的性能领先并未扩大，反而在多数点缩小。这与 DAR 数据矛盾。**
+3. 两种可能：(a) B200 的 DAR 是离线 trtllm-bench 测得，不代表 serving 时的实际 DAR；(b) 355X 的 DAR 是全局固定值，不代表各场景的实际 DAR。**下一步必须在 serving 路径下实测 DAR。**
 
 ## 数据表格
 
-> 以下表格由脚本自动生成：
+> 由 `compare_mtp.py` 生成：
 > ```bash
 > python scripts/compare_mtp.py --cross \
 >   --b200-mtp0 runs/8xb200-fp8-20260321-mtp0-ep1.json \
@@ -65,107 +67,126 @@
 |------|------|------|-------|
 | TPS gain winner | 8 | 10 | 18 |
 
-## 分析与思考
+## 分析
 
-### 1. 355X 增益更大的根因
+### 1. DAR 与 TPS 增益的矛盾（核心问题）
 
-355X 的 mtp0 baseline TPOT 普遍高于 B200（单 token 解码更慢），MTP3 加速后两者 TPOT 趋近，因此 355X 的相对增益更大。
+**现象：** B200 DAR (80%) 远高于 355X (49%)，理论上 B200 从 MTP3 获得的加速应该更大。但实际数据显示 355X 在多数点的相对增益反而更高。
 
-**关键证据 — reasoning c=32:**
-- B200: TPOT_p50 15.19ms → 9.34ms (mtp3)
-- 355X: TPOT_p50 17.52ms → 9.58ms (mtp3)
-- 两者 mtp3 后 TPOT 几乎相同（9.34 vs 9.58），但 355X 起点更高，所以增益 +80.0% > B200 +59.3%
+**量化矛盾：**
 
-但差距在缩小：新数据中 B200 在更多数据点上胜出（8 vs 10），旧版是 5 vs 11。
+B200 每步有效 token = 3.41 (acceptance_len)，355X = 2.47 (avg_toks_fwd)。如果两者 MTP 执行开销相同，B200 的 MTP3 加速应比 355X 多 38% (3.41/2.47)。即：如果 MTP0 下 B200 领先 355X 20%，MTP3 下应领先 ~58%。
 
-### 2. 高并发下增益衰减差异
+实际数据完全相反：
 
-**重要修正：** 旧版分析称"355X c=64 chat MTP 几乎失效 (+5.4%)"，新数据修正后为 +16.1%。355X 高并发增益衰减仍然存在但不如此前认为的严重，且**此现象是场景相关的**。
+| 场景 | 并发 | B200 领先 (MTP0) | B200 领先 (MTP3) | 领先变化 |
+|------|------|-----------------|-----------------|---------|
+| reasoning | c=32 | +15.3% | +2.1% | -13.2% |
+| reasoning | c=128 | +5.4% | +1.8% | -3.6% |
+| summarize | c=64 | +18.7% | +9.7% | -9.1% |
+| chat | c=16 | +25.0% | +16.8% | -8.2% |
 
-**Chat 场景 — 355X 衰减明显：**
-- c=4: B200 +84.1% vs 355X +85.4% → 几乎持平
-- c=64: B200 +42.2% vs 355X +16.1% → B200 大幅领先
-- c=128: B200 +33.6% vs 355X +23.0% → B200 领先
+**在 18 个可比点中，10 个点 B200 的领先幅度在开启 MTP3 后反而缩小。** 如果 B200 DAR 真的是 80%，这在逻辑上不可能发生（除非 355X 的 DAR 远高于报告值 49%）。
 
-**Reasoning 场景 — 衰减几乎不存在：**
-- c=64: B200 +63.4% vs 355X +63.2% → 几乎相同！
-- c=128: B200 +58.4% vs 355X +64.0% → 355X 反而在高并发领先
+### 2. DAR 数据的可信度分析
 
-**关键洞察：** 高并发 MTP 增益衰减是场景相关的，主要影响 chat 和 summarize（短输出/prefill 重的场景），reasoning（长输出）场景不受影响。这表明衰减可能与 decode 步数占比有关——decode 步数越多，MTP speculative 的并行度优势越能覆盖高并发带来的 overhead。
+**B200 DAR 来源：** `trtllm-bench throughput` 离线基准测试，200 requests，avg_concurrent=30，固定 ISL/OSL=1024/1024。这是**离线环境**，不经过 HTTP serving 路径，scheduler 行为与实际 serving 不同。
 
-### 3. Reasoning 是 MTP 最佳场景
+**355X DAR 来源：** ATOM CI 的 MTP benchmark，全局单一值 49.0%。不区分场景、不区分并发。
 
-两个平台在 reasoning (1K/8K) 上的 MTP3 增益都最高（58-145%），远超 chat (16-100%) 和 summarize (12-127%)。
+**两个 DAR 的不可比性：**
+1. B200 DAR 在离线 batch 环境测得，验证/拒绝的动态行为可能与 serving 不同
+2. 355X DAR 是全局值，可能是所有场景的平均——reasoning 场景（长 output、重复 pattern 多）的 DAR 可能远高于 49%
+3. B200 DAR 80% 但实际 TPS 增益仅 30-60%（理论应 241%），说明**即使 DAR 数据正确，高并发下 MTP 的执行效率也远低于理论值**
 
-**原因：** output_len=8192 意味着 decode 步数多（~8K 步），MTP speculative decoding 有更多机会发挥。而 summarize 的 decode 只有 ~1K 步，prefill (8K tokens) 占比大，MTP 对 prefill 阶段无加速作用。
+**DAR 效率分析（实际增益 / 理论最大增益）：**
 
-### 4. B200 绝对性能始终领先
+| 场景 | 并发 | B200 效率 | 355X 效率 |
+|------|------|----------|----------|
+| chat | c=4 | 35% | 58% |
+| reasoning | c=4 | 53% | 69% |
+| reasoning | c=32 | 27% | 54% |
+| summarize | c=128 | 6% | 13% |
 
-虽然 355X 增益更大，但 B200 的 mtp3 绝对 TPS 在所有可比点上都更高：
+355X 的 DAR 利用效率始终高于 B200。要么 B200 serving 时的实际 DAR 远低于离线测的 80%，要么 B200 的 MTP 执行有额外 overhead 未被捕获。
 
-| 场景 | Conc | B200 mtp3 TPS | 355X mtp3 TPS | B200 领先 |
-|------|------|--------------|--------------|----------|
-| reasoning | 128 | 7868 | 7730 | +1.8% |
-| chat | 128 | 6944 | 5504 | +26.2% |
-| summarize | 128 | 2817 | 2646 | +6.5% |
-| reasoning | 32 | 3275 | 3208 | +2.1% |
+### 3. 高并发增益衰减的场景差异
 
-reasoning c=128 和 c=32 是最接近打平的点 — 355X MTP3 在 reasoning 场景表现最佳，几乎追平 B200。
+**Chat/Summarize（短 output）：** 355X 高并发增益衰减明显，B200 衰减更慢。
+- chat c=64: B200 +42.2% vs 355X +16.1%
 
-### 5. DAR 数据分析
+**Reasoning（长 output）：** 两者衰减程度几乎相同。
+- reasoning c=64: B200 +63.4% vs 355X +63.2%
+- reasoning c=128: B200 +58.4% vs 355X +64.0%
 
-#### B200 DAR（trtllm-bench 实测）
+**解释：** Reasoning 的 decode 步数约 8K 步，MTP speculative 的加速效果能充分摊薄高并发带来的 scheduling overhead。Chat/Summarize 只有 ~1K 步 decode，overhead 占比更大。
 
-B200 DAR 来自 `collect_dar()` via trtllm-bench（独立 LLM API，非 serving），按场景不同：
+### 4. B200 绝对性能领先幅度
 
-| 场景 | DAR avg | DAR p50 | Acceptance Len avg | Acceptance Len p50 |
-|------|---------|---------|--------------------|--------------------|
+MTP3 后 B200 仍在所有可比点领先，但 reasoning 场景的领先幅度极小：
+
+| 场景 | 并发 | B200 mtp3 | 355X mtp3 | B200 领先 |
+|------|------|----------|----------|----------|
+| reasoning | c=128 | 7868 | 7730 | +1.8% |
+| reasoning | c=32 | 3275 | 3208 | +2.1% |
+| chat | c=128 | 6944 | 5504 | +26.2% |
+| summarize | c=128 | 2817 | 2646 | +6.5% |
+
+Reasoning 场景 355X 几乎追平 B200 — 这与 "B200 DAR 80% vs 355X 49%" 的巨大差距不匹配。
+
+## DAR 原始数据
+
+### B200（trtllm-bench 离线测试，200 requests，avg_conc≈30）
+
+| 场景 | DAR avg | DAR p50 | Acc Len avg | Acc Len p50 |
+|------|---------|---------|-------------|-------------|
 | chat | 80.2% | 83.2% | 3.41 / 4 | 3.49 / 4 |
 | reasoning | 73.8% | 73.4% | 3.21 / 4 | 3.20 / 4 |
 | summarize | 72.9% | 73.7% | 3.19 / 4 | 3.21 / 4 |
 
-> 注：B200 MTP3 的 acceptance length 上限是 4（每步 speculative 3 个 draft token + 1 个验证 token），不同于 355X 的上限 3。
-
-#### 355X DAR（ATOM CI MTP benchmark）
-
-355X DAR 来自 ATOM CI 的 MTP benchmark 运行结果（全局值，不按场景区分）：
+### 355X（ATOM CI MTP benchmark，全局值）
 
 | 指标 | 值 |
 |------|-----|
-| DAR (平均 acceptance rate) | 49.0% (`dar_avg=0.4897`) |
-| 平均每次 forward pass 接受 tokens | 2.47 / 3 (`avg_toks_fwd=2.47`) |
+| DAR avg | 49.0% |
+| avg_toks_fwd | 2.47 / 3 |
 
-**DAR 分布（每次 forward pass 接受的 speculative token 数）：**
-| 接受数 | 比例 |
-|--------|------|
-| 0 (全部拒绝) | 22.5% |
-| 1 | 32.9% |
-| 2 | 19.9% |
-| 3 (全部接受) | 24.7% |
+DAR 分布（0/1/2/3 accepted）：22.5% / 32.9% / 19.9% / 24.7%
 
-#### DAR 对比分析
+## 下一步行动
 
-**B200 DAR 显著高于 355X** — B200 平均 73-80% vs 355X 49%。这意味着 B200 的 speculative tokens 被接受的比例远高于 355X，每步 forward pass 有效解码更多 tokens。
+### P0：实测 serving 路径下的 DAR
 
-这与 TPS 增益数据一致：B200 的 MTP3 绝对 TPS 始终更高，部分原因是其更高的 draft acceptance rate 使得 speculative decoding 效率更高。
+当前 DAR 数据不可信，因为：
+- B200 DAR 来自 trtllm-bench 离线环境，不代表 HTTP serving 时的实际行为
+- 355X DAR 是 CI 报告的全局值，不区分场景/并发
 
-**注意事项：**
-- B200 DAR 是 per-scenario 的（trtllm-bench 分别测试），355X DAR 是全局单一值（ATOM CI 报告）
-- 355X DAR 跨所有并发级别完全相同（CI 报告全局值，非 per-concurrency）
-- 两者的 MTP 层数和 acceptance length 上限不同（B200: max 4, 355X: max 3），不宜直接比较 acceptance length 绝对值
+**具体行动：** 在 B200 和 355X 的 serving 运行中，通过 `/perf_metrics` 或 server log 提取每个并发级别下的实时 DAR。如果 serving DAR 与离线 DAR 不一致，则当前报告中所有基于 DAR 的分析需要修正。
+
+### P1：验证 DAR 是否随并发变化
+
+理论上，高并发时 batch 变大，MTP 的 draft token 验证效率可能下降（KV cache 压力、attention 计算量增大）。如果 B200 serving DAR 在高并发时大幅低于离线测的 80%，就能解释为什么高 DAR 没有转化为高 TPS 增益。
+
+### P2：优化方向
+
+根据当前数据的一个确定性结论：**两个平台都没有充分利用 MTP 的理论加速空间**（B200 效率 6-53%，355X 效率 11-69%）。最大的优化空间在于：
+1. 降低 MTP step 的 overhead（scheduling、KV cache 管理）
+2. 提高高并发场景下的 DAR 维持能力
+3. 重点关注 chat/summarize 场景的高并发衰减
 
 ## 待验证问题
 
-- [x] 355X 高并发 MTP 增益衰减 — 部分解答：主要影响 chat/summarize，reasoning 场景不受影响
-- [x] B200 c=1 单流场景 355X 没有数据 — 仍无 355X c=1 数据（CI 从 c=4 起步）
-- [x] DAR 数据 — 355X 49.0%，B200 73-80%（按场景），B200 显著更高
-- [ ] EP>1 配置下 MTP 收益差异（B200 EP=8 MTP3 数据已有：`8xb200-fp8-20260322-mtp3-ep8.json`，但 EP=8 MTP0 数据缺失）
-- [ ] 355X 不同并发下的实际 DAR 是否变化（当前 CI 只报告全局值）
-- [ ] DAR 差异（B200 80% vs 355X 49%）的根因分析：模型精度差异？MTP 实现差异？
+- [x] 355X 高并发 MTP 增益衰减 — 场景相关：chat/summarize 衰减明显，reasoning 不受影响
+- [x] DAR 数据 — 已收集但存在可信度问题（离线 vs serving）
+- [ ] **P0: B200 serving 时的实际 DAR**（当前 80% 来自离线 trtllm-bench，与 TPS 数据矛盾）
+- [ ] **P0: 355X per-scenario DAR**（当前 49% 是全局值，不区分场景）
+- [ ] P1: DAR 是否随并发级别变化
+- [ ] EP>1 配置下 MTP 收益差异（B200 EP=8 MTP3 有数据，EP=8 MTP0 缺失）
 
 ## 迭代日志
 
 | 日期 | 变更 |
 |------|------|
-| 2026-03-23 | 数据更新：355X 数据修正（EP/config/request_tps），新增 reasoning c=64/128/256。修复 import_results.py DAR 提取 bug（filename parsing + key name），B200 DAR 数据补全（chat 80.2%, reasoning 73.8%, summarize 72.9%），355X DAR 49.0%。记分牌从 5:11 变为 8:10 |
+| 2026-03-23 v2 | 重写分析：发现 DAR 与 TPS 增益的逻辑矛盾，B200 高 DAR 未转化为预期优势。增加 DAR 效率分析、B200 领先变化追踪。修正 import_results.py DAR 提取 bug |
+| 2026-03-23 v1 | 数据更新：355X 数据修正，新增 reasoning c=64/128/256，DAR 数据。记分牌从 5:11 变为 8:10 |
 | 2026-03-20 | 初版分析，基于 2026-03-19 数据，16 个可比数据点 |
