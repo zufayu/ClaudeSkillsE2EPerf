@@ -8,6 +8,10 @@ Usage:
     python scripts/fetch_competitors.py
     python scripts/fetch_competitors.py --output-dir runs/
     python scripts/fetch_competitors.py --source atom --dry-run
+
+Environment variables:
+    GITHUB_TOKEN    GitHub PAT with repo scope + SSO authorized for ROCm org.
+                    Required for fetching MTP acceptance rate from CI logs.
 """
 
 import argparse
@@ -18,8 +22,8 @@ import sys
 from datetime import datetime
 
 try:
-    from urllib.request import urlopen, Request
-    from urllib.error import URLError
+    from urllib.request import urlopen, Request, HTTPRedirectHandler, build_opener
+    from urllib.error import URLError, HTTPError
 except ImportError:
     print("ERROR: urllib required", file=sys.stderr)
     sys.exit(1)
@@ -84,6 +88,176 @@ ISL_OSL_TO_SCENARIO = {
     (1024, 8192): "reasoning",
     (8192, 1024): "summarize",
 }
+
+
+ATOM_REPO = "ROCm/ATOM"
+ATOM_BENCHMARK_WORKFLOW_ID = 226260402
+
+
+class _StripAuthRedirectHandler(HTTPRedirectHandler):
+    """Follow redirects but strip Authorization header (Azure Blob rejects it)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return Request(newurl, headers={"User-Agent": "ClaudeSkillsE2EPerf/1.0"})
+
+
+def _gh_api(url, token):
+    """Make an authenticated GitHub API request, returns parsed JSON or raw bytes."""
+    req = Request(url, headers={
+        "User-Agent": "ClaudeSkillsE2EPerf/1.0",
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json",
+    })
+    opener = build_opener(_StripAuthRedirectHandler)
+    resp = opener.open(req, timeout=60)
+    ct = resp.headers.get("Content-Type", "")
+    data = resp.read()
+    if "json" in ct:
+        return json.loads(data)
+    return data.decode("utf-8", errors="replace")
+
+
+def _parse_mtp_stats(log_text):
+    """Extract final cumulative MTP Stats from a CI job log.
+
+    Returns dict with dar_avg, avg_toks_fwd, accepted_distribution or None.
+    """
+    # Find all cumulative (non-Interval) MTP Stats lines
+    cumulative_lines = [
+        line for line in log_text.split("\n")
+        if "[MTP Stats" in line and "Interval" not in line
+    ]
+    if not cumulative_lines:
+        return None
+
+    last = cumulative_lines[-1]
+
+    # Parse: Average toks/fwd: 2.68, Accepted/Total Draft tokens: 893967/1596000,
+    #        Acceptance rate: 56.01%, Accepted tokens distribution: {0: '19.45%', ...}
+    ar_match = re.search(r"Acceptance rate:\s*([\d.]+)%", last)
+    toks_match = re.search(r"Average toks/fwd:\s*([\d.]+)", last)
+    draft_match = re.search(r"Accepted/Total Draft tokens:\s*(\d+)/(\d+)", last)
+    dist_match = re.search(r"Accepted tokens distribution:\s*\{(.+?)\}", last)
+
+    if not ar_match:
+        return None
+
+    result = {
+        "dar_avg": round(float(ar_match.group(1)) / 100, 4),  # Convert % to fraction
+    }
+    if toks_match:
+        result["avg_toks_fwd"] = round(float(toks_match.group(1)), 2)
+    if draft_match:
+        result["dar_accepted_tokens"] = int(draft_match.group(1))
+        result["dar_total_draft_tokens"] = int(draft_match.group(2))
+    if dist_match:
+        # Parse {0: '19.45%', 1: '27.48%', ...}
+        dist = {}
+        for m in re.finditer(r"(\d+):\s*'([\d.]+)%'", dist_match.group(1)):
+            dist[int(m.group(1))] = round(float(m.group(2)) / 100, 4)
+        result["dar_distribution"] = dist
+
+    result["dar_source"] = "atom-ci-log"
+    return result
+
+
+def fetch_atom_ar(commit_sha, token=None):
+    """Fetch acceptance rate from ATOM CI logs for MTP models.
+
+    Finds the benchmark workflow run matching commit_sha, downloads MTP job
+    logs, and parses [MTP Stats] for acceptance rate.
+
+    Returns dict mapping (model_name, isl, osl, conc) -> ar_dict.
+    """
+    token = token or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        print("  SKIP: GITHUB_TOKEN not set, cannot fetch AR from CI logs",
+              file=sys.stderr)
+        return {}
+
+    # Find workflow run by commit SHA
+    runs_url = (f"https://api.github.com/repos/{ATOM_REPO}/actions/workflows/"
+                f"{ATOM_BENCHMARK_WORKFLOW_ID}/runs?head_sha={commit_sha}&per_page=5")
+    try:
+        runs_data = _gh_api(runs_url, token)
+    except (HTTPError, URLError) as e:
+        print(f"  WARN: Failed to query CI runs: {e}", file=sys.stderr)
+        return {}
+
+    # Find a successful run
+    run_id = None
+    for r in runs_data.get("workflow_runs", []):
+        if r.get("conclusion") == "success":
+            run_id = r["id"]
+            break
+
+    if not run_id:
+        # Fallback: find latest successful run (commit may not match exactly)
+        fallback_url = (f"https://api.github.com/repos/{ATOM_REPO}/actions/workflows/"
+                        f"{ATOM_BENCHMARK_WORKFLOW_ID}/runs?status=completed&per_page=10")
+        try:
+            fallback_data = _gh_api(fallback_url, token)
+            for r in fallback_data.get("workflow_runs", []):
+                if r.get("conclusion") == "success":
+                    run_id = r["id"]
+                    print(f"  NOTE: No run for commit {commit_sha[:8]}, "
+                          f"using latest successful run {run_id}")
+                    break
+        except (HTTPError, URLError):
+            pass
+
+    if not run_id:
+        print(f"  WARN: No successful benchmark run found", file=sys.stderr)
+        return {}
+
+    # Get jobs for this run
+    jobs_url = (f"https://api.github.com/repos/{ATOM_REPO}/actions/runs/"
+                f"{run_id}/jobs?per_page=100")
+    try:
+        jobs_data = _gh_api(jobs_url, token)
+    except (HTTPError, URLError) as e:
+        print(f"  WARN: Failed to list jobs: {e}", file=sys.stderr)
+        return {}
+
+    # Find MTP jobs and download their logs
+    ar_map = {}
+    job_pattern = re.compile(
+        r"^(.+?)\s+\(isl=(\d+)\s+osl=(\d+)\s+c=(\d+)\)$"
+    )
+
+    for job in jobs_data.get("jobs", []):
+        name = job["name"]
+        if "MTP" not in name and "mtp" not in name:
+            continue
+        if job.get("conclusion") != "success":
+            continue
+
+        m = job_pattern.match(name)
+        if not m:
+            continue
+
+        model_name = m.group(1).strip()
+        isl, osl, conc = int(m.group(2)), int(m.group(3)), int(m.group(4))
+
+        # Download job log
+        log_url = (f"https://api.github.com/repos/{ATOM_REPO}/actions/jobs/"
+                   f"{job['id']}/logs")
+        try:
+            log_text = _gh_api(log_url, token)
+        except (HTTPError, URLError) as e:
+            print(f"  WARN: Failed to download log for {name}: {e}",
+                  file=sys.stderr)
+            continue
+
+        stats = _parse_mtp_stats(log_text)
+        if stats:
+            ar_map[(model_name, isl, osl, conc)] = stats
+            print(f"  AR [{model_name} {isl}/{osl} c={conc}]: "
+                  f"{stats['dar_avg']:.4f} ({stats['dar_avg']*100:.1f}%)")
+        else:
+            print(f"  WARN: No MTP Stats in log for {name}", file=sys.stderr)
+
+    return ar_map
 
 
 def convert_atom_to_runs(atom_data):
@@ -206,6 +380,37 @@ def main():
         KEEP_MODELS = {"DeepSeek-R1-0528"}
         runs = {k: v for k, v in runs.items() if v["model"] in KEEP_MODELS}
 
+        # Fetch acceptance rate from CI logs for MTP runs
+        mtp_runs = {k: v for k, v in runs.items() if "-mtp" in k}
+        if mtp_runs:
+            # Use commit SHA from any MTP run (they share the same CI run)
+            commit_sha = next(iter(mtp_runs.values())).get("commit", "")
+            if commit_sha:
+                print(f"\nFetching AR from CI logs (commit {commit_sha[:8]})...")
+                ar_map = fetch_atom_ar(commit_sha)
+
+                # Inject AR into MTP results
+                if ar_map:
+                    for run_key, run in mtp_runs.items():
+                        # Find matching AR: prefer exact model match
+                        run_model = run.get("model", "")
+                        matching_ar = None
+                        for (model_name, isl, osl, conc), ar in ar_map.items():
+                            # Match "DeepSeek-R1-0528 MTP3" to run model "DeepSeek-R1-0528"
+                            if run_model in model_name and "MXFP4" not in model_name:
+                                matching_ar = ar
+                                break
+                        if not matching_ar:
+                            # Fallback: use any available AR
+                            matching_ar = next(iter(ar_map.values()), None)
+
+                        if matching_ar:
+                            # AR is model-intrinsic, apply to all results
+                            for result in run["results"]:
+                                result.update(matching_ar)
+                            print(f"  Applied AR={matching_ar['dar_avg']:.4f} to all "
+                                  f"{len(run['results'])} results for {run_key}")
+
         for run_key, run in runs.items():
             if args.dry_run:
                 print(f"\n=== {run_key} ===")
@@ -216,7 +421,8 @@ def main():
                 print(f"  Date:         {run['date']}")
                 print(f"  Data points:  {len(run['results'])}")
                 for r in run["results"][:3]:
-                    print(f"    {r['scenario']} c={r['conc']}: {r['output_tps']:.1f} tok/s, TPOT={r['tpot_p50']:.1f}ms")
+                    ar_str = f", AR={r['dar_avg']:.1%}" if "dar_avg" in r else ""
+                    print(f"    {r['scenario']} c={r['conc']}: {r['output_tps']:.1f} tok/s, TPOT={r['tpot_p50']:.1f}ms{ar_str}")
                 if len(run["results"]) > 3:
                     print(f"    ... and {len(run['results']) - 3} more")
             else:
