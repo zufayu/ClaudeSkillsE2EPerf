@@ -1,5 +1,5 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-03-23T07:51:17.962014",
+  "generated_at": "2026-03-23T08:16:02.171352",
   "runs": [
     {
       "run_id": "8xb200-fp8-20260321-mtp0-ep1",
@@ -1007,8 +1007,8 @@ window.DASHBOARD_DATA = {
       ]
     },
     {
-      "run_id": "8xb200-fp8-20260322-mtp3-ep1",
-      "series_key": "8\u00d7B200 DeepSeek-R1-0528 FP8 (TRT-LLM) [mtp3-ep1]",
+      "run_id": "8xb200-fp8-20260322",
+      "series_key": "8\u00d7B200 DeepSeek-R1-0528 FP8 (TRT-LLM)",
       "platform": "8\u00d7B200",
       "framework": "TRT-LLM 1.2.0rc6",
       "model": "DeepSeek-R1-0528",
@@ -1021,7 +1021,7 @@ window.DASHBOARD_DATA = {
       "date": "2026-03-22",
       "commit": "",
       "commit_url": "",
-      "env_tag": "mtp3-ep1",
+      "env_tag": "",
       "docker_image": "unknown-docker",
       "benchmark_cmd": "",
       "results": [
@@ -1064,7 +1064,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "false"
-          }
+          },
+          "dar_avg": 0.8019896741987088,
+          "dar_p50": 0.8316268486916951,
+          "dar_p90": 0.9547169811320755,
+          "dar_p99": 0.9794871794871794,
+          "acceptance_len_avg": 3.4059690225961265,
+          "acceptance_len_p50": 3.4948805460750854
         },
         {
           "isl": 1024,
@@ -1105,7 +1111,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "true"
-          }
+          },
+          "dar_avg": 0.8019896741987088,
+          "dar_p50": 0.8316268486916951,
+          "dar_p90": 0.9547169811320755,
+          "dar_p99": 0.9794871794871794,
+          "acceptance_len_avg": 3.4059690225961265,
+          "acceptance_len_p50": 3.4948805460750854
         },
         {
           "isl": 1024,
@@ -1146,7 +1158,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "true"
-          }
+          },
+          "dar_avg": 0.8019896741987088,
+          "dar_p50": 0.8316268486916951,
+          "dar_p90": 0.9547169811320755,
+          "dar_p99": 0.9794871794871794,
+          "acceptance_len_avg": 3.4059690225961265,
+          "acceptance_len_p50": 3.4948805460750854
         },
         {
           "isl": 1024,
@@ -1187,7 +1205,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "true"
-          }
+          },
+          "dar_avg": 0.8019896741987088,
+          "dar_p50": 0.8316268486916951,
+          "dar_p90": 0.9547169811320755,
+          "dar_p99": 0.9794871794871794,
+          "acceptance_len_avg": 3.4059690225961265,
+          "acceptance_len_p50": 3.4948805460750854
         },
         {
           "isl": 1024,
@@ -1228,7 +1252,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "false"
-          }
+          },
+          "dar_avg": 0.8019896741987088,
+          "dar_p50": 0.8316268486916951,
+          "dar_p90": 0.9547169811320755,
+          "dar_p99": 0.9794871794871794,
+          "acceptance_len_avg": 3.4059690225961265,
+          "acceptance_len_p50": 3.4948805460750854
         },
         {
           "isl": 1024,
@@ -1269,7 +1299,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "true"
-          }
+          },
+          "dar_avg": 0.8019896741987088,
+          "dar_p50": 0.8316268486916951,
+          "dar_p90": 0.9547169811320755,
+          "dar_p99": 0.9794871794871794,
+          "acceptance_len_avg": 3.4059690225961265,
+          "acceptance_len_p50": 3.4948805460750854
         },
         {
           "isl": 1024,
@@ -1310,7 +1346,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "true"
-          }
+          },
+          "dar_avg": 0.8019896741987088,
+          "dar_p50": 0.8316268486916951,
+          "dar_p90": 0.9547169811320755,
+          "dar_p99": 0.9794871794871794,
+          "acceptance_len_avg": 3.4059690225961265,
+          "acceptance_len_p50": 3.4948805460750854
         },
         {
           "isl": 1024,
@@ -1351,7 +1393,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "false"
-          }
+          },
+          "dar_avg": 0.7380184262277959,
+          "dar_p50": 0.7341673182173573,
+          "dar_p90": 0.9090081892629663,
+          "dar_p99": 0.9935212180110139,
+          "acceptance_len_avg": 3.2140552786833876,
+          "acceptance_len_p50": 3.202501954652072
         },
         {
           "isl": 1024,
@@ -1392,7 +1440,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "true"
-          }
+          },
+          "dar_avg": 0.7380184262277959,
+          "dar_p50": 0.7341673182173573,
+          "dar_p90": 0.9090081892629663,
+          "dar_p99": 0.9935212180110139,
+          "acceptance_len_avg": 3.2140552786833876,
+          "acceptance_len_p50": 3.202501954652072
         },
         {
           "isl": 1024,
@@ -1433,7 +1487,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "true"
-          }
+          },
+          "dar_avg": 0.7380184262277959,
+          "dar_p50": 0.7341673182173573,
+          "dar_p90": 0.9090081892629663,
+          "dar_p99": 0.9935212180110139,
+          "acceptance_len_avg": 3.2140552786833876,
+          "acceptance_len_p50": 3.202501954652072
         },
         {
           "isl": 1024,
@@ -1474,7 +1534,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "true"
-          }
+          },
+          "dar_avg": 0.7380184262277959,
+          "dar_p50": 0.7341673182173573,
+          "dar_p90": 0.9090081892629663,
+          "dar_p99": 0.9935212180110139,
+          "acceptance_len_avg": 3.2140552786833876,
+          "acceptance_len_p50": 3.202501954652072
         },
         {
           "isl": 1024,
@@ -1515,7 +1581,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "false"
-          }
+          },
+          "dar_avg": 0.7380184262277959,
+          "dar_p50": 0.7341673182173573,
+          "dar_p90": 0.9090081892629663,
+          "dar_p99": 0.9935212180110139,
+          "acceptance_len_avg": 3.2140552786833876,
+          "acceptance_len_p50": 3.202501954652072
         },
         {
           "isl": 1024,
@@ -1556,7 +1628,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "true"
-          }
+          },
+          "dar_avg": 0.7380184262277959,
+          "dar_p50": 0.7341673182173573,
+          "dar_p90": 0.9090081892629663,
+          "dar_p99": 0.9935212180110139,
+          "acceptance_len_avg": 3.2140552786833876,
+          "acceptance_len_p50": 3.202501954652072
         },
         {
           "isl": 1024,
@@ -1597,7 +1675,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "false"
-          }
+          },
+          "dar_avg": 0.7380184262277959,
+          "dar_p50": 0.7341673182173573,
+          "dar_p90": 0.9090081892629663,
+          "dar_p99": 0.9935212180110139,
+          "acceptance_len_avg": 3.2140552786833876,
+          "acceptance_len_p50": 3.202501954652072
         },
         {
           "isl": 8192,
@@ -1638,7 +1722,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "false"
-          }
+          },
+          "dar_avg": 0.728688902446048,
+          "dar_p50": 0.7366771159874608,
+          "dar_p90": 0.9645120405576679,
+          "dar_p99": 0.9845559845559846,
+          "acceptance_len_avg": 3.186066707338144,
+          "acceptance_len_p50": 3.2100313479623823
         },
         {
           "isl": 8192,
@@ -1679,7 +1769,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "true"
-          }
+          },
+          "dar_avg": 0.728688902446048,
+          "dar_p50": 0.7366771159874608,
+          "dar_p90": 0.9645120405576679,
+          "dar_p99": 0.9845559845559846,
+          "acceptance_len_avg": 3.186066707338144,
+          "acceptance_len_p50": 3.2100313479623823
         },
         {
           "isl": 8192,
@@ -1720,7 +1816,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "false"
-          }
+          },
+          "dar_avg": 0.728688902446048,
+          "dar_p50": 0.7366771159874608,
+          "dar_p90": 0.9645120405576679,
+          "dar_p99": 0.9845559845559846,
+          "acceptance_len_avg": 3.186066707338144,
+          "acceptance_len_p50": 3.2100313479623823
         },
         {
           "isl": 8192,
@@ -1761,7 +1863,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "true"
-          }
+          },
+          "dar_avg": 0.728688902446048,
+          "dar_p50": 0.7366771159874608,
+          "dar_p90": 0.9645120405576679,
+          "dar_p99": 0.9845559845559846,
+          "acceptance_len_avg": 3.186066707338144,
+          "acceptance_len_p50": 3.2100313479623823
         },
         {
           "isl": 8192,
@@ -1802,7 +1910,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "false"
-          }
+          },
+          "dar_avg": 0.728688902446048,
+          "dar_p50": 0.7366771159874608,
+          "dar_p90": 0.9645120405576679,
+          "dar_p99": 0.9845559845559846,
+          "acceptance_len_avg": 3.186066707338144,
+          "acceptance_len_p50": 3.2100313479623823
         },
         {
           "isl": 8192,
@@ -1843,7 +1957,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "true"
-          }
+          },
+          "dar_avg": 0.728688902446048,
+          "dar_p50": 0.7366771159874608,
+          "dar_p90": 0.9645120405576679,
+          "dar_p99": 0.9845559845559846,
+          "acceptance_len_avg": 3.186066707338144,
+          "acceptance_len_p50": 3.2100313479623823
         },
         {
           "isl": 8192,
@@ -1884,7 +2004,13 @@ window.DASHBOARD_DATA = {
             "dp_attention": "false",
             "moe_backend": "TRTLLM",
             "piecewise_cuda_graphs": "false"
-          }
+          },
+          "dar_avg": 0.728688902446048,
+          "dar_p50": 0.7366771159874608,
+          "dar_p90": 0.9645120405576679,
+          "dar_p99": 0.9845559845559846,
+          "acceptance_len_avg": 3.186066707338144,
+          "acceptance_len_p50": 3.2100313479623823
         }
       ]
     },

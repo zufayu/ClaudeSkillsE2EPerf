@@ -76,13 +76,13 @@ def import_dar_results(results_dir):
     dar_by_scenario = {}
 
     for f in dar_files:
-        # Parse scenario from filename: dar_fp8_latency_chat.json -> chat
+        # Parse scenario from filename: dar_report_fp8_mtp3_ep1_chat.json -> chat
         base = os.path.basename(f).replace(".json", "")
         parts = base.split("_")
-        # Expected: dar_<quant>_<config>_<scenario>
+        # Scenario is always the last part (filenames vary in length)
         if len(parts) < 4:
             continue
-        scenario = parts[3]
+        scenario = parts[-1]
 
         try:
             with open(f) as fh:
@@ -101,12 +101,12 @@ def import_dar_results(results_dir):
 
         dar_metrics = {}
         if dar:
-            dar_metrics["dar_avg"] = dar.get("avg")
+            dar_metrics["dar_avg"] = dar.get("average")
             dar_metrics["dar_p50"] = dar.get("p50")
             dar_metrics["dar_p90"] = dar.get("p90")
             dar_metrics["dar_p99"] = dar.get("p99")
         if acc_len:
-            dar_metrics["acceptance_len_avg"] = acc_len.get("avg")
+            dar_metrics["acceptance_len_avg"] = acc_len.get("average")
             dar_metrics["acceptance_len_p50"] = acc_len.get("p50")
 
         # Remove None values
