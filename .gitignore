@@ -9,3 +9,8 @@ __pycache__/
 # Raw server logs (too large for repo, use .trimmed.log instead)
 results_*/server_*.log
 !results_*/server_*.trimmed.log
+
+# Nsight Systems traces (2-3GB each)
+traces/
+*.nsys-rep
+*.sqlite
