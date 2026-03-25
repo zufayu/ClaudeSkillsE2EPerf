@@ -29,6 +29,7 @@ QUANT="fp8"
 CONFIG="latency"
 TP=8
 EP=1
+DP="false"
 TRACE_DIR="./traces"
 ITER_RANGE="100-150"
 NUM_REQUESTS=200
@@ -55,6 +56,7 @@ Options:
   --config CONFIG           latency (MTP3) or throughput (MTP0) [default: latency]
   --tp N                    Tensor parallelism [default: 8]
   --ep N                    Expert parallelism [default: 1]
+  --dp true|false           Enable DP attention [default: false]
   --trace-dir DIR           Output directory for traces [default: ./traces]
   --iter-range START-STOP   TLLM_PROFILE_START_STOP range [default: 100-150]
   --num-requests N          Number of requests (bench mode) [default: 200]
@@ -90,6 +92,7 @@ while [[ $# -gt 0 ]]; do
         --config)          CONFIG="$2"; shift 2 ;;
         --tp)              TP="$2"; shift 2 ;;
         --ep)              EP="$2"; shift 2 ;;
+        --dp)              DP="$2"; shift 2 ;;
         --trace-dir)       TRACE_DIR="$2"; shift 2 ;;
         --iter-range)      ITER_RANGE="$2"; shift 2 ;;
         --num-requests)    NUM_REQUESTS="$2"; shift 2 ;;
@@ -136,6 +139,7 @@ log() { echo "[$(TS)] $*"; }
 
 # ======================== Tag & Output Setup ==================================
 TAG="nsys_${QUANT}_${CONFIG}_${SCENARIO}_tp${TP}_ep${EP}_c${CONCURRENCY}_iter${ITER_RANGE}"
+[[ "$DP" == "true" ]] && TAG="${TAG}_dp"
 mkdir -p "$TRACE_DIR"
 
 log "============================================================"
@@ -149,6 +153,7 @@ log "  Quant:       $QUANT"
 log "  Config:      $CONFIG"
 log "  TP:          $TP"
 log "  EP:          $EP"
+log "  DP:          $DP"
 log "  Iter Range:  $ITER_RANGE"
 log "  Trace Dir:   $TRACE_DIR"
 log "  Tag:         $TAG"
@@ -262,8 +267,7 @@ generate_config_yaml() {
     local has_mtp="false"
     [[ "$CONFIG" == "latency" ]] && has_mtp="true"
 
-    local dp_attn="false"
-    [[ $EP -gt 1 ]] && dp_attn="true"
+    local dp_attn="$DP"
 
     compute_adaptive_params "$QUANT" "$ISL" "$OSL" "$CONCURRENCY" "$dp_attn" "$EP" "$has_mtp"
 
@@ -502,9 +506,6 @@ run_serve_mode() {
     # Run benchmark client
     local num_prompts=$(( CONCURRENCY * 10 ))
     [[ $num_prompts -lt 20 ]] && num_prompts=20
-
-    local dp_attn="false"
-    [[ $EP -gt 1 ]] && dp_attn="true"
 
     local bench_args=(
         --model "$MODEL"
