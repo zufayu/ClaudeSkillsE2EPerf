@@ -360,7 +360,9 @@ function buildDetailHTML(d, run) {
     ['EP Size', d.ep_size != null ? d.ep_size : '-'],
     ['DP Attention', d.dp_attention == null ? '-' : (d.dp_attention ? 'Yes' : 'No')],
     ['Request TPS', d.request_tps == null ? '-' : fmtNum(d.request_tps)],
+    ['Total TPS', d.total_tps != null ? fmtNum(d.total_tps) : '-'],
     ['Output TPS', fmtNum(d.output_tps)],
+    ['Interactivity', d.interactivity != null ? fmtNum(d.interactivity, 1) + ' tok/s/user' : '-'],
     ['TPOT p50', fmtNum(d.tpot_p50) + ' ms'],
     ['TPOT p99', d.tpot_p99 != null ? fmtNum(d.tpot_p99) + ' ms' : '-'],
     ['TPOT mean', d.tpot_mean != null ? fmtNum(d.tpot_mean) + ' ms' : '-'],
@@ -430,7 +432,7 @@ function getFiltered() {
       const sKey = `${r.isl}/${r.osl}`;
       if (!state.scenarios.has(sKey)) continue;
       if (!state.concs.has(String(r.conc))) continue;
-      out.push({...r, series_key: run.series_key, platform: run.platform, date: run.date, source: run.source, framework: run.framework, quantization: run.quantization, sources: run.sources, gpu_count: run.gpu_count, commit: run.commit, commit_url: run.commit_url, model: run.model, env_tag: run.env_tag});
+      out.push({...r, series_key: run.series_key, platform: run.platform, date: run.date, source: run.source, framework: run.framework, quantization: run.quantization, sources: run.sources, gpu_count: run.gpu_count, commit: run.commit, commit_url: run.commit_url, model: run.model, env_tag: run.env_tag, interactivity: r.conc > 0 ? r.output_tps / r.conc : 0});
     }
   }
   return out;
@@ -589,9 +591,11 @@ function sortSeriesKeys(keys) {
 
 /* --- Performance Tab: Bar Chart --- */
 const METRIC_DEFS = {
-  output_tps: {label: 'Output Throughput', unit: 'tok/s', higher: true},
-  tpot_p50: {label: 'TPOT p50', unit: 'ms', higher: false},
-  ttft_p50: {label: 'TTFT p50', unit: 'ms', higher: false},
+  total_tps:     {label: 'Total Tput',  unit: 'tok/s',      higher: true},
+  output_tps:    {label: 'Output Tput', unit: 'tok/s',      higher: true},
+  interactivity: {label: 'Interac.',    unit: 'tok/s/user', higher: true},
+  tpot_p50:      {label: 'TPOT',        unit: 'ms',         higher: false},
+  ttft_p50:      {label: 'TTFT',        unit: 'ms',         higher: false},
 };
 
 function buildPerfMetricSelector() {
@@ -716,20 +720,26 @@ function buildPerfTable(data) {
   const ttftMin = ttftValues.length ? Math.min(...ttftValues) : 0, ttftMax = ttftValues.length ? Math.max(...ttftValues) : 0;
   const outputValues = data.map(d => d.output_tps || 0);
   const outputMax = outputValues.length ? Math.max(...outputValues) : 0;
+  const totalValues = data.map(d => d.total_tps || 0);
+  const totalMax = totalValues.length ? Math.max(...totalValues) : 0;
 
   // Build header
   let hdr = '<tr><th></th><th>Scenario</th><th>ISL/OSL</th><th class="num">Conc</th>';
   for (const sk of seriesKeys) {
     const c = getColor(sk);
     const shortName = sk.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
+    hdr += `<th class="num" style="color:${c.border}">Total Tput<br><small>${shortName}</small></th>`;
     hdr += `<th class="num" style="color:${c.border}">Output Tput<br><small>${shortName}</small></th>`;
+    hdr += `<th class="num" style="color:${c.border}">Interac.<br><small>(tok/s/user)</small></th>`;
     hdr += `<th class="num" style="color:${c.border}">TPOT<br><small>(ms)</small></th>`;
     hdr += `<th class="num" style="color:${c.border}">TTFT<br><small>(ms)</small></th>`;
   }
   if (isComparison) {
     const refShort = refKey.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
     const cmpShort = cmpKey.replace(/DeepSeek-R1-0528\s*/,'').replace(/\s*\(.*\)/,'');
+    hdr += `<th class="num">Total &Delta;<br><small>${refShort} vs ${cmpShort}</small></th>`;
     hdr += `<th class="num">TPS &Delta;<br><small>${refShort} vs ${cmpShort}</small></th>`;
+    hdr += `<th class="num">Interac. &Delta;<br><small>${refShort} vs ${cmpShort}</small></th>`;
     hdr += `<th class="num">TPOT &Delta;<br><small>${refShort} vs ${cmpShort}</small></th>`;
     hdr += `<th class="num">TTFT &Delta;<br><small>${refShort} vs ${cmpShort}</small></th>`;
   }
@@ -767,15 +777,19 @@ function buildPerfTable(data) {
       const d = g.byPlatform[sk];
       const c = getColor(sk);
       if (d) {
+        const totalPct = totalMax > 0 ? ((d.total_tps || 0) / totalMax * 100) : 0;
         const outPct = outputMax > 0 ? (d.output_tps / outputMax * 100) : 0;
         const tpotBg = d.tpot_p50 > 0 ? heatBg(d.tpot_p50, tpotMin, tpotMax, true) : '';
         const ttftBg = d.ttft_p50 > 0 ? heatBg(d.ttft_p50, ttftMin, ttftMax, true) : '';
+        const interac = d.interactivity || 0;
+        rows += `<td class="num"><div class="data-bar"><div class="data-bar-fill" style="width:${totalPct}%;background:${c.border}"></div><div class="data-bar-text">${fmtCompact(d.total_tps || 0)}</div></div></td>`;
         rows += `<td class="num"><div class="data-bar"><div class="data-bar-fill" style="width:${outPct}%;background:${c.border}"></div><div class="data-bar-text">${fmtCompact(d.output_tps)}</div></div></td>`;
+        rows += `<td class="num">${fmtNum(interac, 1)}</td>`;
         rows += `<td class="num heat-cell" style="background:${tpotBg}">${fmtNum(d.tpot_p50, 1)}</td>`;
         rows += `<td class="num heat-cell" style="background:${ttftBg}">${fmtNum(d.ttft_p50, 0)}</td>`;
         vals[sk] = d;
       } else {
-        rows += '<td class="num" style="color:var(--text-tertiary)">-</td>'.repeat(3);
+        rows += '<td class="num" style="color:var(--text-tertiary)">-</td>'.repeat(5);
       }
     }
 
@@ -785,10 +799,28 @@ function buildPerfTable(data) {
       const a = vals[refKey], b = vals[cmpKey];
       if (a && b && a.output_tps > 0 && b.output_tps > 0) {
         // All deltas from Ref's perspective: positive = Ref is better → green
-        // TPS: higher is better → (ref - cmp) / cmp — positive means Ref has higher TPS
+        // Total TPS: higher is better → (ref - cmp) / cmp
+        const totalA = a.total_tps || 0, totalB = b.total_tps || 0;
+        if (totalA > 0 && totalB > 0) {
+          const totalDelta = ((totalA - totalB) / totalB * 100);
+          const totalCls = totalDelta > 0 ? 'delta-pos' : totalDelta < 0 ? 'delta-neg' : 'delta-neutral';
+          rows += `<td class="num ${totalCls}">${totalDelta > 0 ? '+' : ''}${totalDelta.toFixed(1)}%</td>`;
+        } else {
+          rows += '<td class="num">-</td>';
+        }
+        // Output TPS: higher is better → (ref - cmp) / cmp — positive means Ref has higher TPS
         const tpsDelta = ((a.output_tps - b.output_tps) / b.output_tps * 100);
         const tpsCls = tpsDelta > 0 ? 'delta-pos' : tpsDelta < 0 ? 'delta-neg' : 'delta-neutral';
         rows += `<td class="num ${tpsCls}">${tpsDelta > 0 ? '+' : ''}${tpsDelta.toFixed(1)}%</td>`;
+        // Interactivity: higher is better → (ref - cmp) / cmp
+        const interacA = a.interactivity || 0, interacB = b.interactivity || 0;
+        if (interacA > 0 && interacB > 0) {
+          const interacDelta = ((interacA - interacB) / interacB * 100);
+          const interacCls = interacDelta > 0 ? 'delta-pos' : interacDelta < 0 ? 'delta-neg' : 'delta-neutral';
+          rows += `<td class="num ${interacCls}">${interacDelta > 0 ? '+' : ''}${interacDelta.toFixed(1)}%</td>`;
+        } else {
+          rows += '<td class="num">-</td>';
+        }
         // TPOT: lower is better → (cmp - ref) / ref — positive means Ref has lower TPOT (better)
         const tpotDelta = a.tpot_p50 > 0 && b.tpot_p50 > 0 ? ((b.tpot_p50 - a.tpot_p50) / a.tpot_p50 * 100) : null;
         if (tpotDelta != null) {
@@ -806,7 +838,7 @@ function buildPerfTable(data) {
           rows += '<td class="num">-</td>';
         }
       } else {
-        rows += '<td class="num">-</td><td class="num">-</td><td class="num">-</td>';
+        rows += '<td class="num">-</td>'.repeat(5);
       }
     }
     rows += '</tr>';
@@ -824,7 +856,7 @@ function buildPerfTable(data) {
       }
     }
     detailHtml += '</div>';
-    const colSpan = 4 + seriesKeys.length * 3 + (isComparison ? 3 : 0);
+    const colSpan = 4 + seriesKeys.length * 5 + (isComparison ? 5 : 0);
     rows += `<tr class="detail-row" id="${rid}"><td colspan="${colSpan}">${detailHtml}</td></tr>`;
   }
   tbody.innerHTML = rows;
@@ -1151,7 +1183,9 @@ function buildDataTable(data) {
     <th>ISL/OSL</th>
     <th class="num">Conc</th>
     <th class="num">TP</th>
-    <th class="num">Throughput</th>
+    <th class="num">Total Tput</th>
+    <th class="num">Output Tput</th>
+    <th class="num">Interac.</th>
     <th class="num">TPOT</th>
     <th class="num">TTFT</th>
     <th>Source</th>
@@ -1185,7 +1219,9 @@ function buildDataTable(data) {
     rows += `<td>${d.isl}/${d.osl}</td>`;
     rows += `<td class="num">${d.conc}</td>`;
     rows += `<td class="num">${d.gpu_count || '-'}</td>`;
+    rows += `<td class="num">${fmtCompact(d.total_tps || 0)}</td>`;
     rows += `<td class="num">${fmtCompact(d.output_tps)}</td>`;
+    rows += `<td class="num">${fmtNum(d.interactivity || 0, 1)}</td>`;
     rows += `<td class="num heat-cell" style="background:${tpotBg}">${fmtNum(d.tpot_p50, 1)}</td>`;
     rows += `<td class="num heat-cell" style="background:${ttftBg}">${fmtNum(d.ttft_p50, 0)}</td>`;
     rows += `<td>${sourceHTML(run || d)}</td>`;
@@ -1193,7 +1229,7 @@ function buildDataTable(data) {
     const fileLinks = buildRepoFileLinks(d, run);
     rows += `<td>${fileLinks || '-'}</td>`;
     rows += `</tr>`;
-    rows += `<tr class="detail-row" id="${rid}"><td colspan="13">${buildDetailHTML(d, run)}</td></tr>`;
+    rows += `<tr class="detail-row" id="${rid}"><td colspan="15">${buildDetailHTML(d, run)}</td></tr>`;
   }
   tbody.innerHTML = rows;
 
@@ -1208,14 +1244,14 @@ function buildDataTable(data) {
 
 /* --- CSV Export --- */
 function copyCSV(data) {
-  const headers = ['Date','Commit','Series','Model','ISL','OSL','Conc','GPU','Output_TPS','TPOT_p50','TTFT_p50','Config','Source','Framework'];
+  const headers = ['Date','Commit','Series','Model','ISL','OSL','Conc','GPU','Total_TPS','Output_TPS','Interactivity','TPOT_p50','TTFT_p50','Config','Source','Framework'];
   const csvRows = [headers.join(',')];
   for (const d of data) {
     const run = runs.find(r => r.series_key === d.series_key);
     csvRows.push([
       d.date || '', (run?.commit || '').substring(0, 7), d.series_key, d.model || '',
       d.isl, d.osl, d.conc, d.gpu_count || '',
-      d.output_tps, d.tpot_p50, d.ttft_p50,
+      d.total_tps || 0, d.output_tps, d.interactivity || 0, d.tpot_p50, d.ttft_p50,
       d.config || '', d.source || '', d.framework || ''
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
   }
