@@ -433,8 +433,8 @@ generate_summary() {
 # DeepSeek R1 Benchmark Results (ATOM/vLLM)
 ## MI355X 8×GPU
 
-| Config | Quant | Scenario | CONC | Output TPS | Out TPS/GPU | Total TPS | Interactivity | TTFT p50 (ms) | TPOT p50 (ms) | ITL p50 (ms) | E2E p50 (ms) | DAR |
-|--------|-------|----------|------|------------|-------------|-----------|---------------|---------------|---------------|--------------|--------------|-----|
+| Config | Quant | Scenario | CONC | Total Tput | Output Tput | Interac. | TPOT (ms) | TTFT (ms) | DAR |
+|--------|-------|----------|------|------------|-------------|----------|-----------|-----------|-----|
 HEADER
 
     for f in "$RESULT_DIR"/result_*.json; do
@@ -460,20 +460,18 @@ try:
     out_tps = data.get('output_throughput', 0)
     in_tps = data.get('input_throughput', 0)
     total_tps = data.get('total_token_throughput', in_tps + out_tps)
-    out_tps_gpu = out_tps / gpu_count if out_tps else 0
-    interactivity = out_tps / conc if (out_tps and conc) else 0
 
     ttft_p50 = data.get('ttft_p50', data.get('median_ttft_ms', 0))
     tpot_p50 = data.get('tpot_p50', data.get('median_tpot_ms', 0))
-    itl_p50 = data.get('itl_p50', data.get('median_itl_ms', 0))
-    e2e_p50 = data.get('e2el_p50', data.get('median_e2el_ms', 0))
+    # Interactivity = 1000/TPOT tok/s/user (SA InferenceX format)
+    interactivity = 1000.0 / tpot_p50 if tpot_p50 > 0 else 0
 
     label = f'{config}{mtp}'
     dar = data.get('dar_p50')
     dar_str = f'{dar:.2%}' if dar is not None else '-'
-    print(f'| {label} | {quant.upper()} | {scenario} | {conc} | {out_tps:.1f} | {out_tps_gpu:.1f} | {total_tps:.1f} | {interactivity:.2f} | {ttft_p50:.1f} | {tpot_p50:.1f} | {itl_p50:.1f} | {e2e_p50:.0f} | {dar_str} |')
+    print(f'| {label} | {quant.upper()} | {scenario} | {conc} | {total_tps:.1f} | {out_tps:.1f} | {interactivity:.2f} | {tpot_p50:.1f} | {ttft_p50:.1f} | {dar_str} |')
 except Exception as e:
-    print(f'| ERROR | - | $f | - | - | - | - | - | - | - | - | - | {e} |', file=sys.stderr)
+    print(f'| ERROR | - | $f | - | - | - | - | - | - | {e} |', file=sys.stderr)
 " >> "$summary_file" 2>/dev/null || true
     done
 

@@ -432,7 +432,7 @@ function getFiltered() {
       const sKey = `${r.isl}/${r.osl}`;
       if (!state.scenarios.has(sKey)) continue;
       if (!state.concs.has(String(r.conc))) continue;
-      out.push({...r, series_key: run.series_key, platform: run.platform, date: run.date, source: run.source, framework: run.framework, quantization: run.quantization, sources: run.sources, gpu_count: run.gpu_count, commit: run.commit, commit_url: run.commit_url, model: run.model, env_tag: run.env_tag, interactivity: r.conc > 0 ? r.output_tps / r.conc : 0});
+      out.push({...r, series_key: run.series_key, platform: run.platform, date: run.date, source: run.source, framework: run.framework, quantization: run.quantization, sources: run.sources, gpu_count: run.gpu_count, commit: run.commit, commit_url: run.commit_url, model: run.model, env_tag: run.env_tag, interactivity: r.tpot_p50 > 0 ? 1000 / r.tpot_p50 : 0});
     }
   }
   return out;

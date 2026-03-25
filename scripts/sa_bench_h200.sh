@@ -323,8 +323,8 @@ generate_summary() {
 # DeepSeek R1 Benchmark Results (InferenceX-style)
 ## H200 8×GPU (141GB/GPU)
 
-| Config | Scenario | EP | CONC | DP | MTP | Req/s | Output TPS | Per-GPU TPS | TTFT p50 (ms) | TPOT p50 (ms) | E2E p50 (ms) |
-|--------|----------|-----|------|----|-----|-------|------------|-------------|---------------|---------------|--------------|
+| Config | Scenario | EP | CONC | DP | MTP | Total Tput | Output Tput | Interac. | TPOT (ms) | TTFT (ms) | DAR |
+|--------|----------|-----|------|----|-----|------------|-------------|----------|-----------|-----------|-----|
 HEADER
 
     for f in "$RESULT_DIR"/result_*.json; do
@@ -347,14 +347,17 @@ try:
     dp = 'Y' if 'dp' in parts else 'N'
     mtp = '3' if config == 'latency' and dp == 'N' else ('1' if config == 'latency' else '-')
 
-    req_tps = data.get('request_throughput', data.get('completed', 0) / max(data.get('duration', 1), 0.001))
     out_tps = data.get('output_throughput', 0)
-    gpu_tps = out_tps / 8 if out_tps else 0
+    in_tps = data.get('input_throughput', data.get('total_token_throughput', 0) - out_tps if data.get('total_token_throughput') else 0)
+    total_tps = data.get('total_token_throughput', in_tps + out_tps)
     ttft_p50 = data.get('ttft_p50', data.get('median_ttft_ms', 0))
     tpot_p50 = data.get('tpot_p50', data.get('median_tpot_ms', 0))
-    e2e_p50 = data.get('e2el_p50', data.get('median_e2el_ms', 0))
+    # Interactivity = 1000/TPOT tok/s/user (SA InferenceX format)
+    interactivity = 1000.0 / tpot_p50 if tpot_p50 > 0 else 0
 
-    print(f'| {config} | {scenario} | {ep} | {conc} | {dp} | {mtp} | {req_tps:.2f} | {out_tps:.1f} | {gpu_tps:.1f} | {ttft_p50:.0f} | {tpot_p50:.1f} | {e2e_p50:.0f} |')
+    dar = data.get('dar_p50')
+    dar_str = f'{dar:.2%}' if dar is not None else '-'
+    print(f'| {config} | {scenario} | {ep} | {conc} | {dp} | {mtp} | {total_tps:.1f} | {out_tps:.1f} | {interactivity:.2f} | {tpot_p50:.1f} | {ttft_p50:.0f} | {dar_str} |')
 except Exception as e:
     print(f'| ERROR | $f | - | - | - | - | - | - | - | - | - | {e} |', file=sys.stderr)
 " >> "$summary_file" 2>/dev/null || true
