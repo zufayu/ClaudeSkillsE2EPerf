@@ -966,7 +966,8 @@ function buildInteractiveChart(data, canvasId, chartKey, scenarioFilter) {
     const scenario = `${d.isl}/${d.osl}`;
     const sk = d.series_key + ' ' + scenario;
     if (!grouped[sk]) grouped[sk] = {series: d.series_key, scenario, points: []};
-    const perGpu = d.gpu_count > 0 ? d.output_tps / d.gpu_count : d.output_tps;
+    const totalTps = d.total_tps || d.output_tps;
+    const perGpu = d.gpu_count > 0 ? totalTps / d.gpu_count : totalTps;
     grouped[sk].points.push({x: 1000 / d.tpot_p50, y: perGpu, conc: d.conc});
   }
   const datasets = [];
@@ -987,10 +988,10 @@ function buildInteractiveChart(data, canvasId, chartKey, scenarioFilter) {
       responsive: true, maintainAspectRatio: false,
       scales: {
         x: {title: {display: true, text: 'Interactive (tok/s/user, 1000/TPOT)', color: '#7e8094'}, ticks: {color: '#7e8094'}, grid: {color: '#262733'}},
-        y: {title: {display: true, text: 'Token Throughput (tok/s/gpu)', color: '#7e8094'}, ticks: {color: '#7e8094'}, grid: {color: '#262733'}},
+        y: {title: {display: true, text: 'Total Token Throughput (tok/s/gpu)', color: '#7e8094'}, ticks: {color: '#7e8094'}, grid: {color: '#262733'}},
       },
       plugins: {
-        tooltip: {callbacks: {label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.raw.y)} tok/s/gpu, ${fmtNum(ctx.raw.x, 1)} tok/s/user (c=${ctx.raw.conc})`}},
+        tooltip: {callbacks: {label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.raw.y)} total tok/s/gpu, ${fmtNum(ctx.raw.x, 1)} tok/s/user (c=${ctx.raw.conc})`}},
         legend: {labels: {color: '#bfc1d0', usePointStyle: true, pointStyle: 'line'}},
         datalabels: {display: false}
       }
