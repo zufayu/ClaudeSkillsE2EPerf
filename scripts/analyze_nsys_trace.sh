@@ -114,7 +114,6 @@ log "Running analysis (python3 sqlite3)..."
 python3 - "$SQLITE_FILE" "$TOP_N" "$TIMERANGE" <<'PYEOF'
 import sqlite3
 import sys
-import os
 
 db_path = sys.argv[1]
 top_n = int(sys.argv[2])
@@ -123,60 +122,59 @@ timerange = sys.argv[3] if len(sys.argv) > 3 else ""
 conn = sqlite3.connect(db_path)
 cur = conn.cursor()
 
-# ---- Auto-detect kernel table name ----
+# ---- Auto-detect tables ----
 tables = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
 
 KERNEL_TABLE = None
-for candidate in ["CUPTI_ACTIVITY_KIND_KERNEL", "CUPTI_ACTIVITY_KIND_RUNTIME",
-                   "TARGET_INFO_CUDA_GPU_TRACE", "CUDA_GPU_TRACE"]:
-    if candidate in tables:
-        KERNEL_TABLE = candidate
+for c in ["CUPTI_ACTIVITY_KIND_KERNEL", "CUDA_GPU_TRACE"]:
+    if c in tables:
+        KERNEL_TABLE = c
         break
-# Fallback: find any table with 'kernel' or 'gpu' in name
 if not KERNEL_TABLE:
     for t in tables:
-        tl = t.lower()
-        if 'kernel' in tl or 'gpu_trace' in tl:
+        if 'kernel' in t.lower() or 'gpu_trace' in t.lower():
             KERNEL_TABLE = t
             break
 
-NVTX_TABLE = None
-for candidate in ["NVTX_EVENTS", "NVTX_RANGES"]:
-    if candidate in tables:
-        NVTX_TABLE = candidate
-        break
-if not NVTX_TABLE:
-    for t in tables:
-        if 'nvtx' in t.lower():
-            NVTX_TABLE = t
-            break
+NVTX_TABLE = "NVTX_EVENTS" if "NVTX_EVENTS" in tables else None
+HAS_STRINGS = "StringIds" in tables
 
 print(f"\n=== Database Info ===")
-print(f"  Tables ({len(tables)}): {', '.join(sorted(tables))}")
 print(f"  Kernel table: {KERNEL_TABLE or 'NOT FOUND'}")
 print(f"  NVTX table:   {NVTX_TABLE or 'NOT FOUND'}")
+print(f"  StringIds:    {'YES' if HAS_STRINGS else 'NO'}")
 
 if not KERNEL_TABLE:
-    print("\nERROR: No kernel table found. Available tables:")
-    for t in sorted(tables):
-        cols = [r[1] for r in cur.execute(f"PRAGMA table_info('{t}')").fetchall()]
-        print(f"  {t}: {', '.join(cols[:8])}{'...' if len(cols)>8 else ''}")
+    print("\nERROR: No kernel table found. Tables:", ", ".join(sorted(tables)))
     sys.exit(1)
 
-# ---- Detect column names ----
+# ---- Detect columns ----
 kcols = {r[1].lower(): r[1] for r in cur.execute(f"PRAGMA table_info('{KERNEL_TABLE}')").fetchall()}
-print(f"  Kernel columns: {', '.join(kcols.keys())}")
 
-# Map columns - nsys versions use different names
-name_col = kcols.get('shortname') or kcols.get('name') or kcols.get('demangledname') or kcols.get('kernel_name') or 'shortName'
-start_col = kcols.get('start') or kcols.get('startns') or kcols.get('start_time') or 'start'
-end_col = kcols.get('end') or kcols.get('endns') or kcols.get('end_time') or 'end'
+name_col = kcols.get('shortname') or kcols.get('name') or kcols.get('demangledname') or 'shortName'
+start_col = kcols.get('start') or 'start'
+end_col = kcols.get('end') or 'end'
 dur_col = kcols.get('duration') or kcols.get('dur') or None
+dur_expr = dur_col if dur_col else f"({end_col}-{start_col})"
 
-if dur_col:
-    dur_expr = dur_col
+# ---- Check if name column stores string IDs (integers) ----
+sample = cur.execute(f"SELECT {name_col} FROM {KERNEL_TABLE} LIMIT 1").fetchone()
+name_is_id = HAS_STRINGS and sample and isinstance(sample[0], int)
+
+if name_is_id:
+    # Build string lookup: JOIN with StringIds to resolve names
+    scols = {r[1].lower(): r[1] for r in cur.execute("PRAGMA table_info('StringIds')").fetchall()}
+    sid_col = scols.get('id') or scols.get('rowid') or 'id'
+    sval_col = scols.get('value') or scols.get('string') or scols.get('name') or 'value'
+    print(f"  StringIds columns: {', '.join(scols.keys())}")
+    print(f"  Name column '{name_col}' stores integer IDs -> joining with StringIds.{sval_col}")
+    # Use a view/subquery: k table joined with StringIds
+    K = f"(SELECT k.*, s.{sval_col} AS _kname FROM {KERNEL_TABLE} k JOIN StringIds s ON k.{name_col} = s.{sid_col})"
+    resolved_name = "_kname"
 else:
-    dur_expr = f"({end_col}-{start_col})"
+    K = KERNEL_TABLE
+    resolved_name = name_col
+    print(f"  Name column '{name_col}' stores strings directly")
 
 # ---- Time filter ----
 time_filter = ""
@@ -186,31 +184,39 @@ if timerange:
         time_filter = f"AND {start_col} >= {parts[0]} AND {end_col} <= {parts[1]}"
         print(f"  Time range: {parts[0]}ns - {parts[1]}ns")
 
+# Total GPU time for percentage calc
+total_gpu = cur.execute(f"SELECT SUM({dur_expr}) FROM {KERNEL_TABLE} WHERE 1=1 {time_filter}").fetchone()[0]
+
 # ---- Helper ----
-def print_table(headers, rows, widths=None):
+def print_table(headers, rows):
     if not rows:
         print("  (no data)")
         return
-    if not widths:
-        widths = [max(len(str(h)), max(len(str(r[i])) for r in rows)) for i, h in enumerate(headers)]
+    widths = [max(len(str(h)), max(len(str(r[i])) for r in rows)) for i, h in enumerate(headers)]
+    # Cap kernel name width at 90 chars for readability
+    if headers[0] in ('kernel', 'event'):
+        widths[0] = min(widths[0], 90)
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
     print(fmt.format(*headers))
     print("  ".join("-"*w for w in widths))
     for row in rows:
-        print(fmt.format(*[str(v) for v in row]))
+        cells = [str(v) for v in row]
+        if headers[0] in ('kernel', 'event') and len(cells[0]) > 90:
+            cells[0] = cells[0][:87] + "..."
+        print(fmt.format(*cells))
 
 # ======================== Query 1: Top N Kernels =============================
 print(f"\n=== 1. Top {top_n} Kernels by Total GPU Time ===")
-q = f"""SELECT {name_col} AS kernel,
+q = f"""SELECT {resolved_name} AS kernel,
         COUNT(*) AS count,
         ROUND(CAST(SUM({dur_expr}) AS FLOAT) / 1e6, 2) AS total_ms,
         ROUND(CAST(AVG({dur_expr}) AS FLOAT) / 1e3, 2) AS avg_us,
         ROUND(CAST(MIN({dur_expr}) AS FLOAT) / 1e3, 2) AS min_us,
         ROUND(CAST(MAX({dur_expr}) AS FLOAT) / 1e3, 2) AS max_us,
-        ROUND(100.0 * SUM({dur_expr}) / (SELECT SUM({dur_expr}) FROM {KERNEL_TABLE} WHERE 1=1 {time_filter}), 1) AS pct
- FROM {KERNEL_TABLE}
+        ROUND(100.0 * SUM({dur_expr}) / {total_gpu}, 1) AS pct
+ FROM {K}
  WHERE 1=1 {time_filter}
- GROUP BY {name_col}
+ GROUP BY {resolved_name}
  ORDER BY SUM({dur_expr}) DESC
  LIMIT {top_n}"""
 try:
@@ -221,33 +227,35 @@ except Exception as e:
 
 # ======================== Query 2: Category Breakdown ========================
 print(f"\n=== 2. MoE vs Attention vs NCCL vs GEMM Time Split ===")
+n = resolved_name
 q = f"""SELECT CASE
-       WHEN {name_col} LIKE '%moe%' OR {name_col} LIKE '%MoE%'
-            OR {name_col} LIKE '%expert%' OR {name_col} LIKE '%Expert%'
-            OR {name_col} LIKE '%expandInput%' OR {name_col} LIKE '%doActivation%'
-            OR {name_col} LIKE '%topk%' OR {name_col} LIKE '%buildExpert%'
-            OR {name_col} LIKE '%computeStrides%' THEN 'MoE'
-       WHEN {name_col} LIKE '%attention%' OR {name_col} LIKE '%flash%'
-            OR {name_col} LIKE '%fmha%' OR {name_col} LIKE '%Fmha%' THEN 'Attention'
-       WHEN {name_col} LIKE '%nccl%' OR {name_col} LIKE '%allreduce%'
-            OR {name_col} LIKE '%AllReduce%' OR {name_col} LIKE '%alltoall%'
-            OR {name_col} LIKE '%AllToAll%' THEN 'NCCL/Comm'
-       WHEN {name_col} LIKE '%gemm%' OR {name_col} LIKE '%Gemm%'
-            OR {name_col} LIKE '%cutlass%' OR {name_col} LIKE '%cublas%'
-            OR {name_col} LIKE '%nvjet%' THEN 'GEMM'
-       WHEN {name_col} LIKE '%Norm%' OR {name_col} LIKE '%norm%' THEN 'Norm'
-       WHEN {name_col} LIKE '%rope%' OR {name_col} LIKE '%Rope%'
-            OR {name_col} LIKE '%RoPE%' THEN 'RoPE'
-       WHEN {name_col} LIKE '%quantize%' OR {name_col} LIKE '%Quantize%'
-            OR {name_col} LIKE '%dequant%' THEN 'Quantize'
-       WHEN {name_col} LIKE '%memcpy%' OR {name_col} LIKE '%memset%'
-            OR {name_col} LIKE '%Memcpy%' OR {name_col} LIKE '%Memset%' THEN 'Memory'
+       WHEN {n} LIKE '%moe%' OR {n} LIKE '%MoE%'
+            OR {n} LIKE '%expert%' OR {n} LIKE '%Expert%'
+            OR {n} LIKE '%expandInput%' OR {n} LIKE '%doActivation%'
+            OR {n} LIKE '%topk%' OR {n} LIKE '%buildExpert%'
+            OR {n} LIKE '%computeStrides%' OR {n} LIKE '%Dispatch%'
+            OR {n} LIKE '%Combine%' OR {n} LIKE '%Prepare%'
+            OR {n} LIKE '%Sanitize%' THEN 'MoE'
+       WHEN {n} LIKE '%fmha%' OR {n} LIKE '%Fmha%'
+            OR {n} LIKE '%flash%' OR {n} LIKE '%attention%' THEN 'Attention'
+       WHEN {n} LIKE '%nccl%' OR {n} LIKE '%allreduce%'
+            OR {n} LIKE '%AllReduce%' THEN 'NCCL/Comm'
+       WHEN {n} LIKE '%gemm%' OR {n} LIKE '%Gemm%'
+            OR {n} LIKE '%cutlass%' OR {n} LIKE '%cublas%'
+            OR {n} LIKE '%nvjet%' THEN 'GEMM'
+       WHEN {n} LIKE '%Norm%' OR {n} LIKE '%norm%' THEN 'Norm'
+       WHEN {n} LIKE '%rope%' OR {n} LIKE '%Rope%'
+            OR {n} LIKE '%RoPE%' THEN 'RoPE'
+       WHEN {n} LIKE '%quantize%' OR {n} LIKE '%Quantize%'
+            OR {n} LIKE '%dequant%' THEN 'Quantize'
+       WHEN {n} LIKE '%memcpy%' OR {n} LIKE '%memset%'
+            OR {n} LIKE '%Memcpy%' OR {n} LIKE '%Memset%' THEN 'Memory'
        ELSE 'Other'
      END AS category,
      COUNT(*) AS kernel_count,
      ROUND(CAST(SUM({dur_expr}) AS FLOAT) / 1e6, 2) AS total_ms,
-     ROUND(100.0 * SUM({dur_expr}) / (SELECT SUM({dur_expr}) FROM {KERNEL_TABLE} WHERE 1=1 {time_filter}), 1) AS pct
-     FROM {KERNEL_TABLE}
+     ROUND(100.0 * SUM({dur_expr}) / {total_gpu}, 1) AS pct
+     FROM {K}
      WHERE 1=1 {time_filter}
      GROUP BY category
      ORDER BY SUM({dur_expr}) DESC"""
@@ -259,26 +267,37 @@ except Exception as e:
 
 # ======================== Query 3: NVTX Events ===============================
 if NVTX_TABLE:
-    print(f"\n=== 3. NVTX Event Durations (Layer-Level Breakdown) ===")
     ncols = {r[1].lower(): r[1] for r in cur.execute(f"PRAGMA table_info('{NVTX_TABLE}')").fetchall()}
-    text_col = ncols.get('text') or ncols.get('name') or ncols.get('message') or 'text'
-    nstart = ncols.get('start') or ncols.get('startns') or 'start'
-    nend = ncols.get('end') or ncols.get('endns') or 'end'
+    text_raw = ncols.get('text') or ncols.get('name') or ncols.get('message') or 'text'
+    nstart = ncols.get('start') or 'start'
+    nend = ncols.get('end') or 'end'
     ndur = ncols.get('duration') or ncols.get('dur') or None
     ndur_expr = ndur if ndur else f"({nend}-{nstart})"
 
-    q = f"""SELECT {text_col} AS event,
+    # Check if NVTX text column also stores string IDs
+    nsample = cur.execute(f"SELECT {text_raw} FROM {NVTX_TABLE} LIMIT 1").fetchone()
+    nvtx_text_is_id = HAS_STRINGS and nsample and isinstance(nsample[0], int)
+
+    if nvtx_text_is_id:
+        NV = f"(SELECT nv.*, s.{sval_col} AS _ntext FROM {NVTX_TABLE} nv JOIN StringIds s ON nv.{text_raw} = s.{sid_col})"
+        resolved_text = "_ntext"
+    else:
+        NV = NVTX_TABLE
+        resolved_text = text_raw
+
+    print(f"\n=== 3. NVTX Event Durations (Layer-Level Breakdown) ===")
+    q = f"""SELECT {resolved_text} AS event,
             COUNT(*) AS count,
             ROUND(CAST(SUM({ndur_expr}) AS FLOAT) / 1e6, 2) AS total_ms,
             ROUND(CAST(AVG({ndur_expr}) AS FLOAT) / 1e3, 2) AS avg_us
-     FROM {NVTX_TABLE}
-     WHERE ({text_col} LIKE '%layer%' OR {text_col} LIKE '%Layer%'
-            OR {text_col} LIKE '%MoE%' OR {text_col} LIKE '%moe%'
-            OR {text_col} LIKE '%attention%' OR {text_col} LIKE '%Attention%'
-            OR {text_col} LIKE '%expert%' OR {text_col} LIKE '%Expert%'
-            OR {text_col} LIKE '%allreduce%' OR {text_col} LIKE '%decode%'
-            OR {text_col} LIKE '%prefill%' OR {text_col} LIKE '%forward%')
-     GROUP BY {text_col}
+     FROM {NV}
+     WHERE ({resolved_text} LIKE '%layer%' OR {resolved_text} LIKE '%Layer%'
+            OR {resolved_text} LIKE '%MoE%' OR {resolved_text} LIKE '%moe%'
+            OR {resolved_text} LIKE '%attention%' OR {resolved_text} LIKE '%Attention%'
+            OR {resolved_text} LIKE '%expert%' OR {resolved_text} LIKE '%Expert%'
+            OR {resolved_text} LIKE '%allreduce%' OR {resolved_text} LIKE '%decode%'
+            OR {resolved_text} LIKE '%prefill%' OR {resolved_text} LIKE '%forward%')
+     GROUP BY {resolved_text}
      ORDER BY SUM({ndur_expr}) DESC
      LIMIT 30"""
     try:
@@ -293,8 +312,8 @@ else:
 print(f"\n=== 4. Overall Statistics ===")
 q = f"""SELECT COUNT(*) AS total_kernels,
         COUNT(DISTINCT {name_col}) AS unique_kernels,
-        ROUND(CAST(SUM({dur_expr}) AS FLOAT) / 1e9, 3) AS total_gpu_time_s,
-        ROUND(CAST(AVG({dur_expr}) AS FLOAT) / 1e3, 2) AS avg_kernel_us
+        ROUND(CAST({total_gpu} AS FLOAT) / 1e9, 3) AS total_gpu_time_s,
+        ROUND(CAST(SUM({dur_expr}) AS FLOAT) / COUNT(*) / 1e3, 2) AS avg_kernel_us
  FROM {KERNEL_TABLE}
  WHERE 1=1 {time_filter}"""
 try:
@@ -305,7 +324,6 @@ except Exception as e:
 
 print(f"\n=== Analysis Complete ===")
 print(f"  SQLite: {db_path}")
-print(f"  Custom queries: python3 -c \"import sqlite3; c=sqlite3.connect('{db_path}'); ...\"")
 
 conn.close()
 PYEOF
