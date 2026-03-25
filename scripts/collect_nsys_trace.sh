@@ -17,6 +17,7 @@
 
 set -euo pipefail
 
+ORIG_ARGS="$*"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/benchmark_lib.sh"
 
@@ -141,6 +142,12 @@ log() { echo "[$(TS)] $*"; }
 TAG="nsys_${QUANT}_${CONFIG}_${SCENARIO}_tp${TP}_ep${EP}_c${CONCURRENCY}_iter${ITER_RANGE}"
 [[ "$DP" == "true" ]] && TAG="${TAG}_dp"
 mkdir -p "$TRACE_DIR"
+
+# Save all stdout/stderr to log file (and still print to terminal)
+SCRIPT_LOG="$TRACE_DIR/collect_trace_${TAG}.log"
+exec > >(tee -a "$SCRIPT_LOG") 2>&1
+log "  Script log: $SCRIPT_LOG"
+log "  Command: $0 $ORIG_ARGS"
 
 log "============================================================"
 log "  Nsight Systems Trace Capture"
