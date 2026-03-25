@@ -162,18 +162,29 @@ sample = cur.execute(f"SELECT {name_col} FROM {KERNEL_TABLE} LIMIT 1").fetchone(
 name_is_id = HAS_STRINGS and sample and isinstance(sample[0], int)
 
 if name_is_id:
-    # Build string lookup: JOIN with StringIds to resolve names
     scols = {r[1].lower(): r[1] for r in cur.execute("PRAGMA table_info('StringIds')").fetchall()}
     sid_col = scols.get('id') or scols.get('rowid') or 'id'
     sval_col = scols.get('value') or scols.get('string') or scols.get('name') or 'value'
     print(f"  StringIds columns: {', '.join(scols.keys())}")
     print(f"  Name column '{name_col}' stores integer IDs -> joining with StringIds.{sval_col}")
-    # Use a view/subquery: k table joined with StringIds
-    K = f"(SELECT k.*, s.{sval_col} AS _kname FROM {KERNEL_TABLE} k JOIN StringIds s ON k.{name_col} = s.{sid_col})"
-    resolved_name = "_kname"
+    # Also resolve demangledName for better classification
+    demangled_col = kcols.get('demangledname')
+    if demangled_col:
+        K = f"""(SELECT k.*, sn.{sval_col} AS _kname, sd.{sval_col} AS _dname
+                 FROM {KERNEL_TABLE} k
+                 JOIN StringIds sn ON k.{name_col} = sn.{sid_col}
+                 JOIN StringIds sd ON k.{demangled_col} = sd.{sid_col})"""
+        resolved_name = "_kname"
+        resolved_demangled = "_dname"
+        print(f"  Also resolving demangledName for classification")
+    else:
+        K = f"(SELECT k.*, s.{sval_col} AS _kname FROM {KERNEL_TABLE} k JOIN StringIds s ON k.{name_col} = s.{sid_col})"
+        resolved_name = "_kname"
+        resolved_demangled = "_kname"
 else:
     K = KERNEL_TABLE
     resolved_name = name_col
+    resolved_demangled = kcols.get('demangledname') or name_col
     print(f"  Name column '{name_col}' stores strings directly")
 
 # ---- Time filter ----
@@ -227,7 +238,10 @@ except Exception as e:
 
 # ======================== Query 2: Category Breakdown ========================
 print(f"\n=== 2. MoE vs Attention vs NCCL vs GEMM Time Split ===")
+# Use demangledName for classification (has full kernel signature like cutlass_sm100_mxf4...)
+# shortName can be generic (e.g. "device_kernel" for all CUTLASS kernels)
 n = resolved_name
+d = resolved_demangled
 q = f"""SELECT CASE
        WHEN {n} LIKE '%moe%' OR {n} LIKE '%MoE%'
             OR {n} LIKE '%expert%' OR {n} LIKE '%Expert%'
@@ -235,14 +249,22 @@ q = f"""SELECT CASE
             OR {n} LIKE '%topk%' OR {n} LIKE '%buildExpert%'
             OR {n} LIKE '%computeStrides%' OR {n} LIKE '%Dispatch%'
             OR {n} LIKE '%Combine%' OR {n} LIKE '%Prepare%'
-            OR {n} LIKE '%Sanitize%' THEN 'MoE'
+            OR {n} LIKE '%Sanitize%'
+            OR {d} LIKE '%moe%' OR {d} LIKE '%MoE%'
+            OR {d} LIKE '%expert%' OR {d} LIKE '%Expert%'
+            OR {d} LIKE '%PtrArray%' THEN 'MoE'
        WHEN {n} LIKE '%fmha%' OR {n} LIKE '%Fmha%'
-            OR {n} LIKE '%flash%' OR {n} LIKE '%attention%' THEN 'Attention'
+            OR {n} LIKE '%flash%' OR {n} LIKE '%attention%'
+            OR {d} LIKE '%fmha%' OR {d} LIKE '%Fmha%' THEN 'Attention'
        WHEN {n} LIKE '%nccl%' OR {n} LIKE '%allreduce%'
-            OR {n} LIKE '%AllReduce%' THEN 'NCCL/Comm'
+            OR {n} LIKE '%AllReduce%'
+            OR {d} LIKE '%nccl%' THEN 'NCCL/Comm'
        WHEN {n} LIKE '%gemm%' OR {n} LIKE '%Gemm%'
             OR {n} LIKE '%cutlass%' OR {n} LIKE '%cublas%'
-            OR {n} LIKE '%nvjet%' THEN 'GEMM'
+            OR {n} LIKE '%nvjet%' OR {n} LIKE '%splitKreduce%'
+            OR {d} LIKE '%gemm%' OR {d} LIKE '%Gemm%'
+            OR {d} LIKE '%cutlass%' OR {d} LIKE '%cublas%'
+            OR {d} LIKE '%nvjet%' THEN 'GEMM'
        WHEN {n} LIKE '%Norm%' OR {n} LIKE '%norm%' THEN 'Norm'
        WHEN {n} LIKE '%rope%' OR {n} LIKE '%Rope%'
             OR {n} LIKE '%RoPE%' THEN 'RoPE'
