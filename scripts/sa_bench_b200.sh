@@ -50,6 +50,7 @@ BENCH_SERVING_DIR=""
 TP=8
 SCENARIO_FILTER="all"        # all | chat | reasoning | summarize
 CONC_FILTER=""               # empty = use default sweep; "256" or "4 128 256" = specific values
+DP_OVERRIDE=""               # empty = auto (EP>1 → DP=true); "true" or "false" = force
 NUM_WARMUPS=""                # empty = auto (SA default: 8); or explicit number
 DAR_NUM_REQUESTS=200          # number of requests for DAR measurement
 DAR_CONCURRENCY=32            # concurrency for DAR measurement
@@ -71,6 +72,7 @@ while [[ $# -gt 0 ]]; do
         --dar-num-requests) DAR_NUM_REQUESTS="$2"; shift 2 ;;
         --dar-concurrency)  DAR_CONCURRENCY="$2"; shift 2 ;;
         --dar-warmup)       DAR_WARMUP="$2"; shift 2 ;;
+        --dp)               DP_OVERRIDE="$2"; shift 2 ;;
         -h|--help)
             echo "Usage: bash sa_bench_b200.sh --model-fp4 <path> --model-fp8 <path> [options]"
             echo ""
@@ -88,6 +90,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --scenario SCENARIO     chat|reasoning|summarize|all (default: all)"
             echo "  --concurrency \"C1 C2\"   Concurrency values to run (default: sweep 1 4 8 16 32 64 128 256)"
             echo "  --num-warmups N         Number of warmup requests (default: 8, matching SA)"
+            echo "  --dp true|false         Force DP attention on/off (default: auto, EP>1 → true)"
             echo ""
             echo "DAR collection (for latency/MTP configs):"
             echo "  --dar-num-requests N    Number of requests for DAR measurement (default: 200)"
@@ -738,7 +741,9 @@ run_config() {
             # EP=1 with TP=8: no DP attention (pure TP)
             # EP=8 with TP=8: can use DP attention for throughput
             local dp_attn="false"
-            if [[ $ep_size -gt 1 ]]; then
+            if [[ -n "$DP_OVERRIDE" ]]; then
+                dp_attn="$DP_OVERRIDE"
+            elif [[ $ep_size -gt 1 ]]; then
                 dp_attn="true"
             fi
 
