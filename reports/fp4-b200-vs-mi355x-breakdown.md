@@ -1,64 +1,67 @@
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
 > **Last updated:** 2026-03-25
-> **Model:** DeepSeek-R1-0528, 4-GPU, FP4
-> **Scenario:** chat 1K/1K, Concurrency=256
-> **状态：** 第一步（复现 B200 数据）✅；第二步（B200 trace 分析）✅；第三步（配置对齐实验）待定
+> **Model:** DeepSeek-R1-0528, FP4
+> **状态：** 配置 A（EP4 DP）trace 完成 ✅；配置 B（EP8 no-DP）复现+trace 进行中 🔄
 
 ## 问题背景
 
-SA InferenceX 报告的 B200 FP4 EP4 性能大幅领先 MI355X FP4 EP1，需要 breakdown 分析差距来源。
+SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdown 分析差距来源。
 
-## E2E 性能对比
+**ATOM 不支持 DP Attention**，原始 SA 对标配置（EP=4, DP=true）无法公平对比。因此增加 **配置 B（EP=8, DP=false, c=64）** 作为更公平的对标基准。
 
-### 配置差异
+## 两组对比配置
+
+### 配置 A：原始 SA 对标（EP=4, DP=true, c=256）
 
 | 项目 | B200 (SA InferenceX) | MI355X (ATOM) | 差异 |
 |------|---------------------|---------------|------|
-| **Date** | 2026-02-03 | 2026-03-23 | |
-| **Image** | nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post2 | rocm/atom:rocm7.1.1-ubuntu24.04-pytorch2.9-atom0.1.1-MI350x | TRT-LLM vs ATOM |
-| **Precision** | FP4 | FP4 | 相同 |
-| **GPU Count** | 4 | 4 | 相同 |
-| **TP** | 4 | 4 | 相同 |
-| **EP** | 4 | 1 | **B200 EP=4, 355X EP=1** |
-| **DP Attention** | True | False | **B200 有 DP Attention** |
+| **Image** | rc6.post2 | ATOM 0.1.1 | TRT-LLM vs ATOM |
+| **GPU / TP / EP** | 4 / 4 / 4 | 4 / 4 / 1 | **EP 不同** |
+| **DP Attention** | True | False | **B200 有 DP，355X 不支持** |
 | **Concurrency** | 256 | 256 | 相同 |
-| **Scenario** | chat 1K/1K | chat 1K/1K | 相同 |
 
-> **关键配置差异：** EP 和 DP Attention 不同。B200 使用 EP=4 + DP Attention（每个 GPU 分担不同的 expert，注意力并行化），355X 使用 EP=1（每个 GPU 有全部 expert 副本）。这可能是性能差距的重要因素之一。
+| Metric | B200 | MI355X | 差距 | 355X/B200 |
+|--------|------|--------|------|-----------|
+| **Output TPS /GPU** | 1,954.9 | 1,154.7 | **-40.9%** | 59.1% |
+| **Interactivity** | 32.16 | 18.43 | **-42.7%** | 57.3% |
 
-### 性能数据
+> **不公平因素：** B200 EP=4 + DP Attention 使 attention 负载降为 1/4，且 MoE 通信模式不同。41% 差距中包含 DP Attention 和 EP 策略的额外优势。
 
-| Metric | B200 (rc6.post2) | MI355X (ATOM) | 差距 | 355X / B200 |
-|--------|-----------------|---------------|------|-------------|
-| **Token Throughput /GPU** (tok/s/gpu) | 3,907.9 | 2,308.4 | **-40.9%** | 59.1% |
-| **Output Throughput /GPU** (tok/s/gpu) | 1,954.9 | 1,154.7 | **-40.9%** | 59.1% |
-| **Input Throughput /GPU** (tok/s/gpu) | 1,953.0 | 1,153.6 | **-40.9%** | 59.0% |
-| **Interactivity** (tok/s/user) | 32.16 | 18.43 | **-42.7%** | 57.3% |
-| **TPOT** (ms, = 1000/Interactivity) | 31.09 | 54.25 | **+74.5%** | 174.5% |
+### 配置 B：公平对标（EP=8, DP=false, c=64）🔄 进行中
 
-> **355X 在所有指标上落后约 40-43%。**
-> - Throughput（Total/Output/Input）一致落后 ~41%，说明 prefill 和 decode 阶段均受影响
-> - Interactivity 落后 42.7%（TPOT 高 74.5%），说明每步 decode 延迟更高
+| 项目 | B200 (SA InferenceX) | MI355X (ATOM) | 差异 |
+|------|---------------------|---------------|------|
+| **Image** | rc6.post2 | ATOM 0.1.1 | TRT-LLM vs ATOM |
+| **GPU / TP / EP** | 8 / 8 / 8 | 4 / 4 / 1 | GPU 数不同，需按 /GPU 比 |
+| **DP Attention** | **False** | False | **相同** |
+| **Concurrency** | 64 | 待定 | |
+
+| Metric | B200 (SA 数据) | MI355X | 差距 |
+|--------|---------------|--------|------|
+| **Output TPS /GPU** | 473.4 | 待测 | 待填 |
+| **Interactivity** | 60.93 | 待测 | 待填 |
+
+> **为什么选这个配置：** DP=false 消除 DP Attention 差异；EP=8 是 B200 8GPU 的自然 EP 配置；c=64 是 SA 原始测试点。
 
 ### 与 FP8 对比的参考（chat 1K/1K c=256，来自已有数据）
 
 | Config | B200 Output TPS (total) | 355X Output TPS (total) | 差距 |
 |--------|------------------------|------------------------|------|
 | **FP8 TP=8 EP=1 MTP0** | 7,706.9 (8GPU) | 5,970.6 (8GPU) | -22.5% |
-| **FP4 TP=4 EP=4/1** | 7,819.5 (4GPU×1954.9) | 4,618.9 (4GPU×1154.7) | **-40.9%** |
+| **FP4 TP=4 EP=4/1 DP** | 7,819.5 (4GPU×1954.9) | 4,618.9 (4GPU×1154.7) | **-40.9%** |
 
-> FP4 4GPU 配置下差距（41%）远大于 FP8 8GPU 配置（22.5%），提示 EP=4 vs EP=1 和 DP Attention 差异可能是额外差距的主要来源。
+> FP4 配置 A 差距（41%）远大于 FP8（22.5%），其中 DP Attention 差异是重要因素。配置 B 消除此因素后差距应缩小。
 
 ## Breakdown 计划
 
-### 第一步：复现 B200 数据 ✅
+### 配置 A：EP=4, DP=true, c=256
 
-在 B200 上使用相同 SA InferenceX 配置（rc6.post2, FP4, EP=4, DP Attention, c=256）复现性能，确认我们的环境与 SA 报告一致。
+#### 第一步：复现 B200 数据 ✅
 
-**结果目录：** `results_b200_mtp0_fp4_ep4_conc256_post2/`（待上传）
+**结果目录：** `results_b200_mtp0_fp4_ep4_conc256_post2/`
 
-### 第二步：B200 Trace 分析 ✅
+#### 第二步：B200 Trace 分析 ✅
 
 **Trace 文件：** `nsys_fp4_throughput_chat_tp4_ep4_c256_iter100-150_dp.nsys-rep` (37 MB)
 **配置：** FP4, TP=4, EP=4, DP Attention, chat 1K/1K, c=256, iter 100-150
@@ -108,20 +111,36 @@ FP4 MoE Expert GEMM 的两个变体性能参考：
 
 > 实例数相同（11,832 = ~197 steps × 60 experts/step），大变体时间约为小变体的 1.84 倍，与 DeepSeek MoE 结构中 gate+up 维度是 down 维度 2 倍一致。
 
-### 第三步：355X 配置对齐测试（待定）
+### 配置 B：EP=8, DP=false, c=64（公平对标）
 
-可能的对齐实验：
-1. **355X EP=4 测试：** 如果 ATOM 支持 EP=4，测试 EP=4 下的性能提升
-2. **355X DP Attention 测试：** 如果 ATOM 支持 DP Attention，测试开启后的性能
-3. **B200 EP=1 测试：** 在 B200 上用 EP=1（无 DP Attention）测试，量化 EP 对性能的贡献
+#### 第三步：复现 B200 DP=false 数据 🔄 进行中
 
-### 第四步：Kernel 级对比
+在 B200 上使用 SA InferenceX 配置 B（rc6.post2, FP4, TP=8, EP=8, DP=false, c=64）复现性能 + 抓 trace + 分析。
 
-对比两个平台在相同 EP 配置下的关键 kernel 性能：
-- FP4 dequant + GEMM
-- MoE routing + expert computation
-- Attention kernel
-- All-reduce / All-to-all 通信
+**命令：**
+```
+bash scripts/collect_nsys_trace.sh \
+  --model /home/models/models--DeepSeek-R1-0528 \
+  --mode serve --scenario chat --concurrency 64 \
+  --quant fp4 --config throughput --tp 8 --ep 8 --dp false \
+  --trace-dir results_b200_mtp0_fp4_ep8_conc64_post2 --iter-range 100-150
+```
+
+**预期结果：** SA 报告 Output TPS/GPU = 473.4，Interactivity = 60.93
+
+#### 第四步：配置 B Trace 分析
+
+分析 DP=false 配置下的 kernel 分布，与配置 A 对比：
+- MoE All-to-All 通信占比变化（EP=8 vs EP=4）
+- Attention 占比变化（无 DP Attention → 全量 attention）
+- MoE GEMM 占比变化（EP=8 每 GPU 仅处理 ~8 个 expert）
+
+#### 第五步：跨配置 + 跨平台 Kernel 级对比
+
+| 对比 | 目的 |
+|------|------|
+| B200 配置 A vs 配置 B | 量化 DP Attention + EP 策略对 kernel 分布的影响 |
+| B200 配置 B vs 355X | 公平对比：消除 DP 差异后的 kernel 级性能差距 |
 
 ## 差距来源初步分解
 
@@ -139,15 +158,16 @@ FP4 MoE Expert GEMM 的两个变体性能参考：
 
 ## 待填充
 
-- [x] B200 复现结果的详细数据
-- [x] B200 trace 分析结果
-- [ ] EP/DP Attention 对性能贡献的量化（需 B200 EP=1 或 355X EP=4 实验）
-- [ ] 355X 配置对齐实验
+- [x] 配置 A：B200 EP=4 DP 复现 + trace 分析
+- [ ] 配置 B：B200 EP=8 no-DP 复现 + trace 分析
+- [ ] 配置 A vs B kernel 分布对比
+- [ ] 配置 B vs 355X 公平对标结果
 - [ ] 355X trace 分析（如有 rocprof 数据）
 
 ## 迭代日志
 
 | 日期 | 变更 |
 |------|------|
+| 2026-03-25 v3 | 增加配置 B（EP=8, DP=false, c=64）公平对标方案。ATOM 不支持 DP Attention，消除此差异后重新对比 |
 | 2026-03-25 v2 | B200 nsys trace 分析完成：kernel 级分布、分类汇总、差距来源初步分解 |
 | 2026-03-25 v1 | 初版：SA 报告数据 + MI355X 数据对比表格，Breakdown 计划 |
