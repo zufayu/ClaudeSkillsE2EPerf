@@ -230,11 +230,11 @@ footer{margin-top:var(--gap-lg);padding-top:12px;border-top:1px solid var(--bord
 
 <!-- Tab: Trends -->
 <div class="tab-content" id="tab-trends">
-  <div class="series-selector" id="trends-series-selector"></div>
   <div class="chart-grid">
-    <div class="chart-card hero"><h3>Output Throughput by Concurrency</h3><div class="chart-wrap"><canvas id="chart-tput"></canvas></div></div>
-    <div class="chart-card half"><h3>TPOT p50 by Concurrency</h3><div class="chart-wrap"><canvas id="chart-tpot"></canvas></div></div>
-    <div class="chart-card half"><h3>TTFT p50 by Concurrency</h3><div class="chart-wrap"><canvas id="chart-ttft"></canvas></div></div>
+    <div class="chart-card half"><h3>Total Throughput (tok/s)</h3><div class="chart-wrap"><canvas id="chart-trend-total"></canvas></div></div>
+    <div class="chart-card half"><h3>Output Throughput (tok/s)</h3><div class="chart-wrap"><canvas id="chart-trend-output"></canvas></div></div>
+    <div class="chart-card half"><h3>TPOT (ms)</h3><div class="chart-wrap"><canvas id="chart-trend-tpot"></canvas></div></div>
+    <div class="chart-card half"><h3>TTFT (ms)</h3><div class="chart-wrap"><canvas id="chart-trend-ttft"></canvas></div></div>
   </div>
 </div>
 
@@ -417,7 +417,6 @@ const state = {
   series: new Set(defaultSeries.length ? defaultSeries : allSeries),
   concs: new Set(allConcs.map(String)),
   perfMetric: 'output_tps',
-  trendsSeries: allSeries[0] || '',
   compareRef: allSeries[0] || '',
   compareCmp: allSeries[1] || '',
   tableCols: new Set(allSeries.slice(0, 2)),  // default: show only Ref+Cmp in table
@@ -571,7 +570,7 @@ const charts = {};
 function destroyChart(id) {
   if (charts[id]) { charts[id].destroy(); delete charts[id]; }
   // Also clear any orphaned Chart instance on the canvas (e.g. from prior crash)
-  const canvasMap = {'perfBar': 'chart-perf-bar', 'interactive2': 'chart-interactive2', 'concScaling': 'chart-conc-scaling', 'tput': 'chart-tput', 'tpot': 'chart-tpot', 'ttft': 'chart-ttft'};
+  const canvasMap = {'perfBar': 'chart-perf-bar', 'interactive2': 'chart-interactive2', 'concScaling': 'chart-conc-scaling', 'trendTotal': 'chart-trend-total', 'trendOutput': 'chart-trend-output', 'trendTpot': 'chart-trend-tpot', 'trendTtft': 'chart-trend-ttft'};
   if (canvasMap[id]) {
     const el = document.getElementById(canvasMap[id]);
     const existing = el && Chart.getChart(el);
@@ -1092,73 +1091,76 @@ function buildConcScalingChart(data, scenarioFilter) {
   });
 }
 
-/* --- Trends Tab: Line Charts --- */
-function buildTrendsSeriesSelector() {
-  const container = document.getElementById('trends-series-selector');
-  container.innerHTML = '';
-  const activeSeries = allSeries.filter(s => state.series.has(s));
-  for (const sk of activeSeries) {
-    const c = getColor(sk);
-    const btn = document.createElement('button');
-    btn.className = 'sel-btn' + (state.trendsSeries === sk ? ' active' : '');
-    btn.style.borderColor = c.border;
-    if (state.trendsSeries === sk) btn.style.background = c.border;
-    btn.textContent = sk;
-    btn.addEventListener('click', () => {
-      state.trendsSeries = sk;
-      refresh();
-    });
-    container.appendChild(btn);
-  }
-  // "All" button
-  const allBtn = document.createElement('button');
-  allBtn.className = 'sel-btn' + (state.trendsSeries === '__all__' ? ' active' : '');
-  allBtn.textContent = 'All Series';
-  allBtn.addEventListener('click', () => {
-    state.trendsSeries = '__all__';
-    refresh();
-  });
-  container.appendChild(allBtn);
-}
-
-function buildLineChart(canvasId, chartKey, data, yField, yLabel) {
+/* --- Trends Tab: Grouped Bar Charts --- */
+function buildTrendChart(canvasId, chartKey, data, metric, yLabel) {
   destroyChart(chartKey);
   const canvas = document.getElementById(canvasId);
-  // Filter by selected trends series
-  let filtered = data;
-  if (state.trendsSeries && state.trendsSeries !== '__all__') {
-    filtered = data.filter(d => d.series_key === state.trendsSeries);
-  }
-  const grouped = {};
-  for (const d of filtered) {
-    const sk = d.series_key + ' ' + d.isl + '/' + d.osl;
-    if (!grouped[sk]) grouped[sk] = {series: d.series_key, points: []};
-    grouped[sk].points.push({x: d.conc, y: d[yField]});
-  }
+
+  // Build config labels (scenario + concurrency)
+  const SCEN = {'1024/1024': 'chat', '1024/8192': 'reasoning', '8192/1024': 'summarize'};
+  const configLabels = [...new Set(data.map(d => {
+    const name = SCEN[`${d.isl}/${d.osl}`] || `${d.isl}/${d.osl}`;
+    return `${name} c=${d.conc}`;
+  }))];
+  configLabels.sort((a, b) => {
+    const pa = a.match(/(.+?) c=(\d+)/);
+    const pb = b.match(/(.+?) c=(\d+)/);
+    if (!pa || !pb) return 0;
+    if (pa[1] !== pb[1]) return pa[1].localeCompare(pb[1]);
+    return +pa[2] - +pb[2];
+  });
+
+  const seriesKeys = sortSeriesKeys([...new Set(data.map(d => d.series_key))]);
+  const allValues = data.map(d => d[metric] || 0).filter(v => v > 0);
+  const avg = allValues.length ? allValues.reduce((a, b) => a + b, 0) / allValues.length : 0;
+
   const datasets = [];
-  for (const [key, g] of Object.entries(grouped)) {
-    g.points.sort((a,b) => a.x - b.x);
-    const c = getColor(g.series);
+  for (const sk of seriesKeys) {
+    const c = getColor(sk);
+    const values = configLabels.map(cl => {
+      const match = data.find(d => {
+        const name = SCEN[`${d.isl}/${d.osl}`] || `${d.isl}/${d.osl}`;
+        return d.series_key === sk && `${name} c=${d.conc}` === cl;
+      });
+      return match ? (match[metric] || 0) : null;
+    });
     datasets.push({
-      label: key, data: g.points, borderColor: c.border, backgroundColor: c.bg.replace('0.55','0.15'),
-      borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, fill: false, tension: 0.1,
+      label: sk, data: values, backgroundColor: c.bg, borderColor: c.border, borderWidth: 1,
     });
   }
+
+  // Average line overlay
+  datasets.push({
+    label: 'Average', type: 'line',
+    data: configLabels.map(() => avg),
+    borderColor: 'rgba(255,255,255,0.3)', borderDash: [6, 4], borderWidth: 1.5,
+    pointRadius: 0, fill: false, order: -1,
+  });
+
   charts[chartKey] = new Chart(canvas, {
-    type:'line',
-    data:{datasets},
-    options:{
-      responsive:true, maintainAspectRatio:false,
-      scales:{
-        x:{type:'logarithmic',title:{display:true,text:'Concurrency',color:'#7e8094'},ticks:{color:'#7e8094',callback:v=>v},grid:{color:'#262733'}},
-        y:{title:{display:true,text:yLabel,color:'#7e8094'},ticks:{color:'#7e8094'},grid:{color:'#262733'}},
+    type: 'bar',
+    data: { labels: configLabels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { color: '#7e8094', font: {size: 10} }, grid: { color: '#262733' } },
+        y: { title: { display: true, text: yLabel, color: '#7e8094' }, ticks: { color: '#7e8094' }, grid: { color: '#262733' } },
       },
-      plugins:{
-        tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.parsed.y)} (c=${ctx.parsed.x})`}},
-        legend:{labels:{color:'#bfc1d0',usePointStyle:true,pointStyle:'circle'}},
-        datalabels:{display:false}
+      plugins: {
+        tooltip: {
+          callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.parsed.y)} ${yLabel.match(/\((.+)\)/)?.[1] || ''}` }
+        },
+        legend: { labels: { color: '#bfc1d0', usePointStyle: true, pointStyle: 'rectRounded' } },
+        datalabels: typeof ChartDataLabels !== 'undefined' ? {
+          display: function(ctx) {
+            return ctx.dataset.type !== 'line' && ctx.parsed && ctx.parsed.y != null && ctx.parsed.y > 0;
+          },
+          color: '#bfc1d0', anchor: 'end', align: 'top', font: { size: 9 },
+          formatter: v => v != null ? fmtCompact(v) : '',
+        } : {display: false}
       }
-    }
+    },
+    plugins: typeof ChartDataLabels !== 'undefined' ? [ChartDataLabels] : [],
   });
 }
 
@@ -1341,10 +1343,10 @@ function refresh() {
     buildInteractiveChart(data, 'chart-interactive2', 'interactive2', sf);
     buildConcScalingChart(data, sf);
   } else if (activeTab === 'trends') {
-    buildTrendsSeriesSelector();
-    buildLineChart('chart-tput', 'tput', data, 'output_tps', 'Output Throughput (tok/s)');
-    buildLineChart('chart-tpot', 'tpot', data, 'tpot_p50', 'TPOT p50 (ms)');
-    buildLineChart('chart-ttft', 'ttft', data, 'ttft_p50', 'TTFT p50 (ms)');
+    buildTrendChart('chart-trend-total', 'trendTotal', data, 'total_tps', 'Total Throughput (tok/s)');
+    buildTrendChart('chart-trend-output', 'trendOutput', data, 'output_tps', 'Output Throughput (tok/s)');
+    buildTrendChart('chart-trend-tpot', 'trendTpot', data, 'tpot_p50', 'TPOT (ms)');
+    buildTrendChart('chart-trend-ttft', 'trendTtft', data, 'ttft_p50', 'TTFT (ms)');
   } else if (activeTab === 'data') {
     buildDataTable(data);
   }
