@@ -462,6 +462,7 @@ EOF
                 "kv_cache_dtype=fp8"
                 "kv_cache_free_mem_fraction=$KV_CACHE_FREE_MEM_FRACTION"
                 "tensor_parallel_size=$TP"
+                "gpu_count=$GPU_COUNT"
                 "ep_size=$ep_size"
                 "dp_attention=$dp_attn"
                 "moe_backend=$MOE_BACKEND"

@@ -130,6 +130,7 @@ def extract_metrics(data, file_info):
         "max_model_len",
         "kv_cache_dtype",
         "tensor_parallel_size",
+        "gpu_count",
         "mtp_layers",
         "random_range_ratio",
         # MI355X / ATOM (vLLM)
@@ -194,7 +195,8 @@ def main():
     parser.add_argument("--framework", required=True, help='Framework and version, e.g. "TRT-LLM 1.2.0rc4"')
     parser.add_argument("--quantization", required=True, help='Quantization type, e.g. "NVFP4", "FP8"')
     parser.add_argument("--model", default="DeepSeek-R1-0528", help="Model name")
-    parser.add_argument("--gpu-count", type=int, default=8, help="Number of GPUs")
+    parser.add_argument("--gpu-count", type=int, default=None,
+                        help="Number of GPUs (auto-detected from result JSON if not set)")
     parser.add_argument("--tag", default=None, help="Optional config tag filter (e.g. fp4-throughput)")
     parser.add_argument("--env-tag", required=True,
                         help='Environment tag to distinguish runs on the same platform '
@@ -211,6 +213,33 @@ def main():
     if not result_files:
         print(f"ERROR: No result_*.json files found in {args.results_dir}", file=sys.stderr)
         sys.exit(1)
+
+    # Auto-detect gpu_count from result JSON if not explicitly set
+    if args.gpu_count is None:
+        for rf in result_files:
+            try:
+                with open(rf) as fh:
+                    sample = json.load(fh)
+                # Try gpu_count first (newer), then tensor_parallel_size (older)
+                gc = sample.get("gpu_count") or sample.get("tensor_parallel_size")
+                if gc is not None:
+                    args.gpu_count = int(gc)
+                    print(f"  Auto-detected gpu_count={args.gpu_count} from {os.path.basename(rf)}")
+                    break
+            except (json.JSONDecodeError, IOError, ValueError):
+                continue
+        if args.gpu_count is None:
+            args.gpu_count = 8
+            print("  WARN: Could not auto-detect gpu_count, defaulting to 8")
+
+    # Warn if platform name has a different GPU count than detected
+    plat_match = re.match(r'(\d+)', args.platform)
+    if plat_match:
+        plat_gpus = int(plat_match.group(1))
+        if plat_gpus != args.gpu_count:
+            print(f"  WARN: --platform says {plat_gpus} GPUs but gpu_count={args.gpu_count}. "
+                  f"Consider using --platform \"{args.gpu_count}×{args.platform.split('×')[-1] if '×' in args.platform else args.platform}\"",
+                  file=sys.stderr)
 
     results = []
     dates = []
