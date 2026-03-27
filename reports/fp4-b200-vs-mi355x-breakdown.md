@@ -80,37 +80,40 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 ### MoE Layer 单层 Kernel 序列（第 40 层实测）
 
 > **层间 Pipeline 重叠说明：** 上一层末尾的 `moefinalize` 与本层的 `QKV_A proj` 在 GPU 上并行执行（仅差 2μs 启动）。`userbuffers_rmsnorm`（#11）融合了本层的 TP allreduce 和下一层的 pre-attn RMSNorm，因此 MoE 层没有独立的 pre-attn norm kernel。
+>
+> **MI355X 结构差异：** ① EP=1 → 无 EP allreduce（#25 不存在）；② 无 userbuffers → allreduce 和 norm 是分离 kernel；③ MoE 可能使用 fused_moe triton kernel（#15-19 合并）。MI355X kernel 名待 rocprof trace 确认。
 
-| # | Module | Kernel | Duration (μs) | Precision | 说明 |
-|---|--------|--------|---------------|-----------|------|
-| — | fused_qkv_a_proj | nvjet_sm100_tst_64x32 splitK TNT | ⟨pipeline 重叠⟩ | 待确认 | 与上一层 moefinalize 并行执行，wall time 含重叠 |
-| — | fused_qkv_a_proj (续) | cublasLt::splitKreduce | ⟨pipeline 重叠⟩ | BF16 | splitK 归约 |
-| 1 | q_norm | RMSNormKernel<8, bf16> (Stream 7) | 2.7 | BF16 | |
-| 2 | k_norm | RMSNormKernel<8, bf16> (Stream 8907) | 2.5 | BF16 | 与 q_norm 并行 |
-| 3 | q_b_proj | nvjet_sm100_tst_24x64 TNN | 5.8 | 待确认 | [M,1536]×[1536,3072] |
-| 4 | (k concat) | CatArrayBatchedCopy (Stream 8907) | 5.0 | — | 与 #3 并行，k_norm 结果拼接 |
-| 5 | q × up_k | nvjet_sm100_tst_128x32 TNT | 3.6 | 待确认 | |
-| 6 | cache_update | applyMLARopeAndAssignQKV | 3.5 | BF16 | RoPE 旋转位置编码 + KV cache 写入 |
-| 7 | **mla** | **fmhaSm100fKernel QkvE4m3 Qk576 V512** | **20.6** | **FP8 E4M3** | MLA attention, PagedKV, 单 fused kernel |
-| 8 | o × up_v | nvjet_sm100_tst_64x16 TNT | 4.1 | 待确认 | |
-| 9 | (quantize → out_proj) | quantize_with_block_size | 2.6 | BF16→FP4 | FP4 block 量化 |
-| 10 | out_proj | nvjet_sm100_ootst_128x128 E4M3 | 6.1 | **FP8 E4M3** | [M,2048]×[2048,7168] |
-| 11 | **allreduce+addrmsnorm** | **userbuffers_fp16_sum_gpu_mc_rmsnorm** | **15.6** | BF16 | fused TP allreduce + 下一模块 pre-norm |
-| 12 | (residual allgather) | userbuffers_fp16_sum_inplace_res_allgather | 9.7 | BF16 | 残差连接的 allgather |
-| 13 | Router gemm | nvjet_sm100_tss splitK TNT | 5.4 | 待确认 | [M,7168]×[7168,384] |
-| 14 | Router gemm (续) | cublasLt::splitKreduce | 2.8 | — | splitK 归约 |
-| 15 | (quantize → routing) | quantize_with_block_size | 3.0 | BF16→FP4 | routing 输入量化 |
-| 16 | topk | routingMainKernel (DeepSeek, topk=8) | 4.4 | FP32/BF16 | expert 路由选择 |
-| 17 | sort | routingIndicesClusterKernel | 5.1 | — | token→expert 分组排序 |
-| 18 | **moe (gate+up)** | **bmm_E2m1 swiGlu dynBatch** | **48.4** | **FP4×FP4→FP32** | MoE gate+up proj, fused SwiGLU 激活 |
-| 19 | **moe (down)** | **bmm_Bfloat16 dynBatch** | **27.9** | **FP4×FP4→BF16** | MoE down proj |
-| 20 | (quantize → SE) | quantize_with_block_size | 3.6 | BF16→FP4 | MoE 输出量化 |
-| 21 | shared_expert (gate+up) | nvjet_sm100_ootst_128x128 E4M3 | 9.9 | **FP8 E4M3** | |
-| 22 | shared_expert (激活) | silu_and_mul_kernel | 1.9 | BF16 | SiLU 激活 |
-| 23 | shared_expert (量化) | quantize_with_block_size | 2.2 | BF16→FP4 | |
-| 24 | shared_expert (down) | nvjet_sm100_ootst_128x128 E4M3 | 3.9 | **FP8 E4M3** | |
-| 25 | **moe (EP allreduce)** | **moefinalize_allreduce_lamport_oneshot** | **58.9** | BF16 | EP=8 MoE 结果聚合 |
-| — | ⟨pipeline⟩ 下一层 qkv_a | nvjet_sm100_tst_64x32 splitK TNT | (65.4) | 待确认 | 与 #25 并行执行，Start 仅差 2μs |
+| # | Module | B200 Kernel | B200 μs | B200 % | MI355X Kernel | MI355X μs |
+|---|--------|-------------|---------|--------|---------------|-----------|
+| — | fused_qkv_a_proj | nvjet tst splitK TNT | ⟨重叠⟩ | — | ck/hipblaslt GEMM | |
+| — | fused_qkv_a_proj (续) | splitKreduce | ⟨重叠⟩ | — | （同上） | |
+| 1 | q_norm | RMSNormKernel bf16 | 2.7 | 1.0% | rms_norm (triton) | |
+| 2 | k_norm | RMSNormKernel bf16 | 2.5 | 1.0% | rms_norm (triton) | |
+| 3 | q_b_proj | nvjet tst 24x64 TNN | 5.8 | 2.2% | ck/hipblaslt GEMM | |
+| 4 | k concat | CatArrayBatchedCopy | 5.0 | 1.9% | concat/reshape | |
+| 5 | q×up_k | nvjet tst 128x32 TNT | 3.6 | 1.4% | ck/hipblaslt GEMM | |
+| 6 | cache_update | applyMLARopeAndAssignQKV | 3.5 | 1.4% | rotary_embedding | |
+| 7 | **mla** | **fmhaSm100f QkvE4m3** | **20.6** | **7.9%** | **flash_attn (ck)** | |
+| 8 | o×up_v | nvjet tst 64x16 TNT | 4.1 | 1.6% | ck/hipblaslt GEMM | |
+| 9 | quantize→out_proj | quantize_with_block_size | 2.6 | 1.0% | scaled_fp4_quant | |
+| 10 | out_proj | nvjet ootst E4M3 | 6.1 | 2.4% | ck/hipblaslt GEMM | |
+| 11 | **allreduce+norm** | **userbuffers_rmsnorm** | **15.6** | **6.0%** | **rccl allreduce + rms_norm（分离）** | |
+| 12 | residual allgather | userbuffers_allgather | 9.7 | 3.7% | rccl allgather | |
+| 13 | Router gemm | nvjet tss splitK TNT | 5.4 | 2.1% | ck/hipblaslt GEMM | |
+| 14 | Router gemm (续) | splitKreduce | 2.8 | 1.1% | （同上） | |
+| 15 | quantize→routing | quantize_with_block_size | 3.0 | 1.2% | fused_moe 内部 | |
+| 16 | topk | routingMainKernel | 4.4 | 1.7% | fused_moe 内部 | |
+| 17 | sort | routingIndicesCluster | 5.1 | 2.0% | fused_moe 内部 | |
+| 18 | **moe (gate+up)** | **bmm_E2m1 swiGlu** | **48.4** | **18.7%** | **fused_moe gate+up (triton/ck)** | |
+| 19 | **moe (down)** | **bmm_Bfloat16** | **27.9** | **10.8%** | **fused_moe down (triton/ck)** | |
+| 20 | quantize→SE | quantize_with_block_size | 3.6 | 1.4% | scaled_fp4_quant | |
+| 21 | SE (gate+up) | nvjet ootst E4M3 | 9.9 | 3.8% | ck/hipblaslt GEMM | |
+| 22 | SE (激活) | silu_and_mul | 1.9 | 0.7% | silu_mul (triton) | |
+| 23 | SE (量化) | quantize_with_block_size | 2.2 | 0.8% | scaled_fp4_quant | |
+| 24 | SE (down) | nvjet ootst E4M3 | 3.9 | 1.5% | ck/hipblaslt GEMM | |
+| 25 | **moefinalize** | **moefinalize_allreduce_lamport** | **58.9** | **22.7%** | **N/A（EP=1 无 EP allreduce）** | |
+| — | ⟨pipeline⟩ 下一层 qkv_a | nvjet tst splitK TNT | (65.4) | — | ck/hipblaslt GEMM | |
+| | **合计 (#1-#25)** | | **259.2** | **100%** | | |
 
 > **Pipeline 重叠图示（第 40→41 层边界）：**
 > ```
@@ -120,23 +123,27 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 >            .451485s                                .451550s
 >            ↑ 间隔 2μs，GPU 并行执行两个 kernel
 > ```
+>
+> **MI355X 关键结构差异：**
+> - **#25 moefinalize（22.7%）：** MI355X EP=1 不需要 EP allreduce，此项完全不存在。这是 B200 EP=8 的独有开销。
+> - **#11 userbuffers_rmsnorm（6.0%）：** B200 用 userbuffers 融合 allreduce+norm 为单 kernel；MI355X 用 RCCL allreduce + 独立 rms_norm，至少 2 个 kernel。
+> - **#15-19 MoE（34.4%）：** B200 分离为 quantize+routing+sort+bmm×2 共 5 个 kernel；MI355X 的 fused_moe 可能将部分步骤合并。
 
-### MoE 层各模块占比（第 40 层，不含 pipeline 重叠区）
+### MoE 层各模块占比（第 40 层）
 
-| Module | Duration (μs) | 说明 |
-|--------|---------------|------|
-| q_norm + k_norm (#1-2) | 5.2 | |
-| q_b_proj + q×up_k (#3,5) | 9.4 | |
-| cache_update (#6) | 3.5 | |
-| **mla (#7)** | **20.6** | |
-| o×up_v + quantize + out_proj (#8-10) | 12.8 | |
-| **allreduce+addrmsnorm + allgather (#11-12)** | **25.3** | |
-| Router gemm + reduce (#13-14) | 8.2 | |
-| quantize + topk + sort (#15-17) | 12.5 | |
-| **moe gate+up + down (#18-19)** | **76.3** | 最大单项 |
-| quantize + shared_expert (#20-24) | 21.5 | |
-| **moefinalize (#25)** | **58.9** | 第二大，波动很大 |
-| **合计（#1-#25）** | **253.7** | 不含 pipeline 重叠区的 QKV_A |
+| Module Group | B200 μs | B200 % | MI355X 对应 | MI355X μs |
+|--------------|---------|--------|-------------|-----------|
+| Norm (#1-2) | 5.2 | 2.0% | rms_norm ×2 | |
+| MLA proj (#3-5) | 14.4 | 5.6% | ck GEMM ×3 | |
+| cache_update (#6) | 3.5 | 1.4% | rotary_emb | |
+| **MLA attention (#7)** | **20.6** | **7.9%** | **flash_attn** | |
+| out path (#8-10) | 12.8 | 4.9% | quant + ck GEMM | |
+| **TP comm (#11-12)** | **25.3** | **9.8%** | **rccl AR + AG + norm** | |
+| MoE routing (#13-17) | 20.7 | 8.0% | fused_moe routing | |
+| **MoE GEMM (#18-19)** | **76.3** | **29.4%** | **fused_moe GEMM** | |
+| Shared Expert (#20-24) | 21.5 | 8.3% | quant + ck GEMM + silu | |
+| **EP allreduce (#25)** | **58.9** | **22.7%** | **N/A (EP=1)** | |
+| **合计** | **259.2** | **100%** | | |
 
 ### Kernel 耗时波动（第 40 层 vs 第 41 层）
 
@@ -159,6 +166,7 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 | 日期 | 变更 |
 |------|------|
+| 2026-03-27 v8 | 增加 B200 % 占比列 + MI355X kernel mapping（时间待补）+ 模块占比汇总表 |
 | 2026-03-27 v7 | 精简为仅保留配置 B。删除配置 A 全部内容和 A vs B 对比 |
 | 2026-03-27 v6 | 基于第 40 层实测数据重写 Per-Module 表格。增加精度判断证据、量化算子标注、Pipeline 重叠图示、层间波动对比 |
 | 2026-03-27 v5 | Per-Module Kernel 级对比：B200 nsys trace (c=64) vs 355X rocprof (c=16) |
