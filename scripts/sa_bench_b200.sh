@@ -55,6 +55,7 @@ NUM_WARMUPS=""                # empty = auto (SA default: 8); or explicit number
 DAR_NUM_REQUESTS=200          # number of requests for DAR measurement
 DAR_CONCURRENCY=32            # concurrency for DAR measurement
 DAR_WARMUP=5                  # warmup requests for DAR measurement
+GPUS=""                        # empty = all GPUs; "0,1,2,3" = specific GPUs
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -73,6 +74,7 @@ while [[ $# -gt 0 ]]; do
         --dar-concurrency)  DAR_CONCURRENCY="$2"; shift 2 ;;
         --dar-warmup)       DAR_WARMUP="$2"; shift 2 ;;
         --dp)               DP_OVERRIDE="$2"; shift 2 ;;
+        --gpus)             GPUS="$2"; shift 2 ;;
         -h|--help)
             echo "Usage: bash sa_bench_b200.sh --model-fp4 <path> --model-fp8 <path> [options]"
             echo ""
@@ -91,6 +93,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --concurrency \"C1 C2\"   Concurrency values to run (default: sweep 1 4 8 16 32 64 128 256)"
             echo "  --num-warmups N         Number of warmup requests (default: 8, matching SA)"
             echo "  --dp true|false         Force DP attention on/off (default: auto, EP>1 → true)"
+            echo "  --gpus \"0,1,2,3\"        CUDA_VISIBLE_DEVICES — use subset of GPUs (default: all)"
             echo ""
             echo "DAR collection (for latency/MTP configs):"
             echo "  --dar-num-requests N    Number of requests for DAR measurement (default: 200)"
@@ -771,7 +774,7 @@ generate_summary() {
     log "========================================================"
 
     local summary_file="$RESULT_DIR/summary.md"
-    local gpu_count="$TP"
+    local gpu_count="$GPU_COUNT"
 
     cat > "$summary_file" <<EOF
 # DeepSeek R1 Benchmark Results (InferenceX-style)
@@ -828,14 +831,24 @@ except Exception as e:
 
 # ======================== Main Execution ======================================
 
+# ======================== GPU Selection =======================================
+if [[ -n "$GPUS" ]]; then
+    export CUDA_VISIBLE_DEVICES="$GPUS"
+    GPU_COUNT=$(echo "$GPUS" | tr ',' '\n' | wc -l)
+else
+    GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l)
+    [[ $GPU_COUNT -eq 0 ]] && GPU_COUNT=$TP
+fi
+
 trap 'kill_server; stop_gpu_monitor 2>/dev/null; exit' INT TERM
 
 log "============================================================"
 log "  DeepSeek R1 Benchmark Suite (InferenceX/MAX-style)"
-log "  Target: 8×B200 GPUs"
+log "  Target: ${GPU_COUNT}×B200 GPUs"
 log "============================================================"
 log "  Model FP4:   ${MODEL_FP4:-<not set>}"
 log "  Model FP8:   ${MODEL_FP8:-<not set>}"
+log "  GPUs:        ${GPUS:-all} (${GPU_COUNT} GPUs)"
 log "  Configs:     $CONFIGS"
 log "  Port:        $PORT"
 log "  Result Dir:  $RESULT_DIR"
