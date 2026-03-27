@@ -1,6 +1,6 @@
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
-> **Last updated:** 2026-03-27 v14
+> **Last updated:** 2026-03-27 v15
 > **Model:** DeepSeek-R1-0528-NVFP4-v2, FP4
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
 > **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅
@@ -62,9 +62,12 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 | 口径 | B200 μs | 说明 |
 |------|---------|------|
-| **GPU 总时间** | **284.2** | 所有算子 GPU 执行时间求和（10 层平均） |
-| **关键路径时间** | **251.1** | 扣除 P1 并行隐藏的 moe_finalize 33.1μs |
+| **GPU 总时间（单层）** | **284.2** | 所有算子 GPU 执行时间求和（10 层平均） |
+| **关键路径（单层）** | **251.1** | 扣除 P1 并行隐藏的 moe_finalize 33.1μs |
 | **并行节省** | 33.1 | moe_finalize 被 qkv_a_proj 完全遮盖 |
+| **61 decode 层实测** | **20,472** | nsys 端到端实测 20.472ms |
+| **实测单层均值** | **335.6** | 20,472 / 61，含 kernel launch + CPU 调度开销 |
+| **纯 GPU vs 实测 gap** | **18.1%** | 284.2×61=17,336 vs 实测 20,472，差值来自 launch 开销 + dense 层 |
 
 > **P1 并行组（层间 pipeline）：**
 > ```
@@ -91,7 +94,7 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 - [x] 10 层平均数据（第 40-49 层，替换单层快照）
 - [x] nvjet E4M3 源码考证（确认 E4M3 = block scale factor 格式）
 - [x] NVFP4 权重精度考证（hf_quant_config.json 确认 MLA 投影 BF16，MoE/out_proj FP4）
-- [ ] 第 61 层数据（最后一层，无 MoE）
+- [x] 61 层端到端实测数据（20.472ms，单层均值 335.6μs）
 - [ ] MI355X 数据补充（355X 列 + ratio 列）
 - [ ] 配置 B vs 355X 公平对标结果（同 concurrency）
 
@@ -99,6 +102,7 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 | 日期 | 变更 |
 |------|------|
+| 2026-03-27 v15 | **61 层实测数据。** 增加 61 decode 层端到端实测时间（20.472ms）和含开销单层均值（335.6μs）。纯 GPU 时间 vs 实测 gap 18.1%（launch 开销 + dense 层） |
 | 2026-03-27 v14 | **10 层平均数据。** 用第 40-49 层平均值替换单层快照。增加 Min/Max 波动列。修正 router 包含 splitK GEMM（12.0μs）、tp_AR+norm 正确归类（15.2μs）。moe_gemm 占比从 24.4% 升至 33.5%（含 quantize），moe_finalize 从 58.9 降至 33.1μs（单层是极端值） |
 | 2026-03-27 v13 | **继续精简。** 删除权重精度汇总表（与主表精度列重复）和 nvjet 源码考证（5 条证据→5 行摘要）。合并为"精度说明"注释 |
 | 2026-03-27 v12 | **精简报告。** 删除全 trace 统计表、精度判断证据、大类汇总、kernel 明细映射、耗时波动表、hf_quant_config exclude 详情、精度分布统计。保留 15 算子序列表 + 权重精度汇总表 + nvjet 源码考证。后续增加 10 层平均 + 61 层数据 |

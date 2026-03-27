@@ -1,5 +1,5 @@
 # DeepSeek R1 Benchmark Results (InferenceX-style)
 ## B200 8×GPU
 
-| Config | Quant | Scenario | EP | CONC | Output TPS | Out TPS/GPU | Total TPS/GPU | Interactivity | TTFT p50 (ms) | TPOT p50 (ms) | ITL p50 (ms) | E2E p50 (ms) | DAR |
+| Config | Quant | Scenario | EP | CONC | Output Tput | Out/GPU | Total/GPU | Interac. | TTFT (ms) | TPOT (ms) | ITL (ms) | E2E (ms) | DAR |
 |--------|-------|----------|-----|------|------------|-------------|---------------|---------------|---------------|---------------|--------------|--------------|-----|

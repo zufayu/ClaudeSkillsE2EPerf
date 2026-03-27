@@ -39,10 +39,10 @@ def run_compare(dirs, ref="HEAD", threshold=5.0):
     total = 0
     flagged = 0
 
-    # Metrics aligned with dashboard: Total TPS, Output TPS, TPOT, TTFT, Interactivity
+    # Metrics aligned with dashboard: Total Tput, Output Tput, TPOT, TTFT, Interactivity
     metrics = [
-        ("Total TPS",      "total_token_throughput", True),
-        ("Output TPS",     "output_throughput",      True),
+        ("Total Tput",     "total_token_throughput", True),
+        ("Output Tput",    "output_throughput",      True),
         ("TPOT p50 (ms)",  "median_tpot_ms",         False),
         ("TTFT p50 (ms)",  "median_ttft_ms",         False),
         ("Interactivity",  None,                     True),  # computed: 1000/TPOT

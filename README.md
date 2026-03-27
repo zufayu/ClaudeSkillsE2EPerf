@@ -21,7 +21,7 @@ End-to-end performance benchmarking skills for LLM inference, generated and vali
 
 - **Concurrency sweep**: 1, 4, 8, 16, 32, 64, 128, 256 (filterable via `--concurrency`)
 - **Output variation**: ±20% (random_range_ratio=0.8)
-- **Metrics**: Output TPS, TTFT p50, TPOT p50, E2E latency p50
+- **Metrics**: Total Tput, Output Tput, Interactivity, TPOT p50, TTFT p50
 
 ## Platform Configurations
 
@@ -250,12 +250,14 @@ tail -50 ./results_mi355x/server_fp8_throughput_chat_c128.log
 
 | Column | Meaning |
 |--------|---------|
-| Output TPS | Total output tokens per second |
-| Out TPS/GPU | Output TPS / GPU count |
-| Interactivity | Output TPS / Concurrency |
-| TTFT p50 | Time To First Token (median) |
-| TPOT p50 | Time Per Output Token (median) |
-| E2E p50 | End-to-end latency (median) |
+| Total Tput | (input + output tokens) / duration |
+| Output Tput | Output tokens per second |
+| Out/GPU | Output Tput / GPU count |
+| Total/GPU | Total Tput / GPU count |
+| Interac. | 1000 / TPOT (tok/s/user) |
+| TPOT (ms) | Time Per Output Token p50 |
+| TTFT (ms) | Time To First Token p50 |
+| E2E (ms) | End-to-end latency p50 |
 
 ### Step 8: Export & Dashboard
 
@@ -364,7 +366,7 @@ Benchmark scripts          Competitor CI
 
 ### Dashboard Features
 
-- **Performance** tab: bar chart with metric toggle (Output TPS / Total TPS / TPOT / TTFT) + Apple-to-Apple comparison table with Delta%
+- **Performance** tab: bar chart with metric toggle (Total Tput / Output Tput / Interac. / TPOT / TTFT) + Apple-to-Apple comparison table with Delta%
 - **Throughput vs Latency** scatter plots (TPOT vs TPS, Interactive vs TPS/GPU, TTFT vs TPS)
 - **Trends** tab: line charts by concurrency with series selector
 - **Data & Trace** tab: full data table with expandable detail rows + CSV export

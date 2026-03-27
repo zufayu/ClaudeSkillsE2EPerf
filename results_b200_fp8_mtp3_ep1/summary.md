@@ -1,7 +1,7 @@
 # DeepSeek R1 Benchmark Results (InferenceX-style)
 ## B200 8×GPU
 
-| Config | Quant | Scenario | EP | CONC | Output TPS | Out TPS/GPU | Total TPS/GPU | Interactivity | TTFT p50 (ms) | TPOT p50 (ms) | ITL p50 (ms) | E2E p50 (ms) | DAR |
+| Config | Quant | Scenario | EP | CONC | Output Tput | Out/GPU | Total/GPU | Interac. | TTFT (ms) | TPOT (ms) | ITL (ms) | E2E (ms) | DAR |
 |--------|-------|----------|-----|------|------------|-------------|---------------|---------------|---------------|---------------|--------------|--------------|-----|
 | latency | fp8 | chat | 1 | 1 | 231.5 | 28.9 | 57.3 | 231.51 | 68 | 4.3 | 99.7 | 3963 | 83.16% |
 | latency | fp8 | chat | 1 | 128 | 6943.5 | 867.9 | 1737.8 | 54.25 | 155 | 18.0 | 413.1 | 16728 | 83.16% |

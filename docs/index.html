@@ -360,8 +360,8 @@ function buildDetailHTML(d, run) {
     ['EP Size', d.ep_size != null ? d.ep_size : '-'],
     ['DP Attention', d.dp_attention == null ? '-' : (d.dp_attention ? 'Yes' : 'No')],
     ['Request TPS', d.request_tps == null ? '-' : fmtNum(d.request_tps)],
-    ['Total TPS', d.total_tps != null ? fmtNum(d.total_tps) : '-'],
-    ['Output TPS', fmtNum(d.output_tps)],
+    ['Total Tput', d.total_tps != null ? fmtNum(d.total_tps) : '-'],
+    ['Output Tput', fmtNum(d.output_tps)],
     ['Interactivity', d.interactivity != null ? fmtNum(d.interactivity, 1) + ' tok/s/user' : '-'],
     ['TPOT p50', fmtNum(d.tpot_p50) + ' ms'],
     ['TPOT p99', d.tpot_p99 != null ? fmtNum(d.tpot_p99) + ' ms' : '-'],
@@ -798,7 +798,7 @@ function buildPerfTable(data) {
       const a = vals[refKey], b = vals[cmpKey];
       if (a && b && a.output_tps > 0 && b.output_tps > 0) {
         // All deltas from Ref's perspective: positive = Ref is better → green
-        // Total TPS: higher is better → (ref - cmp) / cmp
+        // Total Tput: higher is better → (ref - cmp) / cmp
         const totalA = a.total_tps || 0, totalB = b.total_tps || 0;
         if (totalA > 0 && totalB > 0) {
           const totalDelta = ((totalA - totalB) / totalB * 100);
@@ -807,7 +807,7 @@ function buildPerfTable(data) {
         } else {
           rows += '<td class="num">-</td>';
         }
-        // Output TPS: higher is better → (ref - cmp) / cmp — positive means Ref has higher TPS
+        // Output Tput: higher is better → (ref - cmp) / cmp — positive means Ref has higher throughput
         const tpsDelta = ((a.output_tps - b.output_tps) / b.output_tps * 100);
         const tpsCls = tpsDelta > 0 ? 'delta-pos' : tpsDelta < 0 ? 'delta-neg' : 'delta-neutral';
         rows += `<td class="num ${tpsCls}">${tpsDelta > 0 ? '+' : ''}${tpsDelta.toFixed(1)}%</td>`;

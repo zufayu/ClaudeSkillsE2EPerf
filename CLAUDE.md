@@ -60,7 +60,7 @@ bash scripts/deploy_dashboard.sh --fetch-competitors
 - SA (SemiAnalysis) uses same config but `rc6.post2` image
 
 ## SemiAnalysis Reference (chat 1K/1K c=128)
-- Output TPS/GPU: 557.71 (our post2: 564.8, post3: 649.2)
+- Output Tput/GPU: 557.71 (our post2: 564.8, post3: 649.2)
 - Image `post3` is ~15% faster than `post2`
 
 ## Docker Launch (B200)
