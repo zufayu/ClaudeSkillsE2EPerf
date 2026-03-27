@@ -191,96 +191,95 @@ FP4 MoE Expert GEMM 的两个变体性能参考：
 
 > **核心判断：** FP4 MoE Expert GEMM + Dense GEMM 效率（合计 ~60% GPU time）是差距的主要来源。DP Attention 影响已量化为仅 3.4pp——不是 41% 差距的主因。跨平台对比应聚焦 GEMM kernel 效率（datatype、shape、算法选择）。
 
-## Per-Module Kernel 级对比：B200 vs MI355X（Config B）
+## Per-Module Kernel 级分析（Config B，第 40 层实测数据）
 
-> **⚠️ 非 Apple-to-Apple 对比说明：**
->
-> - **B200 数据来源：** nsys trace，Config B（FP4, TP=8, EP=8, DP=false, **c=64**），trtllm-bench 离线模式，iter 100-150，nsys UI 手动逐层读取 + sqlite 统计
-> - **MI355X 数据来源：** ATOM 内部 rocprof trace，TP=8, EP=8, DSMXFP4, **c=16**，ATOM 0.1.1
-> - **并发不同：** B200 c=64 vs 355X c=16。并发影响 batch size，进而影响 GEMM shape 和 kernel 选择。c=64 下 MoE GEMM 的 M 维度更大，kernel 耗时更长。**因此 B200 的 per-kernel 绝对时间偏高，直接比较数值不公平。**
-> - **EP 策略相同：** 两者均为 EP=8，MoE 通信模式一致（allreduce），每 GPU 处理 8 experts
-> - **用途：** 此表用于识别各模块的 kernel 实现差异和相对瓶颈分布，不作为绝对性能优劣判断
+> **数据来源：** B200 nsys trace，Config B（FP4, TP=8, EP=8, DP=false, c=64），trtllm-bench 离线模式，iter 100-150
+> **分析方法：** nsys UI Events View 手动逐 kernel 读取第 40 层（典型 MoE 层）
+> **MI355X 数据：** 待补充（后续会增加 355X 列用于跨平台对比）
 
-### MoE Layer（layers 3-60, 58 层）— 单层 Kernel 序列
+### 精度判断证据
 
-| Module | B200 Kernel | B200 (μs) | 355X Kernel | 355X (μs) | 说明 |
-|--------|-------------|-----------|-------------|-----------|------|
-| **pre-attn norm** | RMSNormKernel<8,bf16> | 2.9 | local_device_load_rmsnorm (aiter) | 4.2 | B200 独立 kernel；355X fused allreduce+norm |
-| **QKV_A proj** | nvjet_tst_64x32 splitK TNT (FP8 E4M3) | 10.6 | bf16gemm_fp32bf16_tn_32x64_splitk (hipBLASLt) | 13.7 | [M,7168]×[7168,2112]，B200 用 FP8 nvjet，355X 用 BF16 hipBLASLt |
-| splitK reduce | cublasLt::splitKreduce | 3.0 | (included above) | — | |
-| **q_norm** | RMSNormKernel<8,bf16> | 2.5 | add_rmsnorm_quant_kernel<256,8> | 4.3 | 355X fused norm+quant |
-| **k_norm** | RMSNormKernel<8,bf16> | 2.5 | add_rmsnorm_quant_kernel<64,8> | 4.1 | |
-| **Q_B proj** | nvjet_tst_128x32 TNT (FP8 E4M3) | 3.9 | bf16gemm_fp32bf16_tn_64x64_splitk | 8.8 | [M,1536]×[1536,3072] |
-| **q×up_k** | (fused into RoPE kernel) | — | batched_gemm_a8w8 M16_N128_K128 | 4.4 | B200 在 RoPE kernel 中融合；355X 独立 batched GEMM |
-| **RoPE + KV cache** | applyMLARopeAndAssignQKV | 3.5 | fuse_qk_rope_concat_and_cache_mla_per_head | 4.1 | 功能相同，实现不同 |
-| **MLA Attention** | fmhaSm100f E4M3 Qk576 V512 PagedKV | **20.5** | mla_a8w8_qh16_qseqlen1_gqaratio16 | **9.8** | B200 单 fused kernel；355X 分 attention+reduce 两步 |
-| mla reduce | (included above) | — | kn_mla_reduce_v1 | 7.9 | 355X MLA reduce 独立 kernel |
-| **O proj** | nvjet_tst_64x16 TNT | 3.7 | batched_gemm_a8w8 M16_N32_K128 | 5.6 | |
-| **quantize (FP4)** | quantize_with_block_size | 2.4 | (fused into allreduce) | — | B200 独立量化 kernel |
-| **O proj pt2** | nvjet_ootst_128x128 E4M3 | 6.1 | bf16gemm_fp32bf16_tn_32x64_splitk | 12.0 | [M,2048]×[2048,7168] |
-| **TP allreduce+norm** | userbuffers_fp16_sum_gpu_mc_rmsnorm | 14.5 | reduce_scatter_cross_device_store (aiter) | 11.7 | B200 fused allreduce+RMSNorm |
-| | | | local_device_load_rmsnorm (aiter) | 4.2 | 355X 分 scatter+load+norm |
-| **residual allgather** | userbuffers_fp16_sum_inplace_res_allgather | 9.8 | (included in allreduce) | — | |
-| **Router GEMM** | nvjet_tss splitK TNT | 5.5 | bf16gemm_fp32bf16_tn_80x64_splitk | 8.4 | [M,7168]×[7168,384] |
-| splitK reduce | splitKreduce | 2.7 | (included above) | — | |
-| **quantize (router)** | quantize_with_block_size | 2.9 | — | — | |
-| **MoE routing** | routingMainKernel | 4.3 | grouped_topk_opt_sort (aiter) | 3.8 | topk 路由 |
-| | routingIndicesClusterKernel | 5.2 | ck_tile::MoeSortingKernel ×2 | 11.1 | 355X 用 CK tile sorting |
-| **MoE quant+sort** | — | — | _fused_dynamic_mxfp4_quant_moe_sort | 4.8 | 355X fused quant+sort |
-| **MoE gate+up GEMM** | bmm_E2m1_E2m1E2m1_Fp32 swiGlu (FP4×FP4→FP32) | **62** | ck::kernel_moe_mxgemm_2lds (MXFP4) | **40.4** | **核心瓶颈。** B200 1.53× 慢（但 c=64 vs c=16，M 维不同） |
-| **MoE activation** | (fused swiGlu in gate+up GEMM) | — | act_and_mul_kernel silu | 5.7 | B200 fused 在 GEMM 内；355X 独立 kernel |
-| **MoE down GEMM** | bmm_Bfloat16_E2m1E2m1_Fp32 (FP4×FP4→BF16) | **35** | ck::kernel_moe_mxgemm_2lds (MXFP4) | **24.5** | B200 1.43× 慢（同上 batch size 差异） |
-| **MoE out quantize** | quantize_with_block_size | 3.8 | _fused_dynamic_mxfp4_quant_moe_sort | 4.0 | |
-| **Shared Expert gate+up** | nvjet_ootst E4M3 | 10.0 | (fused into MoE pipeline at EP=8) | — | B200 独立 shared expert；355X 可能融合 |
-| **SiLU activation** | silu_and_mul | 1.6 | — | — | |
-| **Shared Expert quant** | quantize_with_block_size | 2.2 | — | — | |
-| **Shared Expert down** | nvjet_ootst E4M3 | 3.8 | — | — | |
-| **MoE EP allreduce** | moefinalize_allreduce_lamport_oneshot | **28** | reduce_scatter_cross_device_store | **13.1** | B200 Lamport allreduce 2.14× 慢 |
-| **overlap: next QKV splitK** | nvjet_tst splitK (与 moefinalize 重叠) | 34 | — | — | B200 pipeline 下一层 QKV 与 MoE allreduce 重叠执行 |
-| **MoE 层合计** | | **~255** | | **~213** | **B200 1.20× 慢（c=64 vs c=16）** |
+| Kernel 类型 | 名字中的证据 | 精度判断 |
+|------------|-------------|---------|
+| `nvjet_ootst_...Avec16U**E4M3**_Bvec16U**E4M3**` | A、B 矩阵均标注 E4M3 | **FP8 E4M3 × FP8 E4M3** |
+| `bmm_**E2m1**_**E2m1E2m1**_Fp32...swiGlu` | E2M1 = MXFP4，累加器 FP32 | **FP4 × FP4 → FP32** |
+| `bmm_**Bfloat16**_**E2m1E2m1**_Fp32` | 输出 BF16，输入 E2M1 | **FP4 × FP4 → BF16** |
+| `fmhaSm100f_**QkvE4m3**OBfloat16` | QKV 标注 E4M3，输出 BF16 | **FP8 E4M3 KV cache** |
+| `quantize_with_block_size<**Type::0**, __nv_bfloat16, 16>` | Type 0 = FP4 block scaling | **BF16 → FP4 量化** |
+| `nvjet_tst_...splitK_TNT`（QKV_A 等） | 名字中**无数据类型标记** | 待确认（推测 FP8） |
 
-### Dense Layer（layers 0-2, 3 层）— 无 MoE routing/GEMM
+> **结论：** MoE Expert 权重 = FP4 (MXFP4)，Dense 权重（out_proj, shared_expert）= FP8 E4M3，MLA = FP8 KV cache。`tst` 系列 kernel（QKV_A, Q_B, o×up_v）名字中未标注精度。
 
-| Module | B200 Kernel | B200 (μs) | 说明 |
-|--------|-------------|-----------|------|
-| pre-attn norm | RMSNormKernel<8,bf16> | 2.9 | |
-| QKV_A proj | nvjet_tst_64x32 splitK TNT | 10.6 | |
-| splitK reduce | cublasLt::splitKreduce | 3.0 | |
-| q_norm + k_norm | RMSNormKernel ×2 | 5.0 | |
-| Q_B proj | nvjet_tst_128x32 TNT | 3.9 | |
-| RoPE + KV cache | applyMLARopeAndAssignQKV | 3.5 | |
-| MLA Attention | fmhaSm100f E4M3 | 20.5 | |
-| O proj | nvjet_tst + ootst | 9.8 | |
-| fused allreduce+norm+FP4 quant | userbuffers_rmsnorm_quant_fp4 | 18.7 | Dense 层特有：fused AR+norm+quant |
-| Shared Expert gate+up | nvjet_ootst E4M3 | 11.7 | |
-| SiLU | silu_and_mul | 1.8 | |
-| Shared Expert down | nvjet_ootst E4M3 | 6.5 | |
-| allreduce+norm | userbuffers_rmsnorm | 12.8 | |
-| **Dense 层合计** | | **~120** | 无 MoE，约 MoE 层的一半时间 |
+### MoE Layer 单层 Kernel 序列（第 40 层实测）
 
-### 单步 Decode 汇总
+> **层间 Pipeline 重叠说明：** 上一层末尾的 `moefinalize` 与本层的 `QKV_A proj` 在 GPU 上并行执行（仅差 2μs 启动）。`userbuffers_rmsnorm`（#11）融合了本层的 TP allreduce 和下一层的 pre-attn RMSNorm，因此 MoE 层没有独立的 pre-attn norm kernel。
 
-| Component | B200 (μs) | 355X (μs) | 说明 |
-|-----------|-----------|-----------|------|
-| 3 Dense layers | ~360 | ~400 (est.) | |
-| 58 MoE layers | ~14,790 | ~12,362 | 主要差距来源 |
-| Postprocess (sampling, NCCL) | ~350 | ~240 (est.) | |
-| **Total per decode step** | **~15,500** | **~13,000** | B200 c=64, 355X c=16 |
-| **TPOT (observed)** | 15.84 ms | ~13 ms | |
+| # | Module | Kernel | Duration (μs) | Precision | 说明 |
+|---|--------|--------|---------------|-----------|------|
+| — | fused_qkv_a_proj | nvjet_sm100_tst_64x32 splitK TNT | ⟨pipeline 重叠⟩ | 待确认 | 与上一层 moefinalize 并行执行，wall time 含重叠 |
+| — | fused_qkv_a_proj (续) | cublasLt::splitKreduce | ⟨pipeline 重叠⟩ | BF16 | splitK 归约 |
+| 1 | q_norm | RMSNormKernel<8, bf16> (Stream 7) | 2.7 | BF16 | |
+| 2 | k_norm | RMSNormKernel<8, bf16> (Stream 8907) | 2.5 | BF16 | 与 q_norm 并行 |
+| 3 | q_b_proj | nvjet_sm100_tst_24x64 TNN | 5.8 | 待确认 | [M,1536]×[1536,3072] |
+| 4 | (k concat) | CatArrayBatchedCopy (Stream 8907) | 5.0 | — | 与 #3 并行，k_norm 结果拼接 |
+| 5 | q × up_k | nvjet_sm100_tst_128x32 TNT | 3.6 | 待确认 | |
+| 6 | cache_update | applyMLARopeAndAssignQKV | 3.5 | BF16 | RoPE 旋转位置编码 + KV cache 写入 |
+| 7 | **mla** | **fmhaSm100fKernel QkvE4m3 Qk576 V512** | **20.6** | **FP8 E4M3** | MLA attention, PagedKV, 单 fused kernel |
+| 8 | o × up_v | nvjet_sm100_tst_64x16 TNT | 4.1 | 待确认 | |
+| 9 | (quantize → out_proj) | quantize_with_block_size | 2.6 | BF16→FP4 | FP4 block 量化 |
+| 10 | out_proj | nvjet_sm100_ootst_128x128 E4M3 | 6.1 | **FP8 E4M3** | [M,2048]×[2048,7168] |
+| 11 | **allreduce+addrmsnorm** | **userbuffers_fp16_sum_gpu_mc_rmsnorm** | **15.6** | BF16 | fused TP allreduce + 下一模块 pre-norm |
+| 12 | (residual allgather) | userbuffers_fp16_sum_inplace_res_allgather | 9.7 | BF16 | 残差连接的 allgather |
+| 13 | Router gemm | nvjet_sm100_tss splitK TNT | 5.4 | 待确认 | [M,7168]×[7168,384] |
+| 14 | Router gemm (续) | cublasLt::splitKreduce | 2.8 | — | splitK 归约 |
+| 15 | (quantize → routing) | quantize_with_block_size | 3.0 | BF16→FP4 | routing 输入量化 |
+| 16 | topk | routingMainKernel (DeepSeek, topk=8) | 4.4 | FP32/BF16 | expert 路由选择 |
+| 17 | sort | routingIndicesClusterKernel | 5.1 | — | token→expert 分组排序 |
+| 18 | **moe (gate+up)** | **bmm_E2m1 swiGlu dynBatch** | **48.4** | **FP4×FP4→FP32** | MoE gate+up proj, fused SwiGLU 激活 |
+| 19 | **moe (down)** | **bmm_Bfloat16 dynBatch** | **27.9** | **FP4×FP4→BF16** | MoE down proj |
+| 20 | (quantize → SE) | quantize_with_block_size | 3.6 | BF16→FP4 | MoE 输出量化 |
+| 21 | shared_expert (gate+up) | nvjet_sm100_ootst_128x128 E4M3 | 9.9 | **FP8 E4M3** | |
+| 22 | shared_expert (激活) | silu_and_mul_kernel | 1.9 | BF16 | SiLU 激活 |
+| 23 | shared_expert (量化) | quantize_with_block_size | 2.2 | BF16→FP4 | |
+| 24 | shared_expert (down) | nvjet_sm100_ootst_128x128 E4M3 | 3.9 | **FP8 E4M3** | |
+| 25 | **moe (EP allreduce)** | **moefinalize_allreduce_lamport_oneshot** | **58.9** | BF16 | EP=8 MoE 结果聚合 |
+| — | ⟨pipeline⟩ 下一层 qkv_a | nvjet_sm100_tst_64x32 splitK TNT | (65.4) | 待确认 | 与 #25 并行执行，Start 仅差 2μs |
 
-### 关键发现
+> **Pipeline 重叠图示（第 40→41 层边界）：**
+> ```
+> 时间 →    .451483s                              .451542s
+> 第40层 #25: |████ moefinalize (58.9μs) ████████████|
+> 第41层 QKV:   |████ nvjet splitK (65.4μs) ████████████|
+>            .451485s                                .451550s
+>            ↑ 间隔 2μs，GPU 并行执行两个 kernel
+> ```
 
-1. **MoE GEMM 是 355X 领先的主要来源。** B200 `bmm_E2m1` gate+up = 62μs vs 355X `kernel_moe_mxgemm` = 40.4μs（1.53×）；down proj = 35μs vs 24.5μs（1.43×）。58 层 × ~32μs 差距 = **~1.9ms/step**，是最大单项差距贡献者。但需注意 **c=64 vs c=16 的 batch size 差异**——B200 的 M 维度更大，GEMM 计算量更多，直接数值比较不公平。
+### MoE 层各模块占比（第 40 层，不含 pipeline 重叠区）
 
-2. **MoE EP allreduce 通信 B200 2.14× 慢。** B200 `moefinalize_allreduce_lamport` 28μs vs 355X `reduce_scatter` 13.1μs。58 层 × 15μs = ~870μs/step。B200 用 Lamport-clock 全局 allreduce，355X 用 reduce-scatter，通信拓扑和实现不同。
+| Module | Duration (μs) | 说明 |
+|--------|---------------|------|
+| q_norm + k_norm (#1-2) | 5.2 | |
+| q_b_proj + q×up_k (#3,5) | 9.4 | |
+| cache_update (#6) | 3.5 | |
+| **mla (#7)** | **20.6** | |
+| o×up_v + quantize + out_proj (#8-10) | 12.8 | |
+| **allreduce+addrmsnorm + allgather (#11-12)** | **25.3** | |
+| Router gemm + reduce (#13-14) | 8.2 | |
+| quantize + topk + sort (#15-17) | 12.5 | |
+| **moe gate+up + down (#18-19)** | **76.3** | 最大单项 |
+| quantize + shared_expert (#20-24) | 21.5 | |
+| **moefinalize (#25)** | **58.9** | 第二大，波动很大 |
+| **合计（#1-#25）** | **253.7** | 不含 pipeline 重叠区的 QKV_A |
 
-3. **Dense GEMM（非 MoE）B200 全面领先。** nvjet FP8 E4M3 kernel 一致优于 355X hipBLASLt BF16 kernel：QKV_A 10.6 vs 13.7μs（0.77×），Q_B 3.9 vs 8.8μs（0.44×），O proj 6.1 vs 12.0μs（0.51×）。但 Dense GEMM 占总时间较少，不足以抵消 MoE GEMM 劣势。
+### Kernel 耗时波动（第 40 层 vs 第 41 层）
 
-4. **MLA Attention 两平台接近。** B200 fmhaSm100f = 20.5μs（单 fused kernel）vs 355X mla_a8w8 + reduce = 17.7μs（两步）。B200 略慢 1.16×，但 attention 占比仅 7%，影响有限。
-
-5. **Kernel 融合策略不同。** B200 将 swiGLU 融合进 MoE gate+up GEMM（`bmm_E2m1...swiGlu`），355X 使用独立 `act_and_mul_kernel`。B200 将 allreduce+RMSNorm 融合（`userbuffers_rmsnorm`），355X 分步执行。B200 pipeline 化 moefinalize 与下一层 QKV GEMM 重叠执行。
-
-6. **数据类型差异显著。** Dense GEMM：B200 用 FP8 E4M3（nvjet kernel），355X 用 BF16（hipBLASLt）。MoE GEMM：两者均用 MXFP4×MXFP4，但实现不同（B200 bmm 系列 vs 355X CK tile kernel_moe_mxgemm）。MLA：B200 FP8 E4M3 KV cache，355X INT8 (A8W8) KV cache。
+| Kernel | 第 40 层 | 第 41 层 | 波动 | 原因 |
+|--------|---------|---------|------|------|
+| bmm_E2m1 (gate+up) | 48.4μs | 60.0μs | ±12μs | expert 路由不同，M 维度变化 |
+| bmm_Bfloat16 (down) | 27.9μs | 33.4μs | ±5μs | 同上 |
+| moefinalize | 58.9μs | 27.8μs | ±31μs | 通信负载波动大 |
+| fmhaSm100f | 20.6μs | 20.8μs | ±0.2μs | 非常稳定（shape 固定） |
+| 其他 dense kernel | ±0.3μs | ±0.3μs | 稳定 | shape 固定 |
 
 ## 待填充
 
@@ -295,7 +294,8 @@ FP4 MoE Expert GEMM 的两个变体性能参考：
 
 | 日期 | 变更 |
 |------|------|
-| 2026-03-27 v5 | Per-Module Kernel 级对比：B200 nsys trace (c=64) vs 355X rocprof (c=16)。标注非 apple-to-apple（batch size 不同）。识别 MoE GEMM (1.53×)、MoE allreduce (2.14×) 为 B200 劣势项，Dense GEMM (0.44-0.77×) 为优势项 |
+| 2026-03-27 v6 | 基于第 40 层实测数据重写 Per-Module 表格。增加精度判断证据（FP8/FP4 从 kernel 名解析）、量化算子标注、Pipeline 重叠图示、层间波动对比。删除 MI355X 列（待补充） |
+| 2026-03-27 v5 | Per-Module Kernel 级对比：B200 nsys trace (c=64) vs 355X rocprof (c=16)。标注非 apple-to-apple（batch size 不同） |
 | 2026-03-25 v4 | Config B trace 分析完成 + Config A vs B kernel 级对比。复现验证 +3.5% vs SA。关键发现：DP Attention 仅影响 3.4pp，MoE GEMM 仍是核心因素 |
 | 2026-03-25 v3 | 增加配置 B（EP=8, DP=false, c=64）公平对标方案。ATOM 不支持 DP Attention，消除此差异后重新对比 |
 | 2026-03-25 v2 | B200 nsys trace 分析完成：kernel 级分布、分类汇总、差距来源初步分解 |
