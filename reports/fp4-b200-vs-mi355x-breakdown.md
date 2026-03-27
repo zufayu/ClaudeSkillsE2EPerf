@@ -104,16 +104,16 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 | # | Module | B200 Kernel | B200 μs | B200 % | Precision | MI355X Kernel | MI355X μs |
 |---|--------|-------------|---------|--------|-----------|---------------|-----------|
-| — | fused_qkv_a_proj | nvjet tst splitK TNT | ⟨重叠⟩ | — | 待确认 | ck/hipblaslt GEMM | |
+| — | fused_qkv_a_proj | nvjet tst splitK TNT | ⟨重叠⟩ | — | — | ck/hipblaslt GEMM | |
 | — | fused_qkv_a_proj (续) | splitKreduce | ⟨重叠⟩ | — | — | （同上） | |
 | 1 | q_norm | RMSNormKernel bf16 | 2.7 | 1.0% | BF16 | rms_norm (triton) | |
 | 2 | k_norm | RMSNormKernel bf16 | 2.5 | 1.0% | BF16 | rms_norm (triton) | |
-| 3 | q_b_proj | nvjet tst 24x64 TNN | 5.8 | 2.2% | 待确认 | ck/hipblaslt GEMM | |
+| 3 | q_b_proj | nvjet tst 24x64 TNN | 5.8 | 2.2% | — | ck/hipblaslt GEMM | |
 | 4 | k concat | CatArrayBatchedCopy | 5.0 | 1.9% | — | concat/reshape | |
-| 5 | q×up_k | nvjet tst 128x32 TNT | 3.6 | 1.4% | 待确认 | ck/hipblaslt GEMM | |
+| 5 | q×up_k | nvjet tst 128x32 TNT | 3.6 | 1.4% | — | ck/hipblaslt GEMM | |
 | 6 | cache_update | applyMLARopeAndAssignQKV | 3.5 | 1.4% | BF16 | rotary_embedding | |
 | 7 | **mla** | **fmhaSm100f QkvE4m3** | **20.6** | **7.9%** | **FP8 E4M3** | **flash_attn (ck)** | |
-| 8 | o×up_v | nvjet tst 64x16 TNT | 4.1 | 1.6% | 待确认 | ck/hipblaslt GEMM | |
+| 8 | o×up_v | nvjet tst 64x16 TNT | 4.1 | 1.6% | — | ck/hipblaslt GEMM | |
 | 9 | quantize→out_proj | quantize_with_block_size<Type::0> | 2.6 | 1.0% | **BF16→FP4**（Type::0，全 trace 仅此一种） | scaled_fp4_quant | |
 | 10 | out_proj | nvjet ootst Avec16UE4M3 | 6.1 | 2.4% | 输入←#9(FP4)，kernel 名含 E4M3 | ck/hipblaslt GEMM | |
 | 11 | **allreduce+norm** | **userbuffers_rmsnorm** | **15.6** | **6.0%** | BF16 | **rccl allreduce + rms_norm（分离）** | |
@@ -131,7 +131,7 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 | 23 | shared_expert (量化) | quantize_with_block_size<Type::0> | 2.2 | 0.8% | **BF16→FP4** | scaled_fp4_quant | |
 | 24 | shared_expert (down) | nvjet ootst Avec16UE4M3 | 3.9 | 1.5% | 输入←#23(FP4)，kernel 名含 E4M3 | ck/hipblaslt GEMM | |
 | 25 | **moefinalize** | **moefinalize_allreduce_lamport** | **58.9** | **22.7%** | BF16 | **N/A（EP=1 无 EP allreduce）** | |
-| — | ⟨pipeline⟩ 下一层 qkv_a | nvjet tst splitK TNT | (65.4) | — | 待确认 | ck/hipblaslt GEMM | |
+| — | ⟨pipeline⟩ 下一层 qkv_a | nvjet tst splitK TNT | (65.4) | — | — | ck/hipblaslt GEMM | |
 | | **合计 (#1-#25)** | | **259.2** | **100%** | | | |
 
 > **Pipeline 重叠图示（第 40→41 层边界）：**
