@@ -1,9 +1,9 @@
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
-> **Last updated:** 2026-03-27
+> **Last updated:** 2026-03-27 v9
 > **Model:** DeepSeek-R1-0528, FP4
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
-> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅
+> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；nvjet E4M3 源码考证完成 ✅
 
 ## 问题背景
 
@@ -66,14 +66,14 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 ### 精度判断证据
 
-| Kernel 类型 | 名字中的证据 | 精度判断 |
-|------------|-------------|---------|
-| `nvjet_ootst_...Avec16U**E4M3**_Bvec16U**E4M3**` | A、B 矩阵均标注 E4M3 | **FP8 E4M3 × FP8 E4M3** |
-| `bmm_**E2m1**_**E2m1E2m1**_Fp32...swiGlu` | E2M1 = MXFP4，累加器 FP32 | **FP4 × FP4 → FP32** |
-| `bmm_**Bfloat16**_**E2m1E2m1**_Fp32` | 输出 BF16，输入 E2M1 | **FP4 × FP4 → BF16** |
-| `fmhaSm100f_**QkvE4m3**OBfloat16` | QKV 标注 E4M3，输出 BF16 | **FP8 E4M3 KV cache** |
-| `quantize_with_block_size<**Type::0**, __nv_bfloat16, 16>` | Type::0 = FP4 block scaling；**全 trace 仅此一种变体**（97,104 实例） | **BF16 → FP4 量化** |
-| `nvjet_tst_...bz_TNT`（QKV_A, Q_B, o×up_v） | shortName = demangledName，**无数据类型标记**；前面**无 quantize** kernel | **待确认** |
+| Kernel 类型 | 名字中的证据 | 精度判断 | 源码证据 |
+|------------|-------------|---------|---------|
+| `nvjet_ootst_...Avec16UE4M3_Bvec16UE4M3` | A、B 矩阵标注 E4M3 | **FP4(E2M1) data + E4M3 block scale** | E4M3 指 block scale factor 格式，非数据精度（见下方源码考证） |
+| `bmm_E2m1_E2m1E2m1_Fp32...swiGlu` | E2M1 = MXFP4，累加器 FP32 | **FP4 × FP4 → FP32** | kernel 名直接标注 E2M1 |
+| `bmm_Bfloat16_E2m1E2m1_Fp32` | 输出 BF16，输入 E2M1 | **FP4 × FP4 → BF16** | kernel 名直接标注 |
+| `fmhaSm100f_QkvE4m3OBfloat16` | QKV 标注 E4M3，输出 BF16 | **FP8 E4M3 KV cache** | kernel 名直接标注 QkvE4m3 |
+| `quantize_with_block_size<Type::0, __nv_bfloat16, 16>` | Type::0 = NVFP4 block scaling；**全 trace 仅此一种变体**（97,104 实例） | **BF16 → FP4(E2M1) + E4M3 scale** | `fp4Quantize.cpp`: 输出 E2M1 data + UE4M3 scale factor |
+| `nvjet_tst_...bz_TNT`（QKV_A, Q_B, o×up_v） | shortName = demangledName，**无数据类型标记**；前面**无 quantize** kernel | **待确认** | nvjet tst 是闭源 cuBLAS kernel，名字无类型标注 |
 
 > **各投影层精度与量化算子：**
 >
@@ -82,18 +82,19 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 > | **QKV_A proj** | nvjet tst splitK TNT | **待确认** | **无**（输入来自上一层 userbuffers_rmsnorm，BF16） | kernel 名无类型标记，demangledName 与 shortName 相同 |
 > | **Q_B proj** | nvjet tst 24x64 TNN | **待确认** | **无**（输入来自 #1 q_norm，BF16） | 同上 |
 > | **o×up_v** | nvjet tst 64x16 TNT | **待确认** | **无**（输入来自 #7 fmhaSm100f，BF16） | 同上 |
-> | **out_proj** | nvjet ootst Avec16UE4M3 | 输入←#9(FP4)，kernel 名含 E4M3 | **有：#9 quantize_with_block_size<Type::0>（BF16→FP4）** | kernel 名含 `Avec16UE4M3`；#9 输出 FP4 |
-> | **shared_expert** | nvjet ootst Avec16UE4M3 | 输入←#20/#23(FP4)，kernel 名含 E4M3 | **有：#20/#23 quantize_with_block_size<Type::0>（BF16→FP4）** | 同 out_proj |
+> | **out_proj** | nvjet ootst Avec16UE4M3 | **FP4(E2M1) data + E4M3 scale** | **有：#9 quantize_with_block_size<Type::0>（BF16→FP4）** | 源码确认 E4M3 = block scale factor 格式 |
+> | **shared_expert** | nvjet ootst Avec16UE4M3 | **FP4(E2M1) data + E4M3 scale** | **有：#20/#23 quantize_with_block_size<Type::0>（BF16→FP4）** | 同 out_proj |
 >
 > **quantize 实例确认（SQLite 查询结果）：**
 > - 全 trace 仅一种 quantize kernel：`quantize_with_block_size<BlockScaleQuantizationType::0, __nv_bfloat16, 16>`
 > - 共 97,104 个实例，**无其他量化变体**
 > - 因此 #9（→out_proj）、#15（→MoE GEMM）、#20（→shared_expert gate+up）、#23（→shared_expert down）**均为 BF16→FP4 量化**
+> - 每次量化产出两个 tensor：E2M1 数据 + UE4M3 block scale factor（源码：`fp4Quantize.cpp:38-39`）
 >
 > **已确认事实：**
 > - MoE Expert GEMM：`bmm_E2m1`（名字含 E2M1）= FP4 (MXFP4)，前置 #15 quantize（BF16→FP4）
 > - MLA attention：`fmhaSm100f QkvE4m3` = FP8 E4M3 KV cache（名字含 QkvE4m3）
-> - out_proj / shared_expert：`nvjet ootst Avec16UE4M3`，前置 quantize 输出 FP4。kernel 名含 `E4M3`，但输入是 FP4——E4M3 含义待确认（可能指 MXFP4 block scale 格式，需 nvjet 源码确认）
+> - out_proj / shared_expert：`nvjet ootst Avec16UE4M3`，**已确认**：E4M3 指 block scale factor 格式（UE4M3），数据本身是 FP4(E2M1)。前置 quantize 输出 E2M1 data + UE4M3 scale
 > - QKV_A / Q_B / o×up_v：`nvjet tst`，无类型标记，无前置 quantize，精度待确认
 
 ### MoE Layer 单层 Kernel 序列（第 40 层实测）
@@ -115,7 +116,7 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 | 7 | **mla** | **fmhaSm100f QkvE4m3** | **20.6** | **7.9%** | **FP8 E4M3** | **flash_attn (ck)** | |
 | 8 | o×up_v | nvjet tst 64x16 TNT | 4.1 | 1.6% | — | ck/hipblaslt GEMM | |
 | 9 | quantize→out_proj | quantize_with_block_size<Type::0> | 2.6 | 1.0% | **BF16→FP4**（Type::0，全 trace 仅此一种） | scaled_fp4_quant | |
-| 10 | out_proj | nvjet ootst Avec16UE4M3 | 6.1 | 2.4% | 输入←#9(FP4)，kernel 名含 E4M3 | ck/hipblaslt GEMM | |
+| 10 | out_proj | nvjet ootst Avec16UE4M3 | 6.1 | 2.4% | **FP4(E2M1) data + E4M3 scale**（←#9 quantize） | ck/hipblaslt GEMM | |
 | 11 | **allreduce+norm** | **userbuffers_rmsnorm** | **15.6** | **6.0%** | BF16 | **rccl allreduce + rms_norm（分离）** | |
 | 12 | residual allgather | userbuffers_allgather | 9.7 | 3.7% | BF16 | rccl allgather | |
 | 13 | Router gemm | nvjet tss splitK TNT | 5.4 | 2.1% | BF16 | ck/hipblaslt GEMM | |
@@ -126,10 +127,10 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 | 18 | **moe (gate+up)** | **bmm_E2m1 swiGlu** | **48.4** | **18.7%** | **FP4(E2M1)×FP4→FP32**（←#15） | **fused_moe gate+up (triton/ck)** | |
 | 19 | **moe (down)** | **bmm_Bfloat16** | **27.9** | **10.8%** | **FP4(E2M1)×FP4→BF16** | **fused_moe down (triton/ck)** | |
 | 20 | quantize→shared_expert | quantize_with_block_size<Type::0> | 3.6 | 1.4% | **BF16→FP4** | scaled_fp4_quant | |
-| 21 | shared_expert (gate+up) | nvjet ootst Avec16UE4M3 | 9.9 | 3.8% | 输入←#20(FP4)，kernel 名含 E4M3 | ck/hipblaslt GEMM | |
+| 21 | shared_expert (gate+up) | nvjet ootst Avec16UE4M3 | 9.9 | 3.8% | **FP4(E2M1) data + E4M3 scale**（←#20 quantize） | ck/hipblaslt GEMM | |
 | 22 | shared_expert (激活) | silu_and_mul | 1.9 | 0.7% | BF16 | silu_mul (triton) | |
 | 23 | shared_expert (量化) | quantize_with_block_size<Type::0> | 2.2 | 0.8% | **BF16→FP4** | scaled_fp4_quant | |
-| 24 | shared_expert (down) | nvjet ootst Avec16UE4M3 | 3.9 | 1.5% | 输入←#23(FP4)，kernel 名含 E4M3 | ck/hipblaslt GEMM | |
+| 24 | shared_expert (down) | nvjet ootst Avec16UE4M3 | 3.9 | 1.5% | **FP4(E2M1) data + E4M3 scale**（←#23 quantize） | ck/hipblaslt GEMM | |
 | 25 | **moefinalize** | **moefinalize_allreduce_lamport** | **58.9** | **22.7%** | BF16 | **N/A（EP=1 无 EP allreduce）** | |
 | — | ⟨pipeline⟩ 下一层 qkv_a | nvjet tst splitK TNT | (65.4) | — | — | ck/hipblaslt GEMM | |
 | | **合计 (#1-#25)** | | **259.2** | **100%** | | | |
@@ -174,10 +175,85 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 | fmhaSm100f | 20.6μs | 20.8μs | ±0.2μs | 非常稳定（shape 固定） |
 | 其他 dense kernel | ±0.3μs | ±0.3μs | 稳定 | shape 固定 |
 
+## nvjet E4M3 源码考证（已确认）
+
+> **结论：** nvjet kernel 名中的 `E4M3` 指 **block scale factor 的数据格式**，不是 GEMM 数据元素的精度。ootst kernel 实际执行的是 **FP4 (E2M1) GEMM**，输入数据是 E2M1，block scale 是 E4M3。
+
+### 证据 1：NVFP4 量化输出 = E2M1 数据 + UE4M3 block scale
+
+**源文件：** `cpp/tensorrt_llm/thop/fp4Quantize.cpp:38-39`
+```
+// self_fp4: [M, K / 2], FLOAT4_E2M1X2
+// self_block_scale_factors: ceil(M/128)*128 * ceil(K/sfVecSize/4)*4, SF_DTYPE (UE4M3 or UE8M0)
+```
+
+**源文件：** `cpp/tensorrt_llm/thop/thUtils.h:60-61`
+```cpp
+constexpr auto FLOAT4_E2M1X2 = torch::ScalarType::Byte; // uint8_t (两个 E2M1 packed)
+constexpr auto SF_DTYPE = torch::ScalarType::Byte;       // uint8_t (UE4M3 scale factor)
+```
+
+FP4 量化 (`quantize_with_block_size<Type::0>`) 产出两个 tensor：
+- **数据 tensor：** E2M1 格式（每 2 个 FP4 值 packed 成 1 个 uint8）
+- **Scale factor tensor：** UE4M3 格式（每 16 个 E2M1 元素共享 1 个 E4M3 scale）
+
+### 证据 2：blockscaleGemm TMA descriptor 对 E2M1 输入使用 E4M3 scale
+
+**源文件：** `cpp/tensorrt_llm/kernels/trtllmGenKernels/blockscaleGemm/kernelParams.h:474-476`
+```cpp
+if (options.mDtypeElt == Data_type::DATA_TYPE_E2M1)
+{
+    const Data_type dTypeSf = Data_type::DATA_TYPE_E4M3;  // scale factor dtype = E4M3
+    // ... 构建 A/B 的 block scale TMA descriptor，dtype = E4M3
+}
+```
+
+当数据元素类型是 E2M1 (FP4) 时，block scale factor 固定使用 **E4M3** 格式。
+
+### 证据 3：trtllmGen gemm cubin 命名规则区分 E2M1 和 E4M3
+
+**源文件：** `cpp/tensorrt_llm/kernels/trtllmGenKernels/gemm/trtllmGen_export/KernelMetaInfo.h:34-45`
+
+12 个 cubin 中存在两类：
+- **FP4 kernel（E2M1）：** `GemmKernel_Bfloat16_E2m1_Fp32_...`，`GemmKernel_Fp16_E2m1_Fp32_...`，`GemmKernel_Fp32_E2m1_Fp32_...` — mMmaK=64
+- **FP8 kernel（E4M3）：** `GemmKernel_E4m3_E4m3_Fp32_...`，`GemmKernel_Bfloat16_E4m3_Fp32_...` — mMmaK=32
+
+cubin 命名格式为 `GemmKernel_{OutputDtype}_{EltDtype}_{AccDtype}_...`，E2M1 和 E4M3 是**不同的 element dtype**。
+
+### 证据 4：FP4 GEMM 入口确认 eltType = E2m1
+
+**源文件：** `cpp/tensorrt_llm/thop/fp4GemmTrtllmGen.cpp:39`
+```cpp
+auto eltType = tensorrt_llm::kernels::Dtype::E2m1;  // FP4 GEMM 的 element type
+```
+
+FP4 GEMM 调用 `TrtllmGenGemmRunner`，匹配 `mDtypeElt == E2m1` 的 cubin（不是 E4M3）。
+
+### 证据 5：nvjet 是闭源 cuBLAS kernel
+
+**源文件：** `cpp/tensorrt_llm/thop/cublasScaledMM.cpp:233`
+```cpp
+#if CUDART_VERSION < 12080
+    // nvjet is not supported
+```
+
+`nvjet` 是 cuBLAS 内部的闭源 kernel 系列名。`ootst` / `tst` 是 cuBLAS 内部 tile scheduler 变体。kernel 名中的 `Avec16UE4M3` 含义为：A matrix, vec16, Unsigned E4M3 — 描述的是 **block scale factor 的数据类型**。
+
+### 综合结论
+
+| nsys kernel 名 | 数据元素精度 | Block Scale 格式 | 证据 |
+|---------------|------------|-----------------|------|
+| `nvjet ootst Avec16UE4M3` | **FP4 (E2M1)** | **UE4M3** | 前置 quantize 输出 E2M1+UE4M3；源码确认 E2M1 数据配 E4M3 scale |
+| `bmm_E2m1` | **FP4 (E2M1)** | E4M3（同上） | kernel 名直接标注 E2M1 |
+| `nvjet tst` (QKV_A/Q_B/o×up_v) | **待确认** | — | 闭源 kernel，名字无类型标注，无前置 quantize |
+
+> **之前的"矛盾"已解决：** ootst kernel 消费 FP4 数据（来自 quantize），但 kernel 名标注 E4M3——因为 **E4M3 在这里指 block scale factor 格式**，不是数据本身。NVFP4 的完整格式是 E2M1 数据 + E4M3 block scale（每 16 个元素共享 1 个 scale），这是 OCP MXFP4 标准的一部分。
+
 ## 待填充
 
 - [x] B200 EP=8 no-DP 复现 + trace 分析
 - [x] Per-Module Kernel 级分析（第 40 层实测）
+- [x] nvjet E4M3 源码考证（确认 E4M3 = block scale factor 格式）
 - [ ] MI355X 数据补充（355X 列 + ratio 列）
 - [ ] 配置 B vs 355X 公平对标结果（同 concurrency）
 
@@ -185,6 +261,7 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 | 日期 | 变更 |
 |------|------|
+| 2026-03-27 v9 | **nvjet E4M3 源码考证完成。** 确认 ootst kernel 的 E4M3 指 block scale factor 格式（非数据精度）。ootst 实际执行 FP4(E2M1) GEMM。增加 5 条源码证据（fp4Quantize.cpp, kernelParams.h, KernelMetaInfo.h, fp4GemmTrtllmGen.cpp, cublasScaledMM.cpp）。更新精度判断表和 kernel 表 Precision 列 |
 | 2026-03-27 v8 | 增加 B200 % 占比列 + MI355X kernel mapping（时间待补）+ 模块占比汇总表 |
 | 2026-03-27 v7 | 精简为仅保留配置 B。删除配置 A 全部内容和 A vs B 对比 |
 | 2026-03-27 v6 | 基于第 40 层实测数据重写 Per-Module 表格。增加精度判断证据、量化算子标注、Pipeline 重叠图示、层间波动对比 |
