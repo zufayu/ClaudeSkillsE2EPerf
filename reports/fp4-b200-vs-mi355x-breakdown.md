@@ -73,9 +73,9 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 | `bmm_**Bfloat16**_**E2m1E2m1**_Fp32` | 输出 BF16，输入 E2M1 | **FP4 × FP4 → BF16** |
 | `fmhaSm100f_**QkvE4m3**OBfloat16` | QKV 标注 E4M3，输出 BF16 | **FP8 E4M3 KV cache** |
 | `quantize_with_block_size<**Type::0**, __nv_bfloat16, 16>` | Type 0 = FP4 block scaling | **BF16 → FP4 量化** |
-| `nvjet_tst_...splitK_TNT`（QKV_A 等） | 名字中**无数据类型标记** | 待确认（推测 FP8） |
+| `nvjet_tst_...bz_TNT`（QKV_A, Q_B, o×up_v） | shortName = demangledName，**无数据类型标记**；前面**无 quantize** kernel | **BF16×BF16**（推断） |
 
-> **结论：** MoE Expert 权重 = FP4 (MXFP4)，Dense 权重（out_proj, shared_expert）= FP8 E4M3，MLA = FP8 KV cache。`tst` 系列 kernel（QKV_A, Q_B, o×up_v）名字中未标注精度。
+> **结论：** MoE Expert 权重 = FP4 (MXFP4)，Dense 权重（out_proj, shared_expert）= FP8 E4M3，MLA attention = FP8 E4M3 KV cache，MLA 投影（QKV_A, Q_B, o×up_v）= BF16（kernel 名无类型标记 + 无前置 quantize）。
 
 ### MoE Layer 单层 Kernel 序列（第 40 层实测）
 
@@ -83,37 +83,37 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 >
 > **MI355X 结构差异：** ① EP=1 → 无 EP allreduce（#25 不存在）；② 无 userbuffers → allreduce 和 norm 是分离 kernel；③ MoE 可能使用 fused_moe triton kernel（#15-19 合并）。MI355X kernel 名待 rocprof trace 确认。
 
-| # | Module | B200 Kernel | B200 μs | B200 % | MI355X Kernel | MI355X μs |
-|---|--------|-------------|---------|--------|---------------|-----------|
-| — | fused_qkv_a_proj | nvjet tst splitK TNT | ⟨重叠⟩ | — | ck/hipblaslt GEMM | |
-| — | fused_qkv_a_proj (续) | splitKreduce | ⟨重叠⟩ | — | （同上） | |
-| 1 | q_norm | RMSNormKernel bf16 | 2.7 | 1.0% | rms_norm (triton) | |
-| 2 | k_norm | RMSNormKernel bf16 | 2.5 | 1.0% | rms_norm (triton) | |
-| 3 | q_b_proj | nvjet tst 24x64 TNN | 5.8 | 2.2% | ck/hipblaslt GEMM | |
-| 4 | k concat | CatArrayBatchedCopy | 5.0 | 1.9% | concat/reshape | |
-| 5 | q×up_k | nvjet tst 128x32 TNT | 3.6 | 1.4% | ck/hipblaslt GEMM | |
-| 6 | cache_update | applyMLARopeAndAssignQKV | 3.5 | 1.4% | rotary_embedding | |
-| 7 | **mla** | **fmhaSm100f QkvE4m3** | **20.6** | **7.9%** | **flash_attn (ck)** | |
-| 8 | o×up_v | nvjet tst 64x16 TNT | 4.1 | 1.6% | ck/hipblaslt GEMM | |
-| 9 | quantize→out_proj | quantize_with_block_size | 2.6 | 1.0% | scaled_fp4_quant | |
-| 10 | out_proj | nvjet ootst E4M3 | 6.1 | 2.4% | ck/hipblaslt GEMM | |
-| 11 | **allreduce+norm** | **userbuffers_rmsnorm** | **15.6** | **6.0%** | **rccl allreduce + rms_norm（分离）** | |
-| 12 | residual allgather | userbuffers_allgather | 9.7 | 3.7% | rccl allgather | |
-| 13 | Router gemm | nvjet tss splitK TNT | 5.4 | 2.1% | ck/hipblaslt GEMM | |
-| 14 | Router gemm (续) | splitKreduce | 2.8 | 1.1% | （同上） | |
-| 15 | quantize→routing | quantize_with_block_size | 3.0 | 1.2% | fused_moe 内部 | |
-| 16 | topk | routingMainKernel | 4.4 | 1.7% | fused_moe 内部 | |
-| 17 | sort | routingIndicesCluster | 5.1 | 2.0% | fused_moe 内部 | |
-| 18 | **moe (gate+up)** | **bmm_E2m1 swiGlu** | **48.4** | **18.7%** | **fused_moe gate+up (triton/ck)** | |
-| 19 | **moe (down)** | **bmm_Bfloat16** | **27.9** | **10.8%** | **fused_moe down (triton/ck)** | |
-| 20 | quantize→SE | quantize_with_block_size | 3.6 | 1.4% | scaled_fp4_quant | |
-| 21 | SE (gate+up) | nvjet ootst E4M3 | 9.9 | 3.8% | ck/hipblaslt GEMM | |
-| 22 | SE (激活) | silu_and_mul | 1.9 | 0.7% | silu_mul (triton) | |
-| 23 | SE (量化) | quantize_with_block_size | 2.2 | 0.8% | scaled_fp4_quant | |
-| 24 | SE (down) | nvjet ootst E4M3 | 3.9 | 1.5% | ck/hipblaslt GEMM | |
-| 25 | **moefinalize** | **moefinalize_allreduce_lamport** | **58.9** | **22.7%** | **N/A（EP=1 无 EP allreduce）** | |
-| — | ⟨pipeline⟩ 下一层 qkv_a | nvjet tst splitK TNT | (65.4) | — | ck/hipblaslt GEMM | |
-| | **合计 (#1-#25)** | | **259.2** | **100%** | | |
+| # | Module | B200 Kernel | B200 μs | B200 % | Precision | MI355X Kernel | MI355X μs |
+|---|--------|-------------|---------|--------|-----------|---------------|-----------|
+| — | fused_qkv_a_proj | nvjet tst splitK TNT | ⟨重叠⟩ | — | BF16 | ck/hipblaslt GEMM | |
+| — | fused_qkv_a_proj (续) | splitKreduce | ⟨重叠⟩ | — | BF16 | （同上） | |
+| 1 | q_norm | RMSNormKernel bf16 | 2.7 | 1.0% | BF16 | rms_norm (triton) | |
+| 2 | k_norm | RMSNormKernel bf16 | 2.5 | 1.0% | BF16 | rms_norm (triton) | |
+| 3 | q_b_proj | nvjet tst 24x64 TNN | 5.8 | 2.2% | BF16 | ck/hipblaslt GEMM | |
+| 4 | k concat | CatArrayBatchedCopy | 5.0 | 1.9% | — | concat/reshape | |
+| 5 | q×up_k | nvjet tst 128x32 TNT | 3.6 | 1.4% | BF16 | ck/hipblaslt GEMM | |
+| 6 | cache_update | applyMLARopeAndAssignQKV | 3.5 | 1.4% | BF16 | rotary_embedding | |
+| 7 | **mla** | **fmhaSm100f QkvE4m3** | **20.6** | **7.9%** | **FP8 E4M3** | **flash_attn (ck)** | |
+| 8 | o×up_v | nvjet tst 64x16 TNT | 4.1 | 1.6% | BF16 | ck/hipblaslt GEMM | |
+| 9 | quantize→out_proj | quantize_with_block_size | 2.6 | 1.0% | BF16→FP8 | scaled_fp4_quant | |
+| 10 | out_proj | nvjet ootst E4M3 | 6.1 | 2.4% | **FP8 E4M3** | ck/hipblaslt GEMM | |
+| 11 | **allreduce+norm** | **userbuffers_rmsnorm** | **15.6** | **6.0%** | BF16 | **rccl allreduce + rms_norm（分离）** | |
+| 12 | residual allgather | userbuffers_allgather | 9.7 | 3.7% | BF16 | rccl allgather | |
+| 13 | Router gemm | nvjet tss splitK TNT | 5.4 | 2.1% | BF16 | ck/hipblaslt GEMM | |
+| 14 | Router gemm (续) | splitKreduce | 2.8 | 1.1% | — | （同上） | |
+| 15 | quantize→routing | quantize_with_block_size | 3.0 | 1.2% | BF16→FP4 | fused_moe 内部 | |
+| 16 | topk | routingMainKernel | 4.4 | 1.7% | FP32/BF16 | fused_moe 内部 | |
+| 17 | sort | routingIndicesCluster | 5.1 | 2.0% | — | fused_moe 内部 | |
+| 18 | **moe (gate+up)** | **bmm_E2m1 swiGlu** | **48.4** | **18.7%** | **FP4×FP4→FP32** | **fused_moe gate+up (triton/ck)** | |
+| 19 | **moe (down)** | **bmm_Bfloat16** | **27.9** | **10.8%** | **FP4×FP4→BF16** | **fused_moe down (triton/ck)** | |
+| 20 | quantize→SE | quantize_with_block_size | 3.6 | 1.4% | BF16→FP4 | scaled_fp4_quant | |
+| 21 | SE (gate+up) | nvjet ootst E4M3 | 9.9 | 3.8% | **FP8 E4M3** | ck/hipblaslt GEMM | |
+| 22 | SE (激活) | silu_and_mul | 1.9 | 0.7% | BF16 | silu_mul (triton) | |
+| 23 | SE (量化) | quantize_with_block_size | 2.2 | 0.8% | BF16→FP4 | scaled_fp4_quant | |
+| 24 | SE (down) | nvjet ootst E4M3 | 3.9 | 1.5% | **FP8 E4M3** | ck/hipblaslt GEMM | |
+| 25 | **moefinalize** | **moefinalize_allreduce_lamport** | **58.9** | **22.7%** | BF16 | **N/A（EP=1 无 EP allreduce）** | |
+| — | ⟨pipeline⟩ 下一层 qkv_a | nvjet tst splitK TNT | (65.4) | — | BF16 | ck/hipblaslt GEMM | |
+| | **合计 (#1-#25)** | | **259.2** | **100%** | | | |
 
 > **Pipeline 重叠图示（第 40→41 层边界）：**
 > ```
