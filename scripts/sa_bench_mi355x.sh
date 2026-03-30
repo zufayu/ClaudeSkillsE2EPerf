@@ -286,13 +286,13 @@ compute_mi355x_params() {
     # is between FP4 and FP8. CUDA graph capture at TP=8 is tight on MI355X.
     # Start conservative and enforce eager to skip graph capture (~1-2GB/GPU).
     if [[ "$quant" == "mxfp4" ]]; then
-        GPU_MEMORY_UTILIZATION=0.80
-        ENFORCE_EAGER="true"
+        GPU_MEMORY_UTILIZATION=0.90
+        ENFORCE_EAGER="false"
         if [[ "$isl" == "8192" || "$osl" == "8192" ]]; then
-            GPU_MEMORY_UTILIZATION=0.75
+            GPU_MEMORY_UTILIZATION=0.85
         fi
         if [[ "$osl" == "8192" && $conc -gt 32 ]]; then
-            GPU_MEMORY_UTILIZATION=0.70
+            GPU_MEMORY_UTILIZATION=0.80
         fi
     fi
 }
@@ -332,8 +332,7 @@ run_single_point() {
     if [[ -n "$MAX_MODEL_LEN_OVERRIDE" ]]; then
         max_model_len="$MAX_MODEL_LEN_OVERRIDE"
     else
-        max_model_len=$(( isl + osl + 256 ))
-        [[ $max_model_len -lt 8192 ]] && max_model_len=8192
+        max_model_len=$(( isl + osl + 200 ))
     fi
 
     # --- Start ATOM server ---
