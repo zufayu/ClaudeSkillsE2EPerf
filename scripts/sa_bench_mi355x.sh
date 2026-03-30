@@ -398,6 +398,11 @@ run_single_point() {
 
         log "  Running benchmark: ISL=$isl, OSL=$osl, CONC=$conc, NUM_PROMPTS=$num_prompts"
 
+        # Capture ATOM and aiter versions
+        local atom_version aiter_version
+        atom_version=$(python3 -c "import atom; print(atom.__version__)" 2>/dev/null || echo "unknown")
+        aiter_version=$(python3 -c "import aiter; print(aiter.__version__)" 2>/dev/null || echo "unknown")
+
         local bench_cmd=(
             python3 -m atom.benchmarks.benchmark_serving
             --model "$served_model"
@@ -424,6 +429,8 @@ run_single_point() {
                 "max_num_seqs=$MAX_NUM_SEQS"
                 "mtp_layers=$MTP_LAYERS"
                 "random_range_ratio=$RANDOM_RANGE_RATIO"
+                "atom_version=$atom_version"
+                "aiter_version=$aiter_version"
         )
 
         set -x
