@@ -14,7 +14,9 @@
 #   bf16-latency      BF16, MTP-3, min latency
 #   fp8-throughput    FP8, no MTP, max throughput
 #   fp8-latency       FP8, MTP-3, min latency
-#   all               Run all configs (requires both model paths)
+#   mxfp4-throughput  MXFP4, no MTP, max throughput
+#   mxfp4-latency     MXFP4, MTP-3, min latency
+#   all               Run all configs (requires model paths)
 #
 # Usage:
 #   # Run everything:
@@ -42,6 +44,7 @@ source "$SCRIPT_DIR/benchmark_lib.sh"
 # ======================== Argument Parsing ====================================
 MODEL=""
 MODEL_FP8=""
+MODEL_MXFP4=""
 MODEL_MTP=""
 CONFIGS="all"
 RESULT_DIR="./results_mi355x"
@@ -56,6 +59,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --model)             MODEL="$2"; shift 2 ;;
         --model-fp8)         MODEL_FP8="$2"; shift 2 ;;
+        --model-mxfp4)       MODEL_MXFP4="$2"; shift 2 ;;
         --model-mtp)         MODEL_MTP="$2"; shift 2 ;;
         --configs)           CONFIGS="$2"; shift 2 ;;
         --port)              SERVER_PORT="$2"; shift 2 ;;
@@ -70,8 +74,9 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --model PATH            BF16 model path"
             echo "  --model-fp8 PATH        FP8 model path (model with quantization_config in config.json)"
+            echo "  --model-mxfp4 PATH      MXFP4 model path (e.g. DeepSeek-R1-0528-MXFP4)"
             echo "  --model-mtp PATH        MTP-3 model path (for latency config)"
-            echo "  --configs CONFIG        bf16-throughput|bf16-latency|fp8-throughput|fp8-latency|all (default: all)"
+            echo "  --configs CONFIG        bf16-throughput|bf16-latency|fp8-throughput|fp8-latency|mxfp4-throughput|mxfp4-latency|all (default: all)"
             echo "  --port PORT             ATOM API server port (default: 8000)"
             echo "  --result-dir DIR        Results directory (default: ./results_mi355x)"
             echo "  --tp N                  Tensor parallelism (default: 8)"
@@ -109,15 +114,21 @@ case "$CONFIGS" in
             exit 1
         fi
         ;;
+    mxfp4-throughput|mxfp4-latency)
+        if [[ -z "$MODEL_MXFP4" ]]; then
+            echo "ERROR: --model-mxfp4 is required for $CONFIGS"
+            exit 1
+        fi
+        ;;
     all)
-        if [[ -z "$MODEL" && -z "$MODEL_FP8" ]]; then
-            echo "ERROR: at least one of --model or --model-fp8 is required"
+        if [[ -z "$MODEL" && -z "$MODEL_FP8" && -z "$MODEL_MXFP4" ]]; then
+            echo "ERROR: at least one of --model, --model-fp8, or --model-mxfp4 is required"
             exit 1
         fi
         ;;
     *)
         echo "ERROR: Unknown config '$CONFIGS'"
-        echo "Available: bf16-throughput, bf16-latency, fp8-throughput, fp8-latency, all"
+        echo "Available: bf16-throughput, bf16-latency, fp8-throughput, fp8-latency, mxfp4-throughput, mxfp4-latency, all"
         exit 1
         ;;
 esac
@@ -202,7 +213,7 @@ start_gpu_monitor() {
 
 # ======================== Server Lifecycle (ATOM) =============================
 
-# Kill any running ATOM server processes
+# Kill any running ATOM server processes and free the port
 kill_server() {
     if [[ -n "${SERVER_PID:-}" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
         echo "[Server] Stopping PID=$SERVER_PID..."
@@ -211,7 +222,18 @@ kill_server() {
     fi
     # Kill ATOM server processes
     pkill -f "atom.entrypoints" 2>/dev/null || true
+    # Kill anything still holding the server port (e.g. orphaned workers)
+    local port_pids
+    port_pids=$(lsof -ti :"$SERVER_PORT" 2>/dev/null) || true
+    if [[ -n "$port_pids" ]]; then
+        echo "[Server] Killing processes on port $SERVER_PORT: $port_pids"
+        echo "$port_pids" | xargs kill -9 2>/dev/null || true
+    fi
     sleep 3
+    # Verify port is free
+    if curl --output /dev/null --silent --fail "http://0.0.0.0:${SERVER_PORT}/health" 2>/dev/null; then
+        echo "[Server] WARNING: Port $SERVER_PORT still responding after cleanup!"
+    fi
 }
 
 # ======================== MI355X Adaptive Parameters ===========================
@@ -221,7 +243,7 @@ kill_server() {
 #   - KV cache managed by vLLM's --gpu-memory-utilization
 #   - MTP via --speculative-model / --num-speculative-tokens
 #
-# Arguments: $1=ISL $2=OSL $3=CONC $4=has_mtp $5=quant(bf16|fp8)
+# Arguments: $1=ISL $2=OSL $3=CONC $4=has_mtp $5=quant(bf16|fp8|mxfp4)
 compute_mi355x_params() {
     local isl=$1 osl=$2 conc=$3 has_mtp=$4 quant=${5:-bf16}
 
@@ -257,6 +279,20 @@ compute_mi355x_params() {
         if [[ "$osl" == "8192" && $conc -gt 64 ]]; then
             GPU_MEMORY_UTILIZATION=0.88
             ENFORCE_EAGER="true"
+        fi
+    fi
+
+    # MXFP4: MoE weights are FP4 but attention is FP8, so memory footprint
+    # is between FP4 and FP8. CUDA graph capture at TP=8 is tight on MI355X.
+    # Start conservative and enforce eager to skip graph capture (~1-2GB/GPU).
+    if [[ "$quant" == "mxfp4" ]]; then
+        GPU_MEMORY_UTILIZATION=0.80
+        ENFORCE_EAGER="true"
+        if [[ "$isl" == "8192" || "$osl" == "8192" ]]; then
+            GPU_MEMORY_UTILIZATION=0.75
+        fi
+        if [[ "$osl" == "8192" && $conc -gt 32 ]]; then
+            GPU_MEMORY_UTILIZATION=0.70
         fi
     fi
 }
@@ -344,6 +380,19 @@ run_single_point() {
     SERVER_PID=$!
 
     if wait_for_server_ready --port "$SERVER_PORT" --server-log "$server_log" --server-pid "$SERVER_PID"; then
+        # Auto-detect served model name (ATOM may register a different name
+        # from config.json _name_or_path, e.g. MXFP4 model registers as
+        # "DeepSeek-R1-0528-MoE-MXFP4-Attn-MTP-PTPC-FP8")
+        local served_model
+        served_model=$(curl -s "http://0.0.0.0:${SERVER_PORT}/v1/models" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data'][0]['id'])" 2>/dev/null) \
+            || served_model="$model"
+        if [[ "$served_model" != "$model" ]]; then
+            log "  NOTE: Served model name differs from --model path"
+            log "    --model:        $model"
+            log "    served as:      $served_model"
+        fi
+
         local num_prompts=$(( conc * 10 ))
         [[ $num_prompts -lt 20 ]] && num_prompts=20
 
@@ -351,7 +400,7 @@ run_single_point() {
 
         local bench_cmd=(
             python3 -m atom.benchmarks.benchmark_serving
-            --model "$model"
+            --model "$served_model"
             --backend vllm
             --base-url "http://0.0.0.0:${SERVER_PORT}"
             --dataset-name random
@@ -490,6 +539,7 @@ log "  Target: 8×MI355X GPUs (ROCm)"
 log "============================================================"
 log "  Model BF16:  ${MODEL:-<not set>}"
 log "  Model FP8:   ${MODEL_FP8:-<not set>}"
+log "  Model MXFP4: ${MODEL_MXFP4:-<not set>}"
 log "  Model MTP:   ${MODEL_MTP:-<not set>}"
 log "  Configs:     $CONFIGS"
 log "  Port:        $SERVER_PORT"
@@ -515,6 +565,12 @@ run_configs() {
         fp8-latency)
             run_config "$MODEL_FP8" "fp8" "latency"
             ;;
+        mxfp4-throughput)
+            run_config "$MODEL_MXFP4" "mxfp4" "throughput"
+            ;;
+        mxfp4-latency)
+            run_config "$MODEL_MXFP4" "mxfp4" "latency"
+            ;;
         all)
             if [[ -n "$MODEL" ]]; then
                 run_config "$MODEL" "bf16" "throughput"
@@ -530,6 +586,14 @@ run_configs() {
                     run_config "$MODEL_FP8" "fp8" "latency"
                 else
                     log "SKIP: fp8-latency requires --model-mtp, skipping"
+                fi
+            fi
+            if [[ -n "$MODEL_MXFP4" ]]; then
+                run_config "$MODEL_MXFP4" "mxfp4" "throughput"
+                if [[ -n "$MODEL_MTP" ]]; then
+                    run_config "$MODEL_MXFP4" "mxfp4" "latency"
+                else
+                    log "SKIP: mxfp4-latency requires --model-mtp, skipping"
                 fi
             fi
             ;;

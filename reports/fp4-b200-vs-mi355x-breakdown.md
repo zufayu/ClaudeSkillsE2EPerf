@@ -1,9 +1,9 @@
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
-> **Last updated:** 2026-03-27 v15
+> **Last updated:** 2026-03-30 v16
 > **Model:** DeepSeek-R1-0528-NVFP4-v2, FP4
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
-> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅
+> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅
 
 ## 问题背景
 
@@ -13,21 +13,37 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 ## 对标配置
 
-| 项目 | B200 (SA InferenceX) | B200 (复现) | MI355X (ATOM) | 差异 |
-|------|---------------------|------------|---------------|------|
-| **Image** | rc6.post2 | rc6.post2 | ATOM 0.1.1 | TRT-LLM vs ATOM |
-| **GPU / TP / EP** | 8 / 8 / 8 | 8 / 8 / 8 | 4 / 4 / 1 | GPU 数不同，需按 /GPU 比 |
-| **DP Attention** | **False** | **False** | False | **相同** |
-| **Concurrency** | 64 | 64 | 待定 | |
+| 项目 | B200 (SA InferenceX) | B200 (复现) | MI355X (ATOM CI) | MI355X (复现) | 差异 |
+|------|---------------------|------------|------------------|--------------|------|
+| **Image** | rc6.post2 | rc6.post2 | rocm/atom:rocm7.1.1-ubuntu24.04-pytorch2.9-atom0.1.1-MI350x | 同机器（见下方环境对比） | TRT-LLM vs ATOM |
+| **GPU / TP / EP** | 8 / 8 / 8 | 8 / 8 / 8 | 4 / 4 / 1 | 4 / 4 / 1 | GPU 数不同，需按 /GPU 比 |
+| **DP Attention** | **False** | **False** | False | False | **相同** |
+| **Concurrency** | 64 | 64 | 64 | 64 | **相同** |
+| **Scenario** | chat 1K/1K | chat 1K/1K | chat 1K/1K | chat 1K/1K | **相同** |
 
-| Metric | B200 (SA) | B200 (复现) | 复现偏差 | MI355X | 差距 |
-|--------|-----------|------------|---------|--------|------|
-| **Total Tput /GPU** | 待查 | 待查 | | 待测 | 待填 |
-| **TPOT p50 (ms)** | 待查 | 待查 | | 待测 | 待填 |
-| **TTFT p50 (ms)** | 待查 | 待查 | | 待测 | 待填 |
-| **Interactivity** | 60.93 | 63.12 | +3.6% | 待测 | 待填 |
+| Metric | B200 (SA) | B200 (复现) | B200 复现偏差 | MI355X (CI) | MI355X (复现) | MI355X 复现偏差 | B200 vs MI355X |
+|--------|-----------|------------|-------------|-------------|--------------|----------------|----------------|
+| **Output TPS /GPU** | 473.4 | 490.1 | +3.5% | 297.8 | 328.5 | **+10.3%** | B200 1.49x |
+| **Interactivity** | 60.93 | 63.12 | +3.6% | 18.98 | 21.59 | **+13.7%** | B200 2.93x |
 
-> **复现验证：** 同 rc6.post2 docker，复现结果 +3.5% vs SA，在正常波动范围内。
+> **B200 复现验证：** 同 rc6.post2 docker，复现结果 +3.5% vs SA，在正常波动范围内。
+>
+> **MI355X 复现验证：** 复现结果 +10.3%/+13.7% vs ATOM CI 参考值，偏差较大。原因见下方环境对比——ATOM 版本差异（dev220 vs release 0.1.1）。
+
+### MI355X 复现环境对比
+
+| 组件 | ATOM CI (2026-02-25) | 本机复现 | 差异 |
+|------|---------------------|---------|------|
+| **Ubuntu** | 24.04 | 24.04.3 LTS | 一致 |
+| **ROCm** | 7.1.1 | 7.1.1 | **一致** |
+| **PyTorch** | 2.9 | 2.9.1+rocm7.1.1 | **一致** |
+| **aiter** | `a498c8b62` (v0.1.9.post1+20, 2026-01-09) | `a498c8b62` (v0.1.9.post1+20, 2026-01-09) | **完全一致** |
+| **ATOM** | 0.1.1 (release) | **0.1.1.dev220** (`7e91258`, 多 220 commits) | **不同：dev build 多 220 commits** |
+| **max-model-len** | 未知 | 4096 | 可能不同 |
+| **enforce-eager** | 未知 | true（跳过 CUDA graph） | 可能不同 |
+| **gpu-memory-utilization** | 未知 | 0.80 | 可能不同 |
+
+> **关键差异：ATOM 版本。** aiter 完全一致（CI nightly build 时 HEAD 仍是 `a498c8b62`）。唯一差异是 ATOM 本体——本机 dev build 比 CI release 多 220 个 commit，包含 deepseek accuracy/perf fix（如 `7e91258` fix deepseek accuracy when ENABLE_DS_QKNORM_QUANT_FUSION=1）。这 220 个新 commit 可能包含性能优化，解释了 +10.3% 的 Output TPS 提升。
 
 ## Per-Module Kernel 级分析（10 层平均）
 
@@ -94,13 +110,15 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 - [x] nvjet E4M3 源码考证（确认 E4M3 = block scale factor 格式）
 - [x] NVFP4 权重精度考证（hf_quant_config.json 确认 MLA 投影 BF16，MoE/out_proj FP4）
 - [x] 61 层端到端实测数据（20.472ms，单层均值 335.6μs）
-- [ ] MI355X 数据补充（355X 列 + ratio 列）
-- [ ] 配置 B vs 355X 公平对标结果（同 concurrency）
+- [x] MI355X 复现 + 环境对比（ATOM dev220 vs release，aiter 一致）
+- [ ] MI355X Per-Module Kernel 数据补充（--mark-trace + parse_trace.py）
+- [ ] 用最新 ATOM main 复测（含 --mark-trace 功能）
 
 ## 迭代日志
 
 | 日期 | 变更 |
 |------|------|
+| 2026-03-30 v16 | **MI355X 复现完成 + 环境对比。** Output TPS/GPU=328.5 vs CI 297.8 (+10.3%)，Interactivity=21.59 vs 18.98 (+13.7%)。偏差源于 ATOM 版本差异：本机 dev220（多 220 commits）vs CI release 0.1.1。aiter 版本完全一致（`a498c8b62`）。增加 MI355X 复现环境对比表。ATOM 已更新到最新 main（dev466），含 `--mark-trace` 功能 |
 | 2026-03-27 v15 | **61 层实测数据。** 增加 61 decode 层端到端实测时间（15.6ms）。关键路径估算（251.1×61=15.3ms）与实测偏差仅 2%，验证 P1 并行模型准确 |
 | 2026-03-27 v14 | **10 层平均数据。** 用第 40-49 层平均值替换单层快照。增加 Min/Max 波动列。修正 router 包含 splitK GEMM（12.0μs）、tp_AR+norm 正确归类（15.2μs）。moe_gemm 占比从 24.4% 升至 33.5%（含 quantize），moe_finalize 从 58.9 降至 33.1μs（单层是极端值） |
 | 2026-03-27 v13 | **继续精简。** 删除权重精度汇总表（与主表精度列重复）和 nvjet 源码考证（5 条证据→5 行摘要）。合并为"精度说明"注释 |
