@@ -406,9 +406,10 @@ python3 -u -m atom.benchmarks.benchmark_serving \
     --num-prompts "$WARMUP_NUM_PROMPTS" \
     --max-concurrency "$CONCURRENCY" \
     --request-rate inf \
-    --ignore-eos 2>&1 | tee -a "$SCRIPT_LOG" || {
+    --ignore-eos >> "$SCRIPT_LOG" 2>&1 || {
     log "WARNING: Warmup benchmark failed"
 }
+log "Warmup benchmark done."
 
 # Step 4: Profile (same config to capture prefill-decode interleaving)
 log "Starting profiler..."
@@ -428,9 +429,10 @@ python3 -u -m atom.benchmarks.benchmark_serving \
     --num-prompts "$PROFILE_NUM_PROMPTS" \
     --max-concurrency "$CONCURRENCY" \
     --request-rate inf \
-    --ignore-eos 2>&1 | tee -a "$SCRIPT_LOG" || {
+    --ignore-eos >> "$SCRIPT_LOG" 2>&1 || {
     log "WARNING: Profiled benchmark failed"
 }
+log "Profiled benchmark done."
 
 log "Stopping profiler..."
 curl -s -X POST "http://0.0.0.0:${SERVER_PORT}/stop_profile" || true
