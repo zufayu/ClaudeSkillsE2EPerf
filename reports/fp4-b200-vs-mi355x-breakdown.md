@@ -34,18 +34,19 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 ### MI355X 复现环境对比
 
-| 组件 | ATOM CI (2026-02-25) | 本机复现 | 差异 |
-|------|---------------------|---------|------|
+| 组件 | ATOM CI (2026-02-25) | 复现机器 (v17) | 差异 |
+|------|---------------------|---------------|------|
 | **Ubuntu** | 24.04 | 24.04.3 LTS | 一致 |
 | **ROCm** | 7.1.1 | 7.1.1 | **一致** |
-| **PyTorch** | 2.9 | 2.9.1+rocm7.1.1 | **一致** |
-| **aiter** | `a498c8b62` (v0.1.9.post1+20, 2026-01-09) | `a498c8b62` (v0.1.9.post1+20, 2026-01-09) | **完全一致** |
-| **ATOM** | 0.1.1 (release) | **0.1.1.dev220** (`7e91258`, 多 220 commits) | **不同：dev build 多 220 commits** |
-| **max-model-len** | 2248 | 2248（v17 对齐） | **一致** |
-| **enforce-eager** | false（默认） | false（v17 对齐） | **一致** |
-| **gpu-memory-utilization** | 0.90（默认） | 0.90（v17 对齐） | **一致** |
+| **PyTorch** | 2.9 | 2.11.0+rocm7.1 | 不同（pip 重装） |
+| **aiter** | `a498c8b62` (v0.1.9.post1+20, 2026-01-09) | `2bca98ced` (v0.1.12, 2026-03-30) | **不同：最新 main** |
+| **ATOM** | 0.1.1 (release) | **0.1.3.dev1** (`df6ab2c`, 最新 main) | **不同：最新 main** |
+| **max-model-len** | 2248 | 2248 | **一致** |
+| **enforce-eager** | false（默认） | false | **一致** |
+| **gpu-memory-utilization** | 0.90（默认） | 0.90 | **一致** |
+| **模型** | amd/DeepSeek-R1-0528-MXFP4-Preview | DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 | 不同 checkpoint |
 
-> **关键差异：ATOM 版本。** aiter 完全一致（CI nightly build 时 HEAD 仍是 `a498c8b62`）。唯一差异是 ATOM 本体——本机 dev build 比 CI release 多 220 个 commit，包含 deepseek accuracy/perf fix（如 `7e91258` fix deepseek accuracy when ENABLE_DS_QKNORM_QUANT_FUSION=1）。这 220 个新 commit 可能包含性能优化，解释了 +10.3% 的 Output TPS 提升。
+> **复现结果：** Output TPS/GPU=624.9 vs CI 600.7 (+4.0%)，Interactivity=40.09 vs 38.55 (+4.0%)。配置对齐后偏差在正常范围内。ATOM 和 aiter 均使用最新 main，PyTorch 从原装 2.9 升级到 2.11+rocm7.1，模型 checkpoint 不同但量化方式相同（MXFP4）。+4% 的提升可能来自 ATOM/aiter 的累积优化。
 
 ## Per-Module Kernel 级分析（10 层平均）
 
