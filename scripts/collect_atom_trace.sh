@@ -345,10 +345,9 @@ log "  Trace Dir:     $TRACE_DIR"
 log "  Tag:           $TAG"
 log "============================================================"
 
-# Save all output to log
+# Log file (don't use exec+tee — it buffers Python's tqdm/asyncio and hangs)
 mkdir -p "$RESULT_DIR"
 SCRIPT_LOG="$RESULT_DIR/${TAG}.log"
-exec > >(tee -a "$SCRIPT_LOG") 2>&1
 log "Log file: $SCRIPT_LOG"
 
 # Step 1: Cleanup
@@ -396,7 +395,7 @@ log "Served model: $SERVED_MODEL"
 
 # Step 3: Warmup (match SA benchmark config: conc*10 prompts)
 log "Running warmup benchmark ($WARMUP_NUM_PROMPTS prompts, concurrency $CONCURRENCY)..."
-python3 -m atom.benchmarks.benchmark_serving \
+python3 -u -m atom.benchmarks.benchmark_serving \
     --model "$SERVED_MODEL" \
     --backend vllm \
     --base-url "http://0.0.0.0:${SERVER_PORT}" \
@@ -407,7 +406,7 @@ python3 -m atom.benchmarks.benchmark_serving \
     --num-prompts "$WARMUP_NUM_PROMPTS" \
     --max-concurrency "$CONCURRENCY" \
     --request-rate inf \
-    --ignore-eos 2>&1 || {
+    --ignore-eos 2>&1 | tee -a "$SCRIPT_LOG" || {
     log "WARNING: Warmup benchmark failed"
 }
 
@@ -418,7 +417,7 @@ curl -s -X POST "http://0.0.0.0:${SERVER_PORT}/start_profile" || {
 }
 
 log "Running profiled benchmark ($PROFILE_NUM_PROMPTS prompts, concurrency $CONCURRENCY)..."
-python3 -m atom.benchmarks.benchmark_serving \
+python3 -u -m atom.benchmarks.benchmark_serving \
     --model "$SERVED_MODEL" \
     --backend vllm \
     --base-url "http://0.0.0.0:${SERVER_PORT}" \
@@ -429,7 +428,7 @@ python3 -m atom.benchmarks.benchmark_serving \
     --num-prompts "$PROFILE_NUM_PROMPTS" \
     --max-concurrency "$CONCURRENCY" \
     --request-rate inf \
-    --ignore-eos 2>&1 || {
+    --ignore-eos 2>&1 | tee -a "$SCRIPT_LOG" || {
     log "WARNING: Profiled benchmark failed"
 }
 
