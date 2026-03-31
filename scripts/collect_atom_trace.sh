@@ -467,17 +467,19 @@ PYEOF
     then log "Saved per-request CSV: $PERREQ_CSV"
     else log "WARNING: per-request CSV extraction failed"
     fi
-    # Strip large arrays from JSON to save space
-    if python3 - "$DETAILED_JSON" <<'PYEOF'
+    # Keep original as _detailed, write stripped version as main JSON
+    DETAILED_BACKUP="${DETAILED_JSON%.json}_detailed.json"
+    mv "$DETAILED_JSON" "$DETAILED_BACKUP"
+    if python3 - "$DETAILED_BACKUP" "$DETAILED_JSON" <<'PYEOF'
 import json, sys
 with open(sys.argv[1]) as f:
     d = json.load(f)
 for k in ['input_lens','output_lens','ttfts','itls','generated_texts','errors']:
     d.pop(k, None)
-with open(sys.argv[1], 'w') as f:
+with open(sys.argv[2], 'w') as f:
     json.dump(d, f)
 PYEOF
-    then log "Stripped detailed arrays from $TRACE_RESULT_FILE"
+    then log "Kept detailed: $(basename $DETAILED_BACKUP), stripped: $TRACE_RESULT_FILE"
     else log "WARNING: JSON strip failed"
     fi
 fi
