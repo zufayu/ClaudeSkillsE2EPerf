@@ -80,14 +80,15 @@ _original_import = builtins.__import__
 def _patched_import(name, *args, **kwargs):
     result = _original_import(name, *args, **kwargs)
     try:
-        if name in _TARGETS:
-            mod = sys.modules.get(name)
-            if mod:
-                MR = getattr(mod, 'ModelRunner', None)
-                if MR:
-                    method = 'run_model' if 'atom' in name else 'execute_model'
-                    if _patch_class(MR, method):
-                        _log(f"[roctx_patch] Patched {name}.ModelRunner.{method} (pid={os.getpid()})")
+        if 'model_runner' in name:
+            for target in _TARGETS:
+                mod = sys.modules.get(target)
+                if mod:
+                    MR = getattr(mod, 'ModelRunner', None)
+                    if MR:
+                        method = 'run_model' if 'atom' in target else 'execute_model'
+                        if _patch_class(MR, method):
+                            _log(f"[roctx_patch] Patched {target}.ModelRunner.{method} (pid={os.getpid()})")
     except Exception as e:
         _log(f"[roctx_patch] WARNING: patch failed for {name}: {e}")
     return result
