@@ -433,6 +433,7 @@ python3 -u -m atom.benchmarks.benchmark_serving \
     --request-rate inf \
     --ignore-eos \
     --save-result \
+    --save-detailed \
     --result-dir "$RESULT_DIR" \
     --result-filename "$TRACE_RESULT_FILE" >> "$SCRIPT_LOG" 2>&1 || {
     log "WARNING: Profiled benchmark failed"
