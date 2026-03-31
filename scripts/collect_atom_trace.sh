@@ -181,6 +181,14 @@ cleanup_residual() {
     # Clean shared memory (aiter blocks from previous runs)
     rm -f /dev/shm/aiter_*
 
+    # Clean stale roctx .pth hook from previous crashed runs
+    local stale_pth
+    stale_pth=$(python3 -c "import site; print(site.getsitepackages()[0])")/_roctx_hook.pth
+    if [[ -f "$stale_pth" ]]; then
+        rm -f "$stale_pth"
+        log "  Removed stale roctx hook: $stale_pth"
+    fi
+
     # Clean trace dir
     rm -rf "$TRACE_DIR"
 
