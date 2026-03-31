@@ -444,7 +444,7 @@ log "Profiled benchmark done."
 DETAILED_JSON="$RESULT_DIR/$TRACE_RESULT_FILE"
 if [[ -f "$DETAILED_JSON" ]]; then
     PERREQ_CSV="$RESULT_DIR/per_request_${TAG}.csv"
-    python3 - "$DETAILED_JSON" "$PERREQ_CSV" <<'PYEOF'
+    if python3 - "$DETAILED_JSON" "$PERREQ_CSV" <<'PYEOF'
 import json, csv, sys
 with open(sys.argv[1]) as f:
     d = json.load(f)
@@ -464,9 +464,11 @@ with open(sys.argv[2], 'w', newline='') as out:
         e2e = ttft + decode
         w.writerow([i, olen, f'{ttft:.2f}', f'{tpot:.2f}', f'{decode:.2f}', f'{e2e:.2f}'])
 PYEOF
-    [ $? -eq 0 ] && log "Saved per-request CSV: $PERREQ_CSV" || log "WARNING: per-request CSV extraction failed"
+    then log "Saved per-request CSV: $PERREQ_CSV"
+    else log "WARNING: per-request CSV extraction failed"
+    fi
     # Strip large arrays from JSON to save space
-    python3 - "$DETAILED_JSON" <<'PYEOF'
+    if python3 - "$DETAILED_JSON" <<'PYEOF'
 import json, sys
 with open(sys.argv[1]) as f:
     d = json.load(f)
@@ -475,7 +477,9 @@ for k in ['input_lens','output_lens','ttfts','itls','generated_texts','errors']:
 with open(sys.argv[1], 'w') as f:
     json.dump(d, f)
 PYEOF
-    [ $? -eq 0 ] && log "Stripped detailed arrays from $TRACE_RESULT_FILE" || log "WARNING: JSON strip failed"
+    then log "Stripped detailed arrays from $TRACE_RESULT_FILE"
+    else log "WARNING: JSON strip failed"
+    fi
 fi
 
 log "Stopping profiler..."
