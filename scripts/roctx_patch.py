@@ -72,15 +72,15 @@ def patch():
     except ImportError:
         pass
 
-    # Try ATOM ModelRunner (atom.model_engine.model_runner)
+    # Try ATOM ModelRunner (atom.model_engine.model_runner, method: run_model)
     try:
         from atom.model_engine.model_runner import ModelRunner as AtomModelRunner
-        if not getattr(AtomModelRunner.execute_model, '_roctx_patched', False):
-            AtomModelRunner.execute_model = _wrap_execute_model(AtomModelRunner.execute_model)
-            AtomModelRunner.execute_model._roctx_patched = True
+        if not getattr(AtomModelRunner.run_model, '_roctx_patched', False):
+            AtomModelRunner.run_model = _wrap_execute_model(AtomModelRunner.run_model)
+            AtomModelRunner.run_model._roctx_patched = True
             patched = True
-            print("[roctx_patch] Patched atom.worker.model_runner.ModelRunner.execute_model")
-    except ImportError:
+            print("[roctx_patch] Patched atom.model_engine.model_runner.ModelRunner.run_model")
+    except (ImportError, AttributeError):
         pass
 
     if not patched:
