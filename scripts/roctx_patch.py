@@ -24,11 +24,21 @@ def _wrap_execute_model(original_fn):
     def wrapper(self, *args, **kwargs):
         global _step_counter
         _step_counter += 1
-        # Detect prefill vs decode from the input: prefill has prompt tokens
+        bs = 0
         is_prefill = False
         if args:
             model_input = args[0]
-            # vLLM ModelInput typically has is_prompt or similar attribute
+            # Batch size from input tensor
+            for attr in ('input_tokens', 'input_ids'):
+                t = getattr(model_input, attr, None)
+                if t is not None and hasattr(t, 'shape'):
+                    bs = t.shape[0]
+                    break
+            if bs == 0:
+                meta = getattr(model_input, 'seq_group_metadata_list', None)
+                if meta:
+                    bs = len(meta)
+            # Detect prefill vs decode
             if hasattr(model_input, 'is_prompt'):
                 is_prefill = model_input.is_prompt
             elif hasattr(model_input, 'seq_group_metadata_list'):
@@ -36,7 +46,8 @@ def _wrap_execute_model(original_fn):
                 if meta and hasattr(meta[0], 'is_prompt'):
                     is_prefill = meta[0].is_prompt
 
-        tag = f"{'prefill' if is_prefill else 'decode'}_step_{_step_counter}"
+        phase = 'prefill' if is_prefill else 'decode'
+        tag = f"{phase}_step_{_step_counter}_bs={bs}"
         torch.cuda.nvtx.range_push(tag)
         try:
             result = original_fn(self, *args, **kwargs)
