@@ -1,7 +1,7 @@
 """
 Monkey-patch to inject roctx markers into vLLM/ATOM engine for GPU-side timing.
 
-Works across multiprocessing boundaries (spawn) via sys.meta_path import hook.
+Works across multiprocessing boundaries via builtins.__import__ hook.
 Activated by ROCTX_PATCH_ENABLED=1 environment variable.
 
 Usage (automatic via collect_atom_trace.sh --roctx-markers):
@@ -15,13 +15,14 @@ What it does:
 
 Requires: torch with ROCm (roctx is the ROCm equivalent of NVTX)
 """
+import builtins
 import functools
-import importlib
 import os
 import sys
 
 
 _step_counter = 0
+_TARGETS = frozenset({'atom.model_engine.model_runner', 'vllm.worker.model_runner'})
 
 
 def _log(msg):
@@ -73,39 +74,31 @@ def _patch_class(cls, method_name):
     return True
 
 
-class _RoctxImportHook:
-    """Import hook: patches ModelRunner when atom/vllm model_runner is imported."""
-    _active = True
+_original_import = builtins.__import__
 
-    def find_module(self, name, path=None):
-        if name.startswith('atom.model_engine'):
-            _log(f"[roctx_patch] find_module({name!r}, active={self._active})")
-        if self._active and name in ('atom.model_engine.model_runner', 'vllm.worker.model_runner'):
-            return self
-        return None
 
-    def load_module(self, name):
-        self._active = False
-        try:
-            mod = importlib.import_module(name)
-        finally:
-            self._active = True
-        MR = getattr(mod, 'ModelRunner', None)
-        if MR:
-            method = 'run_model' if 'atom' in name else 'execute_model'
-            if _patch_class(MR, method):
-                _log(f"[roctx_patch] Patched {name}.ModelRunner.{method} (hook, pid={os.getpid()})")
-        return mod
+def _patched_import(name, *args, **kwargs):
+    result = _original_import(name, *args, **kwargs)
+    try:
+        if name in _TARGETS:
+            mod = sys.modules.get(name)
+            if mod:
+                MR = getattr(mod, 'ModelRunner', None)
+                if MR:
+                    method = 'run_model' if 'atom' in name else 'execute_model'
+                    if _patch_class(MR, method):
+                        _log(f"[roctx_patch] Patched {name}.ModelRunner.{method} (pid={os.getpid()})")
+    except Exception as e:
+        _log(f"[roctx_patch] WARNING: patch failed for {name}: {e}")
+    return result
 
 
 def activate():
-    """Install import hook — patches ModelRunner only when actually imported."""
-    hook = _RoctxImportHook()
-    sys.meta_path.insert(0, hook)
-    _log(f"[roctx_patch] Hook installed, sys.meta_path[0]={hook} (pid={os.getpid()})")
+    """Install __import__ hook to patch ModelRunner when imported."""
+    builtins.__import__ = _patched_import
+    _log(f"[roctx_patch] __import__ hook installed (pid={os.getpid()})")
 
 
 # Auto-activate when ROCTX_PATCH_ENABLED=1
-_log(f"[roctx_patch] Module loaded, ROCTX_PATCH_ENABLED={os.environ.get('ROCTX_PATCH_ENABLED')!r} (pid={os.getpid()})")
 if os.environ.get('ROCTX_PATCH_ENABLED') == '1':
     activate()
