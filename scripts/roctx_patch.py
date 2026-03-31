@@ -24,6 +24,10 @@ import sys
 _step_counter = 0
 
 
+def _log(msg):
+    print(msg, file=sys.stderr)
+
+
 def _wrap_model_fn(original_fn):
     @functools.wraps(original_fn)
     def wrapper(self, *args, **kwargs):
@@ -88,7 +92,7 @@ class _RoctxImportHook:
         if MR:
             method = 'run_model' if 'atom' in name else 'execute_model'
             if _patch_class(MR, method):
-                print(f"[roctx_patch] Patched {name}.ModelRunner.{method} (hook, pid={os.getpid()})")
+                _log(f"[roctx_patch] Patched {name}.ModelRunner.{method} (hook, pid={os.getpid()})")
         return mod
 
 
@@ -98,21 +102,21 @@ def activate():
     try:
         from atom.model_engine.model_runner import ModelRunner as AtomMR
         if _patch_class(AtomMR, 'run_model'):
-            print(f"[roctx_patch] Patched ATOM ModelRunner.run_model (direct, pid={os.getpid()})")
+            _log(f"[roctx_patch] Patched ATOM ModelRunner.run_model (direct, pid={os.getpid()})")
             patched = True
     except (ImportError, AttributeError):
         pass
     try:
         from vllm.worker.model_runner import ModelRunner
         if _patch_class(ModelRunner, 'execute_model'):
-            print(f"[roctx_patch] Patched vLLM ModelRunner.execute_model (direct, pid={os.getpid()})")
+            _log(f"[roctx_patch] Patched vLLM ModelRunner.execute_model (direct, pid={os.getpid()})")
             patched = True
     except (ImportError, AttributeError):
         pass
 
     if not patched:
         sys.meta_path.insert(0, _RoctxImportHook())
-        print(f"[roctx_patch] Import hook installed (pid={os.getpid()})")
+        _log(f"[roctx_patch] Import hook installed (pid={os.getpid()})")
 
 
 # Auto-activate when ROCTX_PATCH_ENABLED=1
