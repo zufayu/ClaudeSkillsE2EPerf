@@ -56,23 +56,23 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 > **并行组：** 标注 **P1** 的算子在不同 stream 上并行执行，关键路径 = max(组内算子时间)
 > **MI355X 数据：** 待补充（rocprof trace）
 
-| # | 算子 | 计算内容 | B200 Kernel(s) | Avg μs | % | Min | Max | 并行 | 精度 | MI355X μs |
-|---|------|---------|---------------|--------|------|-----|-----|------|------|-----------|
-| 1 | **qkv_a_proj** | q_a+kv_a 低秩压缩 [7168→2112] | nvjet tst splitK + reduce | **42.6** | 15.0% | 28.5 | 69.1 | **P1** | BF16×BF16 | |
-| 2 | q/k_norm | Q、K RMSNorm ×2 | RMSNormKernel ×2 | 4.6 | 1.6% | 2.4 | 5.3 | | BF16 | |
-| 3 | q_b_proj | Q 展开 [1536→nhead×192] | nvjet tst | 5.7 | 2.0% | 5.4 | 5.8 | | BF16×BF16 | |
-| 4 | k_concat | K 拼接（RoPE 部分） | CatArrayBatchedCopy | 4.4† | 1.6% | 0.0 | 5.1 | | — | |
-| 5 | uk_gemm | kv_b K 展开 [512→nhead×128] | nvjet tst | 3.8 | 1.3% | 3.6 | 4.0 | | BF16×BF16 | |
-| 6 | rope_cache | RoPE + KV cache 写入 | applyMLARopeAndAssignQKV | 3.5 | 1.2% | 3.3 | 3.6 | | BF16 | |
-| 7 | **fmha** | MLA attention | fmhaSm100f QkvE4m3 | **20.7** | 7.3% | 20.1 | 21.7 | | FP8 E4M3 KV | |
-| 8 | uv_gemm | kv_b V 投影 | nvjet tst | 3.7 | 1.3% | 3.5 | 4.1 | | BF16×BF16 | |
-| 9 | **out_proj** | BF16→FP4 量化 + o_proj GEMM | quantize + nvjet ootst | **8.6** | 3.0% | 8.4 | 8.8 | | FP4×FP4 | |
-| 10 | **tp_allreduce+norm** | TP AR + residual add + pre-MLP norm | userbuffers_rmsnorm | **15.2** | 5.3% | 13.1 | 17.3 | | BF16 | |
-| 11 | residual_ag | residual allgather | userbuffers_allgather | 9.7 | 3.4% | 9.0 | 10.1 | | BF16 | |
-| 12 | router | Router splitK + topK + sort | nvjet splitK + reduce + routing ×2 | 12.0 | 4.2% | 8.0 | 13.2 | | BF16 | |
-| 13 | **moe_gemm** | quantize + gate+up+SwiGLU + down | quantize + bmm_E2m1 + bmm_BF16 | **95.3** | 33.5% | 79.4 | 104.9 | | FP4×FP4 | |
-| 14 | shared_expert | quantize×2 + gate+up + SiLU + down | quantize×2 + ootst×2 + silu | 21.4 | 7.5% | 20.9 | 21.8 | | FP4×FP4 | |
-| 15 | **moe_finalize** | 加权求和 + EP allreduce + residual | moefinalize_lamport | **33.1** | 11.7% | 19.0 | 58.9 | **P1** | BF16 | |
+| # | 算子 | Type | GEMM Shape (per GPU) | 计算内容 | B200 Kernel(s) | Avg μs | % | Min | Max | 并行 | 精度 | MI355X μs |
+|---|------|------|---------------------|---------|---------------|--------|------|-----|-----|------|------|-----------|
+| 1 | **qkv_a_proj** | GEMM | `[bs,7168]×[7168,2112]` 不随TP split | q_a+kv_a 低秩压缩 | nvjet tst splitK + reduce | **42.6** | 15.0% | 28.5 | 69.1 | **P1** | BF16×BF16 | |
+| 2 | q/k_norm | Norm | — | Q、K RMSNorm ×2 | RMSNormKernel ×2 | 4.6 | 1.6% | 2.4 | 5.3 | | BF16 | |
+| 3 | q_b_proj | GEMM | `[bs,1536]×[1536,3072]` 128h/8=16, 16×192 | Q 展开 | nvjet tst | 5.7 | 2.0% | 5.4 | 5.8 | | BF16×BF16 | |
+| 4 | k_concat | Mem | — | K 拼接（RoPE 部分） | CatArrayBatchedCopy | 4.4† | 1.6% | 0.0 | 5.1 | | — | |
+| 5 | uk_gemm | GEMM | `[bs,512]×[512,2048]` 16×128 | kv_b K 展开 | nvjet tst | 3.8 | 1.3% | 3.6 | 4.0 | | BF16×BF16 | |
+| 6 | rope_cache | Mem | — | RoPE + KV cache 写入 | applyMLARopeAndAssignQKV | 3.5 | 1.2% | 3.3 | 3.6 | | BF16 | |
+| 7 | **fmha** | Attn | — | MLA attention | fmhaSm100f QkvE4m3 | **20.7** | 7.3% | 20.1 | 21.7 | | FP8 E4M3 KV | |
+| 8 | uv_gemm | GEMM | `[bs,512]×[512,2048]` 16×128 | kv_b V 投影 | nvjet tst | 3.7 | 1.3% | 3.5 | 4.1 | | BF16×BF16 | |
+| 9 | **out_proj** | GEMM | `[bs,2048]×[2048,7168]` + allreduce | o_proj GEMM（含 BF16→FP4 量化） | quantize + nvjet ootst | **8.6** | 3.0% | 8.4 | 8.8 | | FP4×FP4 | |
+| 10 | **tp_allreduce+norm** | Comm+Norm | — | TP AR + residual add + pre-MLP norm | userbuffers_rmsnorm | **15.2** | 5.3% | 13.1 | 17.3 | | BF16 | |
+| 11 | residual_ag | Comm | — | residual allgather | userbuffers_allgather | 9.7 | 3.4% | 9.0 | 10.1 | | BF16 | |
+| 12 | router | Route | `[bs,7168]×[7168,256]` splitK | Router GEMM + topK + sort | nvjet splitK + reduce + routing ×2 | 12.0 | 4.2% | 8.0 | 13.2 | | BF16 | |
+| 13 | **moe_gemm** | GEMM | grouped: `[7168,4096]`+`[2048,7168]` ×32exp/GPU | gate+up+SwiGLU+down（含量化） | quantize + bmm_E2m1 + bmm_BF16 | **95.3** | 33.5% | 79.4 | 104.9 | | FP4×FP4 | |
+| 14 | shared_expert | GEMM | `[bs,7168]×[7168,?]`+`[bs,?,7168]` 2 GEMMs | gate+up+SiLU+down（含量化×2） | quantize×2 + ootst×2 + silu | 21.4 | 7.5% | 20.9 | 21.8 | | FP4×FP4 | |
+| 15 | **moe_finalize** | Comm | — | 加权求和 + EP allreduce + residual | moefinalize_lamport | **33.1** | 11.7% | 19.0 | 58.9 | **P1** | BF16 | |
 
 > † k_concat 和 q/k_norm 的第二个 RMSNorm 在 Stream 8907 上执行，部分层 copy-paste 丢失，平均值略偏低。
 > **高方差算子：** qkv_a_proj（std=11.4μs）和 moe_finalize（std=11.1μs）层间波动大，前者受 splitK 调度影响，后者受 EP allreduce 跨 GPU 同步影响。

@@ -417,7 +417,9 @@ curl -s -X POST "http://0.0.0.0:${SERVER_PORT}/start_profile" || {
     log "ERROR: Failed to start profiler"; exit 1
 }
 
+TRACE_RESULT_FILE="result_profiled_${TAG}.json"
 log "Running profiled benchmark ($PROFILE_NUM_PROMPTS prompts, concurrency $CONCURRENCY)..."
+log "  Result file: $RESULT_DIR/$TRACE_RESULT_FILE"
 python3 -u -m atom.benchmarks.benchmark_serving \
     --model "$SERVED_MODEL" \
     --backend vllm \
@@ -429,7 +431,10 @@ python3 -u -m atom.benchmarks.benchmark_serving \
     --num-prompts "$PROFILE_NUM_PROMPTS" \
     --max-concurrency "$CONCURRENCY" \
     --request-rate inf \
-    --ignore-eos >> "$SCRIPT_LOG" 2>&1 || {
+    --ignore-eos \
+    --save-result \
+    --result-dir "$RESULT_DIR" \
+    --result-filename "$TRACE_RESULT_FILE" >> "$SCRIPT_LOG" 2>&1 || {
     log "WARNING: Profiled benchmark failed"
 }
 log "Profiled benchmark done."
