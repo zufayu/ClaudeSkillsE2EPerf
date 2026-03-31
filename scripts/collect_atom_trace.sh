@@ -58,6 +58,8 @@ KV_CACHE_DTYPE="fp8"
 MAX_NUM_SEQS=512
 MAX_MODEL_LEN=""
 PROFILE_NUM_PROMPTS=""      # defaults to WARMUP_NUM_PROMPTS if not set
+ROCTRACER_MAX_EVENTS=""     # if set, auto-generate libkineto.conf (default 1M, use 10M+ for long traces)
+ROCTX_MARKERS=false         # inject roctx markers into engine for decode/prefill step timing
 FLUSH_TIMEOUT=300
 LAYER=40
 
@@ -82,6 +84,8 @@ Options:
   --profile-prompts N       Prompts during profiling [default: conc*2, same as warmup]
                             Use smaller values (e.g. 128) for faster runs with less memory.
                             Must be >= concurrency to maintain steady-state batch size.
+  --roctracer-max-events N  Set ROCTRACER_MAX_EVENTS (default 1M; use 10000000 for longer traces)
+  --roctx-markers           Inject roctx markers (decode_step/prefill_step) into engine
   --flush-timeout N         Max seconds to wait for trace flush [default: 300]
   --layer N                 Layer index for parse_trace.py [default: 40]
   -h, --help                Show this help
@@ -119,6 +123,8 @@ while [[ $# -gt 0 ]]; do
         --gpu-mem-util)     GPU_MEM_UTIL="$2"; shift 2 ;;
         --max-model-len)    MAX_MODEL_LEN="$2"; shift 2 ;;
         --profile-prompts)  PROFILE_NUM_PROMPTS="$2"; shift 2 ;;
+        --roctracer-max-events) ROCTRACER_MAX_EVENTS="$2"; shift 2 ;;
+        --roctx-markers)    ROCTX_MARKERS=true; shift ;;
         --flush-timeout)    FLUSH_TIMEOUT="$2"; shift 2 ;;
         --layer)            LAYER="$2"; shift 2 ;;
         -h|--help)          usage ;;
@@ -341,6 +347,7 @@ log "  Max Model Len: $MAX_MODEL_LEN"
 log "  GPU Mem Util:  $GPU_MEM_UTIL"
 log "  Result Dir:    $RESULT_DIR"
 log "  Trace Dir:     $TRACE_DIR"
+log "  ROCTracer Max: ${ROCTRACER_MAX_EVENTS:-default (1M)}"
 log "  Tag:           $TAG"
 log "============================================================"
 
@@ -352,10 +359,25 @@ log "Log file: $SCRIPT_LOG"
 # Step 1: Cleanup
 cleanup_residual
 
+# Apply Kineto/ROCTracer config if specified
+if [[ -n "$ROCTRACER_MAX_EVENTS" ]]; then
+    KINETO_CONF="$RESULT_DIR/libkineto.conf"
+    echo "ROCTRACER_MAX_EVENTS=$ROCTRACER_MAX_EVENTS" > "$KINETO_CONF"
+    export KINETO_CONFIG="$KINETO_CONF"
+    log "Kineto config: ROCTRACER_MAX_EVENTS=$ROCTRACER_MAX_EVENTS ($KINETO_CONF)"
+fi
+
 # Step 2: Start ATOM server with profiling enabled
 log "Starting ATOM server (TP=$TP, profiler enabled)..."
 
-python3 -m atom.entrypoints.openai_server \
+SERVER_LAUNCH=(python3 -m atom.entrypoints.openai_server)
+if [[ "$ROCTX_MARKERS" == "true" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    SERVER_LAUNCH=(python3 -c "import sys; sys.path.insert(0,'$SCRIPT_DIR'); import roctx_patch; sys.argv=sys.argv[1:]; import runpy; runpy.run_module('atom.entrypoints.openai_server',run_name='__main__')" placeholder)
+    log "roctx markers enabled via $SCRIPT_DIR/roctx_patch.py"
+fi
+
+"${SERVER_LAUNCH[@]}" \
     --model "$MODEL" \
     --server-port "$SERVER_PORT" \
     --tensor-parallel-size "$TP" \
