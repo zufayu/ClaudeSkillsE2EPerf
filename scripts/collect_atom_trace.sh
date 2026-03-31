@@ -79,7 +79,7 @@ Options:
   --port PORT               Server port [default: 8000]
   --gpu-mem-util FLOAT      GPU memory utilization [default: 0.90]
   --max-model-len N         Override max model length
-  --profile-prompts N       Prompts during profiling [default: conc*10, same as warmup]
+  --profile-prompts N       Prompts during profiling [default: conc*2, same as warmup]
                             Use smaller values (e.g. 128) for faster runs with less memory.
                             Must be >= concurrency to maintain steady-state batch size.
   --flush-timeout N         Max seconds to wait for trace flush [default: 300]
@@ -142,8 +142,7 @@ case "$SCENARIO" in
 esac
 
 # Compute defaults
-WARMUP_NUM_PROMPTS=$(( CONCURRENCY * 10 ))
-[[ $WARMUP_NUM_PROMPTS -lt 20 ]] && WARMUP_NUM_PROMPTS=20
+WARMUP_NUM_PROMPTS=$(( CONCURRENCY * 2 ))
 
 # Profile prompts default to warmup prompts to capture prefill-decode interleaving
 [[ -z "$PROFILE_NUM_PROMPTS" ]] && PROFILE_NUM_PROMPTS=$WARMUP_NUM_PROMPTS

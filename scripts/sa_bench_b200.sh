@@ -51,7 +51,7 @@ TP=8
 SCENARIO_FILTER="all"        # all | chat | reasoning | summarize
 CONC_FILTER=""               # empty = use default sweep; "256" or "4 128 256" = specific values
 DP_OVERRIDE=""               # empty = auto (EP>1 → DP=true); "true" or "false" = force
-NUM_WARMUPS=""                # empty = auto (SA default: 8); or explicit number
+NUM_WARMUPS=""                # empty = auto (SA default: conc*2); or explicit number
 DAR_NUM_REQUESTS=200          # number of requests for DAR measurement
 DAR_CONCURRENCY=32            # concurrency for DAR measurement
 DAR_WARMUP=5                  # warmup requests for DAR measurement
@@ -91,7 +91,7 @@ while [[ $# -gt 0 ]]; do
             echo "Filtering (run a subset):"
             echo "  --scenario SCENARIO     chat|reasoning|summarize|all (default: all)"
             echo "  --concurrency \"C1 C2\"   Concurrency values to run (default: sweep 1 4 8 16 32 64 128 256)"
-            echo "  --num-warmups N         Number of warmup requests (default: 8, matching SA)"
+            echo "  --num-warmups N         Number of warmup requests (default: conc*2, matching SA)"
             echo "  --dp true|false         Force DP attention on/off (default: auto, EP>1 → true)"
             echo "  --gpus \"0,1,2,3\"        CUDA_VISIBLE_DEVICES — use subset of GPUs (default: all)"
             echo ""
@@ -442,8 +442,8 @@ EOF
         local num_prompts=$(( conc * 10 ))
         [[ $num_prompts -lt 20 ]] && num_prompts=20
 
-        # SA uses 8 warmups by default, not 2*concurrency
-        local warmups="${NUM_WARMUPS:-8}"
+        # SA InferenceX: --num-warmups "$((2 * max_concurrency))"
+        local warmups="${NUM_WARMUPS:-$(( conc * 2 ))}"
 
         local bench_args=(
             --model "$model"
@@ -857,7 +857,7 @@ log "  TP:          $TP"
 log "  EP Sizes:    $EP_SIZES"
 log "  Scenario:    $SCENARIO_FILTER -> ${SCENARIOS[*]}"
 log "  Concurrency: ${CONC_SWEEP[*]}"
-log "  Warmups:     ${NUM_WARMUPS:-8}"
+log "  Warmups:     ${NUM_WARMUPS:-conc*2}"
 log "  Range Ratio: $RANDOM_RANGE_RATIO"
 log "  Docker Img:  ${DOCKER_IMAGE:-<not set, set DOCKER_IMAGE env to record>}"
 log "============================================================"

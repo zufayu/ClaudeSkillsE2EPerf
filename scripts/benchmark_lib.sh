@@ -269,7 +269,7 @@ run_benchmark_serving() {
         --request-rate inf
         --ignore-eos
         --save-result
-        --num-warmups "${num_warmups:-8}"
+        --num-warmups "${num_warmups:-$(( max_concurrency * 2 ))}"
         --percentile-metrics 'ttft,tpot,itl,e2el'
         --result-dir "$result_dir"
         --result-filename "${result_filename}.json"
