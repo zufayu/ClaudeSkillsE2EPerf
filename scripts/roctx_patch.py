@@ -1,25 +1,30 @@
 """
 Monkey-patch to inject roctx markers into vLLM/ATOM engine for GPU-side timing.
 
-Usage: Import this BEFORE starting the server, or use sitecustomize.
-  python3 -c "import roctx_patch" && python3 -m atom.entrypoints.openai_server ...
-  OR: PYTHONPATH=/path/to/scripts python3 -m atom.entrypoints.openai_server ...
+Works across multiprocessing boundaries (spawn) via sys.meta_path import hook.
+Activated by ROCTX_PATCH_ENABLED=1 environment variable.
+
+Usage (automatic via collect_atom_trace.sh --roctx-markers):
+  The script installs a .pth file in site-packages that auto-imports this module
+  in every Python process, including spawned GPU workers.
 
 What it does:
-  - Wraps ModelRunner.execute_model with roctx push/pop markers
-  - Adds "decode_step" / "prefill_step" annotations visible in Kineto traces
-  - Allows comparing GPU-side step duration vs client-side ITL (25ms vs 21ms gap)
+  - Wraps ModelRunner.run_model (ATOM) or .execute_model (vLLM) with roctx markers
+  - Tags: decode_step_N_bs=M / prefill_step_N_bs=M
+  - Visible in Kineto traces for GPU-side vs client-side timing comparison
 
 Requires: torch with ROCm (roctx is the ROCm equivalent of NVTX)
 """
 import functools
-import torch
+import importlib
+import os
+import sys
 
 
 _step_counter = 0
 
 
-def _wrap_execute_model(original_fn):
+def _wrap_model_fn(original_fn):
     @functools.wraps(original_fn)
     def wrapper(self, *args, **kwargs):
         global _step_counter
@@ -28,7 +33,6 @@ def _wrap_execute_model(original_fn):
         is_prefill = False
         if args:
             model_input = args[0]
-            # Batch size from input tensor
             for attr in ('input_tokens', 'input_ids'):
                 t = getattr(model_input, attr, None)
                 if t is not None and hasattr(t, 'shape'):
@@ -38,7 +42,6 @@ def _wrap_execute_model(original_fn):
                 meta = getattr(model_input, 'seq_group_metadata_list', None)
                 if meta:
                     bs = len(meta)
-            # Detect prefill vs decode
             if hasattr(model_input, 'is_prompt'):
                 is_prefill = model_input.is_prompt
             elif hasattr(model_input, 'seq_group_metadata_list'):
@@ -46,48 +49,72 @@ def _wrap_execute_model(original_fn):
                 if meta and hasattr(meta[0], 'is_prompt'):
                     is_prefill = meta[0].is_prompt
 
+        import torch
         phase = 'prefill' if is_prefill else 'decode'
         tag = f"{phase}_step_{_step_counter}_bs={bs}"
         torch.cuda.nvtx.range_push(tag)
         try:
-            result = original_fn(self, *args, **kwargs)
+            return original_fn(self, *args, **kwargs)
         finally:
             torch.cuda.nvtx.range_pop()
-        return result
     return wrapper
 
 
-def patch():
-    """Apply roctx patches to vLLM/ATOM ModelRunner."""
-    patched = False
+def _patch_class(cls, method_name):
+    fn = getattr(cls, method_name, None)
+    if fn is None or getattr(fn, '_roctx_patched', False):
+        return False
+    setattr(cls, method_name, _wrap_model_fn(fn))
+    getattr(cls, method_name)._roctx_patched = True
+    return True
 
-    # Try vLLM ModelRunner
+
+class _RoctxImportHook:
+    """Import hook: patches ModelRunner when atom/vllm model_runner is imported."""
+    _active = True
+
+    def find_module(self, name, path=None):
+        if self._active and name in ('atom.model_engine.model_runner', 'vllm.worker.model_runner'):
+            return self
+        return None
+
+    def load_module(self, name):
+        self._active = False
+        try:
+            mod = importlib.import_module(name)
+        finally:
+            self._active = True
+        MR = getattr(mod, 'ModelRunner', None)
+        if MR:
+            method = 'run_model' if 'atom' in name else 'execute_model'
+            if _patch_class(MR, method):
+                print(f"[roctx_patch] Patched {name}.ModelRunner.{method} (hook, pid={os.getpid()})")
+        return mod
+
+
+def activate():
+    """Activate roctx patching: try direct patch, fall back to import hook."""
+    patched = False
+    try:
+        from atom.model_engine.model_runner import ModelRunner as AtomMR
+        if _patch_class(AtomMR, 'run_model'):
+            print(f"[roctx_patch] Patched ATOM ModelRunner.run_model (direct, pid={os.getpid()})")
+            patched = True
+    except (ImportError, AttributeError):
+        pass
     try:
         from vllm.worker.model_runner import ModelRunner
-        if not getattr(ModelRunner.execute_model, '_roctx_patched', False):
-            ModelRunner.execute_model = _wrap_execute_model(ModelRunner.execute_model)
-            ModelRunner.execute_model._roctx_patched = True
+        if _patch_class(ModelRunner, 'execute_model'):
+            print(f"[roctx_patch] Patched vLLM ModelRunner.execute_model (direct, pid={os.getpid()})")
             patched = True
-            print("[roctx_patch] Patched vllm.worker.model_runner.ModelRunner.execute_model")
-    except ImportError:
-        pass
-
-    # Try ATOM ModelRunner (atom.model_engine.model_runner, method: run_model)
-    try:
-        from atom.model_engine.model_runner import ModelRunner as AtomModelRunner
-        if not getattr(AtomModelRunner.run_model, '_roctx_patched', False):
-            AtomModelRunner.run_model = _wrap_execute_model(AtomModelRunner.run_model)
-            AtomModelRunner.run_model._roctx_patched = True
-            patched = True
-            print("[roctx_patch] Patched atom.model_engine.model_runner.ModelRunner.run_model")
     except (ImportError, AttributeError):
         pass
 
     if not patched:
-        print("[roctx_patch] WARNING: Could not find ModelRunner to patch")
+        sys.meta_path.insert(0, _RoctxImportHook())
+        print(f"[roctx_patch] Import hook installed (pid={os.getpid()})")
 
-    return patched
 
-
-# Auto-patch on import
-patch()
+# Auto-activate when ROCTX_PATCH_ENABLED=1
+if os.environ.get('ROCTX_PATCH_ENABLED') == '1':
+    activate()

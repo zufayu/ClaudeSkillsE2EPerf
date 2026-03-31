@@ -405,7 +405,9 @@ PYEOF
 # ======================== Main ================================================
 SERVER_PID=""
 
+ROCTX_PTH=""
 trap_cleanup() {
+    [[ -n "$ROCTX_PTH" ]] && rm -f "$ROCTX_PTH" 2>/dev/null
     if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
         log "Trap: killing server PID=$SERVER_PID"
         kill "$SERVER_PID" 2>/dev/null || true
@@ -452,14 +454,17 @@ fi
 # Step 2: Start ATOM server with profiling enabled
 log "Starting ATOM server (TP=$TP, profiler enabled)..."
 
-SERVER_LAUNCH=(python3 -m atom.entrypoints.openai_server)
+# Install roctx hook into all Python processes (main + spawned workers)
 if [[ "$ROCTX_MARKERS" == "true" ]]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    SERVER_LAUNCH=(python3 -c "import sys; sys.path.insert(0,'$SCRIPT_DIR'); import roctx_patch; sys.argv=sys.argv[1:]; import runpy; runpy.run_module('atom.entrypoints.openai_server',run_name='__main__')" placeholder)
-    log "roctx markers enabled via $SCRIPT_DIR/roctx_patch.py"
+    ROCTX_SITE_DIR=$(python3 -c "import site; print(site.getsitepackages()[0])")
+    ROCTX_PTH="$ROCTX_SITE_DIR/_roctx_hook.pth"
+    echo "import sys; sys.path.insert(0, '$SCRIPT_DIR'); import roctx_patch" > "$ROCTX_PTH"
+    export ROCTX_PATCH_ENABLED=1
+    log "roctx hook installed: $ROCTX_PTH (activates in all Python processes)"
 fi
 
-"${SERVER_LAUNCH[@]}" \
+python3 -m atom.entrypoints.openai_server \
     --model "$MODEL" \
     --server-port "$SERVER_PORT" \
     --tensor-parallel-size "$TP" \
