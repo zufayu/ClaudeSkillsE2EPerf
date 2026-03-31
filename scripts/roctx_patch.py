@@ -97,26 +97,8 @@ class _RoctxImportHook:
 
 
 def activate():
-    """Activate roctx patching: try direct patch, fall back to import hook."""
-    patched = False
-    try:
-        from atom.model_engine.model_runner import ModelRunner as AtomMR
-        if _patch_class(AtomMR, 'run_model'):
-            _log(f"[roctx_patch] Patched ATOM ModelRunner.run_model (direct, pid={os.getpid()})")
-            patched = True
-    except (ImportError, AttributeError):
-        pass
-    try:
-        from vllm.worker.model_runner import ModelRunner
-        if _patch_class(ModelRunner, 'execute_model'):
-            _log(f"[roctx_patch] Patched vLLM ModelRunner.execute_model (direct, pid={os.getpid()})")
-            patched = True
-    except (ImportError, AttributeError):
-        pass
-
-    if not patched:
-        sys.meta_path.insert(0, _RoctxImportHook())
-        _log(f"[roctx_patch] Import hook installed (pid={os.getpid()})")
+    """Install import hook — patches ModelRunner only when actually imported."""
+    sys.meta_path.insert(0, _RoctxImportHook())
 
 
 # Auto-activate when ROCTX_PATCH_ENABLED=1
