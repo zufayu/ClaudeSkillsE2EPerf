@@ -78,6 +78,8 @@ class _RoctxImportHook:
     _active = True
 
     def find_module(self, name, path=None):
+        if name.startswith('atom.model_engine'):
+            _log(f"[roctx_patch] find_module({name!r}, active={self._active})")
         if self._active and name in ('atom.model_engine.model_runner', 'vllm.worker.model_runner'):
             return self
         return None
@@ -98,9 +100,12 @@ class _RoctxImportHook:
 
 def activate():
     """Install import hook — patches ModelRunner only when actually imported."""
-    sys.meta_path.insert(0, _RoctxImportHook())
+    hook = _RoctxImportHook()
+    sys.meta_path.insert(0, hook)
+    _log(f"[roctx_patch] Hook installed, sys.meta_path[0]={hook} (pid={os.getpid()})")
 
 
 # Auto-activate when ROCTX_PATCH_ENABLED=1
+_log(f"[roctx_patch] Module loaded, ROCTX_PATCH_ENABLED={os.environ.get('ROCTX_PATCH_ENABLED')!r} (pid={os.getpid()})")
 if os.environ.get('ROCTX_PATCH_ENABLED') == '1':
     activate()
