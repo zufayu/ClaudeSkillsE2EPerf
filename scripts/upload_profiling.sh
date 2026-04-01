@@ -58,7 +58,7 @@ while IFS= read -r f; do
     BASENAME="$(basename "$f")"
     # Skip trace files (.json.gz), log files, and libkineto config
     case "$BASENAME" in
-        *.trace.json.gz|*.log|libkineto.conf)
+        *.trace.json.gz|libkineto.conf)
             echo "  SKIP (trace/log): $BASENAME"
             SKIPPED=$((SKIPPED + 1))
             continue
