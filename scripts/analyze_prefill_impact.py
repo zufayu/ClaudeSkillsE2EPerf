@@ -345,6 +345,17 @@ def save_xlsx(gaps, benchmark, output_path):
         summary_rows.append(row("benchmark_median_itl", "", round(benchmark["median_itl_ms"], 2), "ms", "Typical ITL without prefill interruption — represents true GPU decode speed"))
         summary_rows.append(row("benchmark_p99_itl", "", round(benchmark["p99_itl_ms"], 2), "ms", "Worst-case ITL — corresponds to decode cycles interrupted by prefill"))
 
+    # Gaps sheet column definitions
+    summary_rows.append(row("", "", "", "", ""))
+    summary_rows.append(row("--- GAPS SHEET COLUMNS ---", "", "", "", ""))
+    summary_rows.append(row("gap_idx", "", "", "index", "Sequential index of the inter-decode gap (0 = gap between 1st and 2nd decode)"))
+    summary_rows.append(row("gap_ms", "", "", "ms", "Time between two consecutive decode events: ts[i+1] - ts[i]. This is what each request experiences as ITL"))
+    summary_rows.append(row("bs", "", "", "count", "Batch size of the earlier decode event. Each gap is experienced by this many concurrent requests simultaneously"))
+    summary_rows.append(row("bs_after", "", "", "count", "Batch size of the later decode event. bs_after < bs means a request finished; bs_after > bs means a new request joined after prefill"))
+    summary_rows.append(row("has_prefill", "", "", "0/1", "1 if a prefill event was found between the two decode events in the trace. Proves the gap was caused by prefill"))
+    summary_rows.append(row("prefill_count", "", "", "count", "Number of prefill events found between the two decode events (usually 0 or 1, rarely >1)"))
+    summary_rows.append(row("prefill_dur_ms", "", "", "ms", "Total duration of prefill events between the two decodes. gap_ms ≈ decode_dur + prefill_dur_ms + scheduling overhead"))
+
     summary_df = pd.DataFrame(summary_rows)
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
