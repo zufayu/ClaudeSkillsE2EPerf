@@ -330,15 +330,28 @@ def save_xlsx(gaps, benchmark, output_path):
         n_verified = sum(1 for g in interrupted if g["has_prefill"])
         n_interrupted = len(interrupted)
         summary_rows.append(row("prefill_verified_pct", round(n_verified / n_interrupted * 100, 2), "", "%", f"{n_verified}/{n_interrupted} large gaps (>=50ms) have a prefill event between the two decodes — proves interruption is caused by prefill, not random jitter"))
-    summary_rows.append(row("sum_gap_x_bs", round(bs_weighted_sum, 2), "", "ms*count", "Numerator: sum(gap_ms * batch_size) across all gaps"))
-    summary_rows.append(row("sum_bs", bs_total, "", "count", "Denominator: sum(batch_size) across all gaps = total tokens produced"))
-    summary_rows.append(row("bs_weighted_avg_gap", round(bs_weighted_avg, 2), "", "ms", f"KEY EVIDENCE: sum_gap_x_bs / sum_bs = {round(bs_weighted_sum,2)} / {bs_total} = {round(bs_weighted_avg,2)}ms ≈ mean_tpot"))
+    summary_rows.append(row("", "", "", "", ""))
+    summary_rows.append(row("--- BS-WEIGHTED AVERAGE CALCULATION ---", "", "", "", ""))
+    summary_rows.append(row("", "", "", "", "Why weight by batch size? One decode[bs=64] produces 64 tokens (one per request)."))
+    summary_rows.append(row("", "", "", "", "Each of the 64 requests experiences this gap as its ITL. So gap_i counts bs_i times in the ITL pool."))
+    summary_rows.append(row("", "", "", "", "mean_itl = sum(gap_i * bs_i) / sum(bs_i), which is exactly how benchmark_serving.py computes mean_itl."))
+    summary_rows.append(row("sum_gap_x_bs", round(bs_weighted_sum, 2), "", "ms*count", f"sum(gap_ms * bs) across all {len(gaps)} gaps. E.g. a 21ms gap at bs=64 contributes 21*64=1344; a 92ms gap at bs=64 contributes 92*64=5888"))
+    summary_rows.append(row("sum_bs", bs_total, "", "count", f"sum(bs) across all {len(gaps)} gaps = total tokens produced during all decode steps (excluding first token per request)"))
+    summary_rows.append(row("bs_weighted_avg_gap", round(bs_weighted_avg, 2), "", "ms", f"= {round(bs_weighted_sum,2)} / {bs_total} = {round(bs_weighted_avg,2)}ms. This should match benchmark mean_tpot/mean_itl."))
+    if benchmark:
+        delta = round(bs_weighted_avg - benchmark["mean_tpot_ms"], 2)
+        summary_rows.append(row("delta_vs_mean_tpot", delta, "", "ms", f"bs_weighted_avg ({round(bs_weighted_avg,2)}) - benchmark mean_tpot ({round(benchmark['mean_tpot_ms'],2)}) = {delta}ms. Close to 0 = trace explains the TPOT."))
+    summary_rows.append(row("", "", "", "", ""))
+    summary_rows.append(row("--- RECONSTRUCTION FROM NORMAL/INTERRUPTED SPLIT ---", "", "", "", ""))
+    summary_rows.append(row("", "", "", "", "Alternative proof: approximate mean_tpot as weighted mix of normal and interrupted gap medians."))
     if normal_vals and interrupted_vals:
         p_int = len(interrupted) / len(gaps)
         n_med = normal_vals[len(normal_vals)//2]
         i_med = interrupted_vals[len(interrupted_vals)//2]
         recon = (1 - p_int) * n_med + p_int * i_med
-        summary_rows.append(row("reconstructed_tpot", round(recon, 2), "", "ms", f"Cross-check: ({1-p_int:.4f} x {n_med:.2f}) + ({p_int:.4f} x {i_med:.2f}) = {recon:.2f}ms"))
+        summary_rows.append(row("normal_fraction", round(1 - p_int, 4), "", "ratio", f"{len(normal)}/{len(gaps)} = {1-p_int:.4f} of gaps are normal (<50ms)"))
+        summary_rows.append(row("interrupted_fraction", round(p_int, 4), "", "ratio", f"{len(interrupted)}/{len(gaps)} = {p_int:.4f} of gaps are interrupted (>=50ms)"))
+        summary_rows.append(row("reconstructed_tpot", round(recon, 2), "", "ms", f"({1-p_int:.4f} x {n_med:.2f}ms) + ({p_int:.4f} x {i_med:.2f}ms) = {(1-p_int)*n_med:.2f} + {p_int*i_med:.2f} = {recon:.2f}ms"))
     if benchmark:
         summary_rows.append(row("benchmark_mean_tpot", "", round(benchmark["mean_tpot_ms"], 2), "ms", "Client-side mean TPOT = (latency - ttft) / (output_len - 1) averaged across requests"))
         summary_rows.append(row("benchmark_mean_itl", "", round(benchmark["mean_itl_ms"], 2), "ms", "Client-side mean ITL = all inter-chunk times pooled and averaged"))
