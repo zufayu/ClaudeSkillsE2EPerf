@@ -93,6 +93,14 @@ Series use `env_tag` for MTP differentiation:
 - `8×MI355X DeepSeek-R1-0528 FP8 (ATOM) [mtp0]`
 - `8×MI355X DeepSeek-R1-0528 FP8 (ATOM) [mtp3]`
 
+## Kernel-Level Analysis (Claude Skill)
+
+When benchmark results are anomalous, need to locate GPU bottlenecks, or compare kernel-level before/after:
+- **Skill entry**: `.claude/skills/kernel-breakdown-profile/SKILL.md`
+- **Core workflow**: 4-level profiling (E2E -> Category Breakdown -> Per-Module -> ncu Deep Kernel)
+- **Key scripts**: `ncu_kernel_analysis.sh` (deep kernel), `compare_traces.py` (delta tables), `kernel_env.py` (environment preflight)
+- **Platforms**: B200 (nsys/ncu) and MI355X (Kineto/rocprof)
+
 ## Delta Comparison Logic
 - TPS: `(ref - cmp) / cmp` — positive green = Ref higher throughput
 - TPOT/TTFT: `(cmp - ref) / ref` — positive green = Ref lower latency (better)
