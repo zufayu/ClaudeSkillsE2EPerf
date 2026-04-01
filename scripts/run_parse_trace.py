@@ -150,26 +150,26 @@ def main():
         print("ERROR: no decode events at target bs")
         sys.exit(1)
 
-    # Trick: temporarily set target decode's timestamp to be the earliest
-    # among all decode events so parse_trace.parse_decode picks it as "first".
-    all_decodes = [
-        e for e in events
-        if e.get("name", "").startswith("decode[")
-        and e.get("ph") == "X"
-        and e.get("cat") == "gpu_user_annotation"
-    ]
-    min_ts = min(d["ts"] for d in all_decodes)
-    saved_ts = target_decode["ts"]
-    target_decode["ts"] = min_ts - 1
+    dur_ms = target_decode.get("dur", 0) / 1000
+    print(f"Selected: {target_decode.get('name')} (ts={target_decode['ts']:.0f}, dur={dur_ms:.2f}ms)")
 
-    print(f"Selected: {target_decode.get('name')} (original ts={saved_ts:.0f})")
+    # Remove all OTHER decode gpu_user_annotation events from the event list
+    # so parse_trace.parse_decode sees only our selected one as "first".
+    # Keep the selected event's real timestamp intact for correct kernel matching.
+    filtered_events = [
+        e for e in events
+        if not (
+            e.get("name", "").startswith("decode[")
+            and e.get("ph") == "X"
+            and e.get("cat") == "gpu_user_annotation"
+            and e is not target_decode
+        )
+    ]
+    print(f"Filtered events: {len(events)} -> {len(filtered_events)} (removed {len(events) - len(filtered_events)} other decode events)")
 
     parse_trace.parse_decode(
-        events, capture_events, "decode_breakdown.xlsx", target_layer=args.layer
+        filtered_events, capture_events, "decode_breakdown.xlsx", target_layer=args.layer
     )
-
-    # Restore
-    target_decode["ts"] = saved_ts
 
 
 if __name__ == "__main__":
