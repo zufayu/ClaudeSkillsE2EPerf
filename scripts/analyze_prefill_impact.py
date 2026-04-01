@@ -211,9 +211,16 @@ def print_analysis(gaps, benchmark=None):
         reconstructed = (1 - p_interrupted) * normal_median + p_interrupted * interrupted_median
 
         print(f"  Simple average of all gaps:     {simple_avg:.2f} ms")
-        print(f"  BS-weighted average of all gaps: {bs_weighted_avg:.2f} ms")
-        print(f"  Reconstructed from split:")
-        print(f"    ({1-p_interrupted:.3f} x {normal_median:.2f}) + ({p_interrupted:.3f} x {interrupted_median:.2f}) = {reconstructed:.2f} ms")
+        print(f"")
+        print(f"  BS-weighted average calculation:")
+        print(f"    sum(gap_ms * bs) = {bs_weighted_sum:.2f}")
+        print(f"    sum(bs)          = {bs_total}")
+        print(f"    weighted_avg     = {bs_weighted_sum:.2f} / {bs_total} = {bs_weighted_avg:.2f} ms")
+        print(f"")
+        print(f"  Reconstructed from normal/interrupted split:")
+        print(f"    normal:      {1-p_interrupted:.4f} x {normal_median:.2f}ms = {(1-p_interrupted)*normal_median:.2f}ms")
+        print(f"    interrupted: {p_interrupted:.4f} x {interrupted_median:.2f}ms = {p_interrupted*interrupted_median:.2f}ms")
+        print(f"    total:       {(1-p_interrupted)*normal_median:.2f} + {p_interrupted*interrupted_median:.2f} = {reconstructed:.2f} ms")
 
     # Evidence 3: Cross-validation with benchmark JSON
     if benchmark:
@@ -320,8 +327,18 @@ def save_xlsx(gaps, benchmark, output_path):
     if interrupted_vals:
         summary_rows.append(row("interrupted_gap_median", round(interrupted_vals[len(interrupted_vals)//2], 2), round(benchmark["p99_itl_ms"], 2) if benchmark else "", "ms", "Typical interrupted gap (decode + prefill); should approximate benchmark p99_itl"))
         summary_rows.append(row("interrupted_gap_mean", round(sum(interrupted_vals)/len(interrupted_vals), 2), "", "ms", "Mean higher than median due to occasional multi-prefill or long-context prefills"))
-        summary_rows.append(row("prefill_verified_pct", round(sum(1 for g in interrupted if g["has_prefill"]) / len(interrupted) * 100, 2), "", "%", "Proof: nearly all large gaps have a prefill event between the two decodes"))
-    summary_rows.append(row("bs_weighted_avg_gap", round(bs_weighted_avg, 2), "", "ms", "KEY EVIDENCE: BS-weighted avg gap reconstructs mean_tpot from trace data alone"))
+        n_verified = sum(1 for g in interrupted if g["has_prefill"])
+        n_interrupted = len(interrupted)
+        summary_rows.append(row("prefill_verified_pct", round(n_verified / n_interrupted * 100, 2), "", "%", f"{n_verified}/{n_interrupted} large gaps (>=50ms) have a prefill event between the two decodes — proves interruption is caused by prefill, not random jitter"))
+    summary_rows.append(row("sum_gap_x_bs", round(bs_weighted_sum, 2), "", "ms*count", "Numerator: sum(gap_ms * batch_size) across all gaps"))
+    summary_rows.append(row("sum_bs", bs_total, "", "count", "Denominator: sum(batch_size) across all gaps = total tokens produced"))
+    summary_rows.append(row("bs_weighted_avg_gap", round(bs_weighted_avg, 2), "", "ms", f"KEY EVIDENCE: sum_gap_x_bs / sum_bs = {round(bs_weighted_sum,2)} / {bs_total} = {round(bs_weighted_avg,2)}ms ≈ mean_tpot"))
+    if normal_vals and interrupted_vals:
+        p_int = len(interrupted) / len(gaps)
+        n_med = normal_vals[len(normal_vals)//2]
+        i_med = interrupted_vals[len(interrupted_vals)//2]
+        recon = (1 - p_int) * n_med + p_int * i_med
+        summary_rows.append(row("reconstructed_tpot", round(recon, 2), "", "ms", f"Cross-check: ({1-p_int:.4f} x {n_med:.2f}) + ({p_int:.4f} x {i_med:.2f}) = {recon:.2f}ms"))
     if benchmark:
         summary_rows.append(row("benchmark_mean_tpot", "", round(benchmark["mean_tpot_ms"], 2), "ms", "Client-side mean TPOT = (latency - ttft) / (output_len - 1) averaged across requests"))
         summary_rows.append(row("benchmark_mean_itl", "", round(benchmark["mean_itl_ms"], 2), "ms", "Client-side mean ITL = all inter-chunk times pooled and averaged"))
