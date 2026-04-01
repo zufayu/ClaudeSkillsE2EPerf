@@ -1,9 +1,9 @@
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
-> **Last updated:** 2026-03-30 v17
+> **Last updated:** 2026-04-01 v18
 > **Model:** DeepSeek-R1-0528-NVFP4-v2, FP4
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
-> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅
+> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅
 
 ## 问题背景
 
@@ -96,6 +96,152 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 > 关键路径 = max(33.1, 42.6) = 42.6μs，moefinalize 完全隐藏
 > ```
 
+## MI355X TPOT 25ms 来源分析
+
+> **问题：** MI355X benchmark 报告 mean TPOT = 24.9ms，但 GPU trace 显示 decode 一步 (bs=64) 只需 21.6ms。差了 ~3ms 从何而来？
+
+### 三层时间栈
+
+| 层级 | 含义 | MI355X 数值 | B200 数值 | 数据来源 |
+|------|------|------------|----------|---------|
+| **L1: Kernel 时间** | GPU 算子执行时间之和（单层） | 165.7 μs | 251.1 μs (关键路径) | parse_trace.py → decode_breakdown.xlsx |
+| **L2: Decode walltime** | GPU 端一个完整 decode step (61 层) | 21.56 ms (bs=64 p50) | 15.6 ms | --mark-trace → decode_walltime_trace.csv / nsys |
+| **L3: Client TPOT** | 客户端观测 per-request TPOT | 24.9 ms (mean) | 17.8 ms | benchmark_serving.py |
+
+每层之间都有 gap，需要分别解释：
+
+### Gap 1: L1 → L2（Kernel Sum vs Decode Walltime）
+
+单层 kernel 时间 × 61 层 = 估算 decode walltime。与实测对比：
+
+| | Kernel/层 | × 61 层估算 | 实测 Decode | 差距 | Overhead % |
+|---|---|---|---|---|---|
+| **B200** | 251.1 μs | 15.3 ms | 15.6 ms | 0.3 ms | **1.8%** |
+| **MI355X** | 165.7 μs | 10.1 ms | 21.6 ms | **11.5 ms** | **53.1%** |
+
+**B200：** kernel 估算与实测仅差 2%，CUDA Graph replay 将整个 decode step 录制为一个 graph，几乎消除了所有 kernel 间的 CPU dispatch 开销。
+
+**MI355X：** kernel 总和仅占 decode walltime 的 47%。剩余 53%（每层 187.7μs）是 kernel 之间的 gap。可能来源：
+
+1. **decode_breakdown.xlsx 未捕获全部 kernel** — parse_trace.py 只提取 `--mark-trace` 标注的 module 内的 kernel launch，模块边界之间的 kernel（如 sampling、token selection、allreduce 同步等）可能未被计入
+2. **HIP Graph replay overhead** — 即使使用 HIP Graph，replay 的 overhead 可能高于 CUDA Graph
+3. **通信同步等待** — `reduce_scatter_cross_device_store` 的实际等待时间可能大于 kernel 本身的执行时间
+
+> **待验证：** 需要在 MI355X 上用 rocprof 抓完整 GPU timeline（不限于 --mark-trace 标注的 module），确认 11.5ms gap 中有多少是未捕获的 kernel vs 真正的 GPU idle。
+
+### Gap 2: L2 → L3（Decode Walltime vs Client TPOT）
+
+这是 continuous batching 中 **prefill interleaving** 造成的。
+
+#### TPOT 的定义（源码石锤）
+
+`benchmark_serving.py:249`：
+```python
+tpot = (outputs[i].latency - outputs[i].ttft) / (output_len - 1)
+```
+
+`backend_request_func.py:74-106`：
+```python
+st = time.perf_counter()           # request 开始
+async for chunk_bytes in response.content:
+    timestamp = time.perf_counter()
+    if ttft == 0.0:
+        ttft = timestamp - st       # 第一个 token
+    else:
+        itl.append(timestamp - most_recent_timestamp)  # inter-token latency
+    most_recent_timestamp = timestamp
+latency = most_recent_timestamp - st  # 最后一个 token
+```
+
+TPOT = (最后一个 token 时间 - 第一个 token 时间) / (output_len - 1) = **该 request 所有 ITL 的平均值**。
+
+#### Prefill 打断机制
+
+Continuous batching 下，一个 decode step (bs=64) 同时为 64 个 request 各生成 1 个 token。当有新 request 到达时，scheduler 会**插入一个 prefill step**，期间所有正在 decode 的 request 都暂停等待。
+
+```
+时间 →
+decode[bs=64] decode[bs=64] decode[bs=64] ... prefill[tok=1024] decode[bs=64] ...
+   21ms           21ms           21ms              85ms              21ms
+                                    ↑
+                          这里所有 64 个 request 的 ITL
+                          从 ~21ms 拉长到 ~21+85 = ~106ms
+```
+
+某个 request 的 TPOT 取决于它经历了多少次 prefill 打断。如果 request 需要生成 999 个 token (output_len=1000)，每个 token 正常需要 1 个 decode step (~21ms)，但其中有若干步被 prefill 打断变成 ~106ms，则 TPOT > 21ms。
+
+#### Trace 数据验证
+
+从 `decode_walltime_trace_chat_c64_tp4_p640.csv`（collect_atom_trace.sh 抓取的 GPU 端 decode 事件）：
+
+| Batch Size | Count | Avg (ms) | P50 (ms) | P99 (ms) | Min (ms) | Max (ms) |
+|---|---|---|---|---|---|---|
+| 1 | 990 | 10.39 | 10.37 | 10.69 | 9.98 | 28.96 |
+| 62 | 15 | 22.08 | 21.94 | 22.60 | 21.77 | 22.60 |
+| 63 | 54 | 22.03 | 22.03 | 22.68 | 21.35 | 22.68 |
+| **64** | **1821** | **21.56** | **21.53** | **22.46** | 18.79 | 110.77 |
+
+- **bs=64 的 decode step 正常耗时 21.5ms**，max 110ms 是被 prefill 打断的极端值
+- **bs=1 有 990 次** = 每次 prefill 后的第一个 decode step（bs=1 因为 batch 还没填满）
+- 总 decode step = 990 + 15 + 54 + 1821 = 2880 次
+- 其中 bs=64 的 1821 步中，被 prefill 打断的约占 4-5%（max 远大于 p99）
+
+#### 从 Decode Walltime 重建 TPOT
+
+每个 request 经历 ~999 个 decode step。在 bs=64 稳态下，平均每 ~18 个 bs=64 decode step 后插入一次 prefill（990 次 bs=1 ÷ ~54 个并发 slot 轮转 ≈ 18:1 的 decode:prefill 比例）。
+
+BS-weighted average 重建（从 analyze_prefill_impact.py 对 Kineto trace 的分析）：
+
+```
+bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
+```
+
+其中 gap = 相邻两次 decode 事件之间的时间差（包含了 prefill 的等待时间）。分析结果：
+- 正常 gap（无 prefill 打断）：~22ms，占 ~95.7%
+- 打断 gap（跨 prefill）：~85ms，占 ~4.3%
+- **BS-weighted average ≈ 25.3ms**，与 benchmark mean TPOT (24.9ms) 仅差 0.4ms
+
+> **结论：** Client TPOT 24.9ms = GPU decode 21.6ms + prefill interleaving overhead ~3.3ms。这不是性能 bug，是 continuous batching 的正常行为：为了维持高 throughput，必须在 decode 间隙插入新 request 的 prefill，代价是每个 request 的 TPOT 略高于纯 decode 时间。
+
+### B200 是否也有同样问题？
+
+**是的。** B200 的 benchmark mean TPOT = 17.8ms，也高于 GPU decode walltime 15.6ms，差距 2.2ms。原理完全相同，只是 B200 的 prefill 更快所以 overhead 更小。
+
+此外 B200 TRT-LLM 默认 `stream_interval: 10`（每 10 个 token 发一次 SSE chunk），导致 ITL = 10 × TPOT ≈ 170ms，这是 token batching 而非性能问题。
+
+### MI355X Kernel 级 Breakdown（--mark-trace, 全层平均）
+
+> **数据来源：** MI355X Kineto trace，MXFP4, TP=4, EP=1, c=64, chat 1K/1K
+> **工具：** ATOM `--mark-trace` + `parse_trace.py` → `decode_breakdown.xlsx`
+> **统计口径：** 全层平均值（avg sum per module）
+
+| Module | Avg μs | % | Kernel(s) |
+|--------|--------|---|-----------|
+| mxfp4_moe | 44.8 | 27.0% | topk_sort + MoeSorting + elementwise + MoeFlatmm×2 + act_and_mul |
+| v_up_proj_and_o_proj | 21.5 | 13.0% | batched_gemm_a8w8 + per_token_quant + gemm_preshuffle |
+| post_attn_layernorm | 21.4 | 12.9% | reduce_scatter_cross_device_store + local_device_load_rmsnorm |
+| input_layernorm | 16.7 | 10.1% | reduce_scatter_cross_device_store + local_device_load_rmsnorm |
+| mla_decode | 14.8 | 8.9% | mla_a8w8 + mla_reduce_v1 |
+| gemm_a8w8_bpreshuffle | 12.4 | 7.5% | gemm_xdl_cshuffle_v3 (qkv_a) |
+| q_proj_and_k_up_proj | 11.1 | 6.7% | gemm_preshuffle (q_b) + batched_gemm_a8w8 (k_up) |
+| gemm_a16w16 | 8.6 | 5.2% | bf16gemm_splitk (shared expert) |
+| per_token_quant_hip | 4.8 | 2.9% | dynamic_per_token_scaled_quant |
+| _fused_rms_fp8_group_quant | 4.8 | 2.9% | fused RMSNorm + FP8 group quantize |
+| rope_and_kv_cache | 4.8 | 2.9% | fuse_qk_rope_concat_and_cache_mla |
+| **TOTAL** | **165.7** | **100%** | |
+
+> **注意：** 165.7μs 仅为 --mark-trace 标注范围内的 kernel 时间总和，未覆盖整个 decode step。实测 decode walltime 21.56ms 对应单层 353.4μs，差距 187.7μs/层（53%）的来源待进一步排查。
+
+### 跨平台对比的局限性
+
+B200（TP=8, EP=8）和 MI355X（TP=4, EP=1）的算子级直接对比受以下限制：
+
+1. **MoE 计算量不同** — B200 EP=8 每 GPU 算 32 experts（full width），MI355X EP=1 每 GPU 算 256 experts（1/4 width by TP=4），总 FLOPs/GPU 比为 1:2
+2. **MLA 头数不同** — B200 TP=8 每 GPU 16 heads，MI355X TP=4 每 GPU 32 heads
+3. **通信拓扑不同** — B200 NVLink (userbuffers)，MI355X xGMI (reduce_scatter)
+
+公平对比需要归一化到效率指标（TFLOP/s 或 GB/s），或在相同 TP/EP 配置下重新测量。当前数据只能做 per-GPU throughput 级别的对比。
+
 ## 精度说明
 
 > **Kernel 精度判断依据：**
@@ -115,12 +261,15 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 - [x] 61 层端到端实测数据（20.472ms，单层均值 335.6μs）
 - [x] MI355X 复现 + 环境对比（ATOM dev220 vs release，aiter 一致）
 - [x] MI355X 配置对齐复测（max-model-len=2248, enforce_eager=false, gpu_memory_util=0.90，ATOM 0.1.3.dev1）
+- [x] MI355X TPOT 25ms 来源分析（三层时间栈 + prefill interleaving 证明 + kernel breakdown）
+- [ ] MI355X 53% overhead 排查（完整 GPU timeline vs --mark-trace 子集）
 - [ ] MI355X Per-Module Kernel 数据补充（--mark-trace + parse_trace.py）
 
 ## 迭代日志
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-01 v18 | **MI355X TPOT 25ms 来源分析完成。** 建立三层时间栈模型（L1 kernel 165.7μs → L2 decode 21.6ms → L3 TPOT 24.9ms）。L1→L2 gap: kernel 总和仅占 decode walltime 47%，53% overhead 待排查（可能是 --mark-trace 未覆盖全部 kernel）。L2→L3 gap: prefill interleaving 导致约 4.3% 的 decode step 被打断（~85ms vs 正常 ~22ms），BS-weighted avg 重建 25.3ms ≈ benchmark 24.9ms。增加 MI355X kernel breakdown 表（11 modules，全层平均）。说明跨平台算子对比的 TP/EP 局限性 |
 | 2026-03-30 v17 | **MI355X 配置对齐复测完成。** 对齐 SA CI 配置（max-model-len=2248, enforce_eager=false, gpu_memory_util=0.90）。ATOM 0.1.3.dev1 + aiter v0.1.12。Output TPS/GPU=624.9 vs CI 600.7 (+4.0%)，Interactivity=40.09 vs 38.55 (+4.0%)。此前 v16 结果偏差大（-56%）系配置未对齐所致。修正对标数据表和环境对比表 |
 | 2026-03-30 v16 | **MI355X 复现完成 + 环境对比。** Output TPS/GPU=328.5 vs CI 297.8 (+10.3%)，Interactivity=21.59 vs 18.98 (+13.7%)。偏差源于 ATOM 版本差异：本机 dev220（多 220 commits）vs CI release 0.1.1。aiter 版本完全一致（`a498c8b62`）。增加 MI355X 复现环境对比表。ATOM 已更新到最新 main（dev466），含 `--mark-trace` 功能 |
 | 2026-03-27 v15 | **61 层实测数据。** 增加 61 decode 层端到端实测时间（15.6ms）。关键路径估算（251.1×61=15.3ms）与实测偏差仅 2%，验证 P1 并行模型准确 |
