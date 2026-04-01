@@ -2,7 +2,7 @@
 # =============================================================================
 # Upload profiling results to GitHub
 #
-# Automates: fix permissions → git add (skip >50MB) → commit → push
+# Automates: fix permissions → git add (skip traces/logs/large files) → commit → push
 #
 # Usage:
 #   bash scripts/upload_profiling.sh <result_dir> [--message "msg"]
@@ -51,19 +51,29 @@ chmod -R u+rw "$RESULT_DIR" 2>/dev/null || true
 cd "$REPO_DIR"
 git pull --ff-only 2>/dev/null || true
 
-echo ">>> Staging files (skipping >${MAX_SIZE_MB}MB)..."
+echo ">>> Staging files (skipping traces, logs, large files)..."
 STAGED=0
 SKIPPED=0
 while IFS= read -r f; do
+    BASENAME="$(basename "$f")"
+    # Skip trace files (.json.gz), log files, and libkineto config
+    case "$BASENAME" in
+        *.trace.json.gz|*.log|libkineto.conf)
+            echo "  SKIP (trace/log): $BASENAME"
+            SKIPPED=$((SKIPPED + 1))
+            continue
+            ;;
+    esac
+    # Skip files >50MB
     SIZE_BYTES=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null || echo 0)
     SIZE_MB=$(( SIZE_BYTES / 1048576 ))
     REL_PATH="${f#$REPO_DIR/}"
     if [[ $SIZE_MB -gt $MAX_SIZE_MB ]]; then
-        echo "  SKIP (${SIZE_MB}MB): $(basename "$f")"
+        echo "  SKIP (${SIZE_MB}MB): $BASENAME"
         SKIPPED=$((SKIPPED + 1))
     else
         git add "$REL_PATH"
-        echo "  ADD: $(basename "$f")"
+        echo "  ADD: $BASENAME"
         STAGED=$((STAGED + 1))
     fi
 done < <(find "$RESULT_DIR" -type f)
