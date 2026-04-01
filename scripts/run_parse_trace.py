@@ -3,10 +3,10 @@
 Wrapper around ATOM's parse_trace.py with --target-bs support.
 
 ATOM's parse_trace.py always uses the first decode event (often bs=1 after
-prefill ramp-up). This wrapper calls parse_trace for prefill unchanged,
-then for decode it finds the first decode event at the target batch size
-(default: most frequent bs = steady state) and patches it to be first
-in the sorted event list so parse_trace.parse_decode picks it up.
+prefill ramp-up, or an early bs=64 before steady state). This wrapper calls
+parse_trace for prefill unchanged, then for decode it selects a mid-run
+decode event at the target batch size (default: most frequent bs) so the
+kernel timings reflect steady-state behavior with warm caches and graphs.
 
 Usage:
     python3 scripts/run_parse_trace.py <trace.json.gz> [--layer N] [--target-bs N]
@@ -49,7 +49,12 @@ except ImportError:
 
 
 def select_decode_bs(events, target_bs=None):
-    """Find target bs and the first decode event at that bs."""
+    """Find target bs and a steady-state decode event at that bs.
+
+    Picks the decode event at the 50th percentile (by timestamp) among all
+    events with the target batch size, so the system is well into steady
+    state — graph replay is warm, caches are hot, batch is full.
+    """
     decodes = sorted(
         [
             e for e in events
@@ -63,14 +68,13 @@ def select_decode_bs(events, target_bs=None):
         return None, None
 
     bs_counts = {}
-    decode_by_bs = {}
+    decodes_by_bs = {}
     for d in decodes:
         m = re.search(r"bs=(\d+)", d.get("name", ""))
         if m:
             bs = int(m.group(1))
             bs_counts[bs] = bs_counts.get(bs, 0) + 1
-            if bs not in decode_by_bs:
-                decode_by_bs[bs] = d
+            decodes_by_bs.setdefault(bs, []).append(d)
 
     print(f"Decode bs distribution: {dict(sorted(bs_counts.items()))}")
 
@@ -80,7 +84,19 @@ def select_decode_bs(events, target_bs=None):
     else:
         print(f"--target-bs={target_bs} ({bs_counts.get(target_bs, 0)} events)")
 
-    return decode_by_bs.get(target_bs), target_bs
+    candidates = decodes_by_bs.get(target_bs)
+    if not candidates:
+        return None, target_bs
+
+    # Pick the median event (50th percentile) for steady state
+    mid = len(candidates) // 2
+    selected = candidates[mid]
+    dur_ms = selected.get("dur", 0) / 1000
+    print(
+        f"Picked decode #{mid}/{len(candidates)} "
+        f"(dur={dur_ms:.2f}ms, skipped first {mid} to avoid warmup)"
+    )
+    return selected, target_bs
 
 
 def main():
