@@ -305,25 +305,28 @@ def save_xlsx(gaps, benchmark, output_path):
     ])
 
     # Sheet 2: summary
+    def row(metric, trace_value, benchmark_value, unit, meaning):
+        return {"metric": metric, "trace_value": trace_value, "benchmark_value": benchmark_value, "unit": unit, "meaning": meaning}
+
     summary_rows = [
-        {"metric": "total_gaps", "trace_value": len(gaps), "benchmark_value": "", "unit": "count"},
-        {"metric": "normal_gaps", "trace_value": len(normal), "benchmark_value": "", "unit": "count"},
-        {"metric": "interrupted_gaps", "trace_value": len(interrupted), "benchmark_value": "", "unit": "count"},
-        {"metric": "interrupted_pct", "trace_value": round(len(interrupted) / len(gaps) * 100, 2), "benchmark_value": "", "unit": "%"},
+        row("total_gaps", len(gaps), "", "count", "Total inter-decode intervals (decode_count - 1)"),
+        row("normal_gaps", len(normal), "", "count", "Gaps < 50ms: pure decode cycles with no prefill interruption"),
+        row("interrupted_gaps", len(interrupted), "", "count", "Gaps >= 50ms: decode cycles interrupted by prefill for new requests"),
+        row("interrupted_pct", round(len(interrupted) / len(gaps) * 100, 2), "", "%", "Fraction of decode cycles interrupted by prefill — drives the TPOT inflation"),
     ]
     if normal_vals:
-        summary_rows.append({"metric": "normal_gap_median", "trace_value": round(normal_vals[len(normal_vals)//2], 2), "benchmark_value": round(benchmark["median_itl_ms"], 2) if benchmark else "", "unit": "ms"})
-        summary_rows.append({"metric": "normal_gap_mean", "trace_value": round(sum(normal_vals)/len(normal_vals), 2), "benchmark_value": "", "unit": "ms"})
+        summary_rows.append(row("normal_gap_median", round(normal_vals[len(normal_vals)//2], 2), round(benchmark["median_itl_ms"], 2) if benchmark else "", "ms", "Steady-state GPU decode time; should match benchmark median_itl"))
+        summary_rows.append(row("normal_gap_mean", round(sum(normal_vals)/len(normal_vals), 2), "", "ms", "Mean pulled down by fast bs=1 decodes during ramp-up/ramp-down"))
     if interrupted_vals:
-        summary_rows.append({"metric": "interrupted_gap_median", "trace_value": round(interrupted_vals[len(interrupted_vals)//2], 2), "benchmark_value": round(benchmark["p99_itl_ms"], 2) if benchmark else "", "unit": "ms"})
-        summary_rows.append({"metric": "interrupted_gap_mean", "trace_value": round(sum(interrupted_vals)/len(interrupted_vals), 2), "benchmark_value": "", "unit": "ms"})
-        summary_rows.append({"metric": "prefill_verified_pct", "trace_value": round(sum(1 for g in interrupted if g["has_prefill"]) / len(interrupted) * 100, 2), "benchmark_value": "", "unit": "%"})
-    summary_rows.append({"metric": "bs_weighted_avg_gap", "trace_value": round(bs_weighted_avg, 2), "benchmark_value": "", "unit": "ms"})
+        summary_rows.append(row("interrupted_gap_median", round(interrupted_vals[len(interrupted_vals)//2], 2), round(benchmark["p99_itl_ms"], 2) if benchmark else "", "ms", "Typical interrupted gap (decode + prefill); should approximate benchmark p99_itl"))
+        summary_rows.append(row("interrupted_gap_mean", round(sum(interrupted_vals)/len(interrupted_vals), 2), "", "ms", "Mean higher than median due to occasional multi-prefill or long-context prefills"))
+        summary_rows.append(row("prefill_verified_pct", round(sum(1 for g in interrupted if g["has_prefill"]) / len(interrupted) * 100, 2), "", "%", "Proof: nearly all large gaps have a prefill event between the two decodes"))
+    summary_rows.append(row("bs_weighted_avg_gap", round(bs_weighted_avg, 2), "", "ms", "KEY EVIDENCE: BS-weighted avg gap reconstructs mean_tpot from trace data alone"))
     if benchmark:
-        summary_rows.append({"metric": "benchmark_mean_tpot", "trace_value": "", "benchmark_value": round(benchmark["mean_tpot_ms"], 2), "unit": "ms"})
-        summary_rows.append({"metric": "benchmark_mean_itl", "trace_value": "", "benchmark_value": round(benchmark["mean_itl_ms"], 2), "unit": "ms"})
-        summary_rows.append({"metric": "benchmark_median_itl", "trace_value": "", "benchmark_value": round(benchmark["median_itl_ms"], 2), "unit": "ms"})
-        summary_rows.append({"metric": "benchmark_p99_itl", "trace_value": "", "benchmark_value": round(benchmark["p99_itl_ms"], 2), "unit": "ms"})
+        summary_rows.append(row("benchmark_mean_tpot", "", round(benchmark["mean_tpot_ms"], 2), "ms", "Client-side mean TPOT = (latency - ttft) / (output_len - 1) averaged across requests"))
+        summary_rows.append(row("benchmark_mean_itl", "", round(benchmark["mean_itl_ms"], 2), "ms", "Client-side mean ITL = all inter-chunk times pooled and averaged"))
+        summary_rows.append(row("benchmark_median_itl", "", round(benchmark["median_itl_ms"], 2), "ms", "Typical ITL without prefill interruption — represents true GPU decode speed"))
+        summary_rows.append(row("benchmark_p99_itl", "", round(benchmark["p99_itl_ms"], 2), "ms", "Worst-case ITL — corresponds to decode cycles interrupted by prefill"))
 
     summary_df = pd.DataFrame(summary_rows)
 
