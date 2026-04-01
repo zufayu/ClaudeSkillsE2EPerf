@@ -59,7 +59,6 @@ MAX_NUM_SEQS=512
 MAX_MODEL_LEN=""
 PROFILE_NUM_PROMPTS=""      # defaults to WARMUP_NUM_PROMPTS if not set
 ROCTRACER_MAX_EVENTS=""     # if set, auto-generate libkineto.conf (default 1M, use 10M+ for long traces)
-ROCTX_MARKERS=false         # inject roctx markers into engine for decode/prefill step timing
 FLUSH_TIMEOUT=300
 LAYER=40
 
@@ -85,7 +84,6 @@ Options:
                             Use smaller values (e.g. 128) for faster runs with less memory.
                             Must be >= concurrency to maintain steady-state batch size.
   --roctracer-max-events N  Set ROCTRACER_MAX_EVENTS (default 1M; use 10000000 for longer traces)
-  --roctx-markers           Inject roctx markers (decode_step/prefill_step) into engine
   --flush-timeout N         Max seconds to wait for trace flush [default: 300]
   --layer N                 Layer index for parse_trace.py [default: 40]
   -h, --help                Show this help
@@ -124,7 +122,6 @@ while [[ $# -gt 0 ]]; do
         --max-model-len)    MAX_MODEL_LEN="$2"; shift 2 ;;
         --profile-prompts)  PROFILE_NUM_PROMPTS="$2"; shift 2 ;;
         --roctracer-max-events) ROCTRACER_MAX_EVENTS="$2"; shift 2 ;;
-        --roctx-markers)    ROCTX_MARKERS=true; shift ;;
         --flush-timeout)    FLUSH_TIMEOUT="$2"; shift 2 ;;
         --layer)            LAYER="$2"; shift 2 ;;
         -h|--help)          usage ;;
@@ -180,14 +177,6 @@ cleanup_residual() {
 
     # Clean shared memory (aiter blocks from previous runs)
     rm -f /dev/shm/aiter_*
-
-    # Clean stale roctx .pth hook from previous crashed runs
-    local stale_pth
-    stale_pth=$(python3 -c "import site; print(site.getsitepackages()[0])")/_roctx_hook.pth
-    if [[ -f "$stale_pth" ]]; then
-        rm -f "$stale_pth"
-        log "  Removed stale roctx hook: $stale_pth"
-    fi
 
     # Clean trace dir
     rm -rf "$TRACE_DIR"
@@ -275,44 +264,10 @@ prefills = [e for e in events
     and e.get("ph") == "X"
     and e.get("cat") == "gpu_user_annotation"]
 
-# roctx markers from roctx_patch.py: decode_step_N_bs=M / prefill_step_N_bs=M
-roctx_pat = re.compile(r"(decode|prefill)_step_\d+_bs=(\d+)")
-
-# Try X events (profiler typically converts push/pop to complete events)
-roctx_all = [e for e in events if roctx_pat.match(e.get("name", ""))]
-roctx_x = [e for e in roctx_all if e.get("ph") == "X"]
-
-# B/E fallback: stack-based matching per thread
-if not roctx_x:
-    roctx_b = [e for e in roctx_all if e.get("ph") == "B"]
-    if roctx_b:
-        roctx_tids = {e.get("tid") for e in roctx_b}
-        be_events = sorted(
-            [e for e in events if e.get("tid") in roctx_tids and e.get("ph") in ("B", "E")],
-            key=lambda x: x["ts"]
-        )
-        stacks = defaultdict(list)
-        for e in be_events:
-            tid = e.get("tid")
-            if e["ph"] == "B":
-                stacks[tid].append(e)
-            elif stacks[tid]:
-                b = stacks[tid].pop()
-                if roctx_pat.match(b.get("name", "")):
-                    roctx_x.append({**b, "dur": e["ts"] - b["ts"], "ph": "X"})
-
-roctx_decodes = sorted(
-    [e for e in roctx_x if e.get("name", "").startswith("decode")],
-    key=lambda x: x["ts"]
-)
-roctx_prefills_list = [e for e in roctx_x if e.get("name", "").startswith("prefill")]
-
 print(f"Decode events: {len(decodes)}")
 print(f"Prefill events: {len(prefills)}")
-print(f"roctx decode events: {len(roctx_decodes)}")
-print(f"roctx prefill events: {len(roctx_prefills_list)}")
 
-if not decodes and not roctx_decodes:
+if not decodes:
     print("No decode events found!")
     sys.exit(1)
 
@@ -350,49 +305,6 @@ if groups:
     print(f"  Compare with B200 nsys decode wall time for gap analysis")
     print(f"{'='*60}")
 
-# roctx execute_model analysis
-roctx_groups = defaultdict(list)
-roctx_csv_rows = []
-if roctx_decodes:
-    for d in roctx_decodes:
-        m = re.search(r"bs=(\d+)", d["name"])
-        if m:
-            roctx_groups[int(m.group(1))].append(d["dur"] / 1000)
-
-    print(f"\n{'='*60}")
-    print(f"  roctx execute_model() decode timing")
-    print(f"{'='*60}")
-    rh = f"{'bs':<6} {'count':>8} {'avg(ms)':>10} {'min(ms)':>10} {'max(ms)':>10} {'p50(ms)':>10} {'p99(ms)':>10}"
-    print(rh)
-    print("-" * len(rh))
-    for bs in sorted(roctx_groups):
-        vals = sorted(roctx_groups[bs])
-        n = len(vals)
-        avg = sum(vals) / n
-        p50 = vals[n // 2]
-        p99 = vals[min(int(n * 0.99), n - 1)]
-        print(f"{bs:<6d} {n:>8d} {avg:>10.2f} {min(vals):>10.2f} {max(vals):>10.2f} {p50:>10.2f} {p99:>10.2f}")
-        roctx_csv_rows.append({
-            "bs": bs, "count": n, "avg_ms": round(avg, 2),
-            "min_ms": round(min(vals), 2), "max_ms": round(max(vals), 2),
-            "p50_ms": round(p50, 2), "p99_ms": round(p99, 2)
-        })
-
-    # Comparison: ATOM native decode[ vs roctx execute_model
-    common_bs = set(groups.keys()) & set(roctx_groups.keys())
-    if common_bs:
-        print(f"\n{'='*60}")
-        print(f"  ATOM --mark-trace vs roctx execute_model comparison")
-        print(f"{'='*60}")
-        print(f"{'bs':<6} {'mark-trace':>12} {'roctx':>12} {'diff(ms)':>10} {'note':>20}")
-        print("-" * 64)
-        for bs in sorted(common_bs):
-            atom_avg = sum(groups[bs]) / len(groups[bs])
-            roctx_avg = sum(roctx_groups[bs]) / len(roctx_groups[bs])
-            diff = atom_avg - roctx_avg
-            note = "sched overhead" if diff > 0.5 else ("roctx wider?" if diff < -0.5 else "~same")
-            print(f"{bs:<6d} {atom_avg:>12.2f} {roctx_avg:>12.2f} {diff:>+10.2f} {note:>20}")
-
 # Save CSV if requested
 if output_csv:
     with open(output_csv, "w", newline="") as f:
@@ -400,22 +312,13 @@ if output_csv:
         writer.writeheader()
         writer.writerows(csv_rows)
     print(f"\nCSV saved: {output_csv}")
-    if roctx_csv_rows:
-        roctx_csv_path = output_csv.replace(".csv", "_roctx.csv")
-        with open(roctx_csv_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["bs", "count", "avg_ms", "min_ms", "max_ms", "p50_ms", "p99_ms"])
-            writer.writeheader()
-            writer.writerows(roctx_csv_rows)
-        print(f"roctx CSV saved: {roctx_csv_path}")
 PYEOF
 }
 
 # ======================== Main ================================================
 SERVER_PID=""
 
-ROCTX_PTH=""
 trap_cleanup() {
-    [[ -n "$ROCTX_PTH" ]] && rm -f "$ROCTX_PTH" 2>/dev/null
     if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
         log "Trap: killing server PID=$SERVER_PID"
         kill "$SERVER_PID" 2>/dev/null || true
@@ -439,7 +342,7 @@ log "  Max Model Len: $MAX_MODEL_LEN"
 log "  GPU Mem Util:  $GPU_MEM_UTIL"
 log "  Result Dir:    $RESULT_DIR"
 log "  Trace Dir:     $TRACE_DIR"
-log "  ROCTracer Max: ${ROCTRACER_MAX_EVENTS:-default (1M)}"
+log "  ROCTracer Max: ${ROCTRACER_MAX_EVENTS:-default}"
 log "  Tag:           $TAG"
 log "============================================================"
 
@@ -461,16 +364,6 @@ fi
 
 # Step 2: Start ATOM server with profiling enabled
 log "Starting ATOM server (TP=$TP, profiler enabled)..."
-
-# Install roctx hook into all Python processes (main + spawned workers)
-if [[ "$ROCTX_MARKERS" == "true" ]]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    ROCTX_SITE_DIR=$(python3 -c "import site; print(site.getsitepackages()[0])")
-    ROCTX_PTH="$ROCTX_SITE_DIR/_roctx_hook.pth"
-    echo "import sys; sys.path.insert(0, '$SCRIPT_DIR'); import roctx_patch" > "$ROCTX_PTH"
-    export ROCTX_PATCH_ENABLED=1
-    log "roctx hook installed: $ROCTX_PTH (activates in all Python processes)"
-fi
 
 python3 -m atom.entrypoints.openai_server \
     --model "$MODEL" \
