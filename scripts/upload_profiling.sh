@@ -51,7 +51,7 @@ chmod -R u+rw "$RESULT_DIR" 2>/dev/null || true
 cd "$REPO_DIR"
 git pull --ff-only 2>/dev/null || true
 
-echo ">>> Staging files (skipping traces, logs, large files)..."
+echo ">>> Staging files (skipping traces, >50MB; force-add past .gitignore)..."
 STAGED=0
 SKIPPED=0
 while IFS= read -r f; do
@@ -72,7 +72,7 @@ while IFS= read -r f; do
         echo "  SKIP (${SIZE_MB}MB): $BASENAME"
         SKIPPED=$((SKIPPED + 1))
     else
-        git add "$REL_PATH"
+        git add -f "$REL_PATH"
         echo "  ADD: $BASENAME"
         STAGED=$((STAGED + 1))
     fi
