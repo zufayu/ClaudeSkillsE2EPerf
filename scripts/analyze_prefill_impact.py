@@ -398,13 +398,78 @@ def save_xlsx(gaps, benchmark, output_path):
 
     summary_df = pd.DataFrame(summary_rows)
 
+    # Sheet 3: gap distribution histogram
+    bucket_size = 5
+    buckets = defaultdict(int)
+    for g in gaps:
+        bucket = int(g["gap_ms"] / bucket_size) * bucket_size
+        buckets[bucket] += 1
+    dist_df = pd.DataFrame([
+        {"bucket_start_ms": b, "bucket_end_ms": b + bucket_size, "count": buckets[b],
+         "pct": round(buckets[b] / len(gaps) * 100, 2)}
+        for b in sorted(buckets)
+    ])
+
+    # Sheet 4: cross-validation table
+    cross_rows = []
+    if normal_vals:
+        n_med = sorted(normal_vals)[len(normal_vals)//2]
+        cross_rows.append({"comparison": "Normal gap median vs median_itl",
+                           "trace_value": round(n_med, 2),
+                           "benchmark_value": round(benchmark["median_itl_ms"], 2) if benchmark else "",
+                           "delta": round(n_med - benchmark["median_itl_ms"], 2) if benchmark else "",
+                           "meaning": "Steady-state decode gap ≈ client-side median ITL. Small delta = negligible CPU/network overhead"})
+    if interrupted_vals:
+        i_med = sorted(interrupted_vals)[len(interrupted_vals)//2]
+        cross_rows.append({"comparison": "Interrupted gap median vs p99_itl",
+                           "trace_value": round(i_med, 2),
+                           "benchmark_value": round(benchmark["p99_itl_ms"], 2) if benchmark else "",
+                           "delta": round(i_med - benchmark["p99_itl_ms"], 2) if benchmark else "",
+                           "meaning": "Prefill-interrupted gap ≈ client-side p99 ITL. Delta from network latency + chunk buffering"})
+    cross_rows.append({"comparison": "BS-weighted avg vs mean_itl",
+                       "trace_value": round(bs_weighted_avg, 2),
+                       "benchmark_value": round(benchmark["mean_itl_ms"], 2) if benchmark else "",
+                       "delta": round(bs_weighted_avg - benchmark["mean_itl_ms"], 2) if benchmark else "",
+                       "meaning": "KEY: trace-reconstructed mean_itl ≈ benchmark mean_itl"})
+    cross_rows.append({"comparison": "BS-weighted avg vs mean_tpot",
+                       "trace_value": round(bs_weighted_avg, 2),
+                       "benchmark_value": round(benchmark["mean_tpot_ms"], 2) if benchmark else "",
+                       "delta": round(bs_weighted_avg - benchmark["mean_tpot_ms"], 2) if benchmark else "",
+                       "meaning": "KEY: trace-reconstructed value ≈ benchmark mean_tpot. Proves prefill is the cause of the gap"})
+    cross_df = pd.DataFrame(cross_rows)
+
+    # Sheet 5: interrupted gap samples (all, not just first 10)
+    interrupted_with_prefill = [g for g in interrupted if g["has_prefill"]]
+    interrupted_without_prefill = [g for g in interrupted if not g["has_prefill"]]
+    sample_rows = []
+    for i, g in enumerate(interrupted):
+        sample_rows.append({
+            "idx": i + 1,
+            "gap_ms": round(g["gap_ms"], 2),
+            "bs": g["bs"],
+            "bs_after": g["bs_after"],
+            "prefill_count": g["prefill_count"],
+            "prefill_dur_ms": round(g["prefill_dur_ms"], 2),
+            "has_prefill": int(g["has_prefill"]),
+            "scheduling_overhead_ms": round(g["gap_ms"] - g["prefill_dur_ms"] - 21, 2) if g["has_prefill"] else "",
+            "meaning": "prefill verified" if g["has_prefill"] else "NO prefill found — may be GC, scheduling jitter, or cross-PID prefill"
+        })
+    sample_df = pd.DataFrame(sample_rows)
+
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         gaps_df.to_excel(writer, sheet_name="gaps", index=False)
         summary_df.to_excel(writer, sheet_name="summary", index=False)
+        dist_df.to_excel(writer, sheet_name="distribution", index=False)
+        if cross_rows:
+            cross_df.to_excel(writer, sheet_name="cross_validation", index=False)
+        sample_df.to_excel(writer, sheet_name="interrupted_gaps", index=False)
 
     print(f"\nXLSX saved: {output_path}")
-    print(f"  Sheet 'gaps':    {len(gaps_df)} rows (all inter-decode gaps)")
-    print(f"  Sheet 'summary': {len(summary_df)} rows (statistics + benchmark comparison)")
+    print(f"  Sheet 'gaps':              {len(gaps_df)} rows (all inter-decode gaps)")
+    print(f"  Sheet 'summary':           {len(summary_df)} rows (statistics + calculation breakdown)")
+    print(f"  Sheet 'distribution':      {len(dist_df)} rows (gap histogram)")
+    print(f"  Sheet 'cross_validation':  {len(cross_df)} rows (trace vs benchmark)")
+    print(f"  Sheet 'interrupted_gaps':  {len(sample_df)} rows (all interrupted gaps with prefill details)")
 
 
 def main():
