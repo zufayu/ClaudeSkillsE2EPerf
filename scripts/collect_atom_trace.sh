@@ -522,12 +522,12 @@ if [[ -n "$TRACE_FILE" ]]; then
     DECODE_CSV="$RESULT_DIR/decode_walltime_${TAG}.csv"
     parse_decode_walltime "$TRACE_FILE" "$DECODE_CSV"
 
-    # Also run parse_trace.py if available (for kernel breakdown)
-    PARSE_TRACE="/app/ATOM/tools/parse_trace.py"
-    if [[ -f "$PARSE_TRACE" ]]; then
-        log "Running parse_trace.py --layer $LAYER..."
-        python3 "$PARSE_TRACE" "$TRACE_FILE" --layer "$LAYER" 2>&1 || \
-            log "WARNING: parse_trace.py failed (norm module detection may need patching)"
+    # Run kernel breakdown analysis (selects steady-state bs for decode)
+    RUN_PARSE="$SCRIPT_DIR/run_parse_trace.py"
+    if [[ -f "$RUN_PARSE" ]]; then
+        log "Running run_parse_trace.py --layer $LAYER (target-bs=auto)..."
+        (cd "$RESULT_DIR" && ATOM_TOOLS=/app/ATOM/tools python3 "$RUN_PARSE" "$TRACE_FILE" --layer "$LAYER" 2>&1) || \
+            log "WARNING: run_parse_trace.py failed"
     fi
 else
     log "ERROR: No trace file found in $TRACE_DIR/rank_0/"
