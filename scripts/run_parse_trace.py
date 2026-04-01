@@ -48,10 +48,10 @@ except ImportError:
     sys.exit(1)
 
 
-def select_decode_bs(events, target_bs=None):
+def select_decode_bs(events, target_bs=None, skip_ratio=0.5):
     """Find target bs and a steady-state decode event at that bs.
 
-    Picks the decode event at the 50th percentile (by timestamp) among all
+    Picks the decode event at skip_ratio position (by timestamp) among all
     events with the target batch size, so the system is well into steady
     state — graph replay is warm, caches are hot, batch is full.
     """
@@ -88,13 +88,14 @@ def select_decode_bs(events, target_bs=None):
     if not candidates:
         return None, target_bs
 
-    # Pick the median event (50th percentile) for steady state
-    mid = len(candidates) // 2
-    selected = candidates[mid]
+    # Pick event at skip_ratio position for steady state
+    idx = int(len(candidates) * skip_ratio)
+    idx = min(idx, len(candidates) - 1)
+    selected = candidates[idx]
     dur_ms = selected.get("dur", 0) / 1000
     print(
-        f"Picked decode #{mid}/{len(candidates)} "
-        f"(dur={dur_ms:.2f}ms, skipped first {mid} to avoid warmup)"
+        f"Picked decode #{idx}/{len(candidates)} "
+        f"(skip_ratio={skip_ratio}, dur={dur_ms:.2f}ms)"
     )
     return selected, target_bs
 
@@ -108,6 +109,10 @@ def main():
     parser.add_argument(
         "--target-bs", type=int, default=None,
         help="Decode batch size (default: most frequent)",
+    )
+    parser.add_argument(
+        "--skip-ratio", type=float, default=0.5,
+        help="Position within target-bs decodes to pick (0.0=first, 0.5=median, 0.9=late). Default: 0.5",
     )
     args = parser.parse_args()
 
@@ -140,7 +145,7 @@ def main():
     print("DECODE ANALYSIS (with --target-bs)")
     print("=" * 60)
 
-    target_decode, actual_bs = select_decode_bs(events, args.target_bs)
+    target_decode, actual_bs = select_decode_bs(events, args.target_bs, args.skip_ratio)
     if target_decode is None:
         print("ERROR: no decode events at target bs")
         sys.exit(1)
