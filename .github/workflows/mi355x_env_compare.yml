@@ -1,0 +1,125 @@
+name: MI355X Env Compare
+on:
+  push:
+    paths:
+      - '.github/workflows/mi355x_env_compare.yml'
+jobs:
+  setup-new-container:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 30
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8
+    steps:
+      - name: Create zufa_atom2 from rocm/atom-dev:latest
+        run: |
+          podman rm -f zufa_atom2 2>/dev/null || true
+          podman pull rocm/atom-dev:latest
+          podman run -dt --device=/dev/kfd --device=/dev/dri \
+            -v /shared:/shared \
+            --ipc=host --group-add video \
+            --shm-size=16G --privileged --cap-add=SYS_PTRACE \
+            --security-opt seccomp=unconfined \
+            --ulimit memlock=-1 --ulimit stack=67108864 \
+            -e ATOM_DISABLE_MMAP=true \
+            --name zufa_atom2 \
+            rocm/atom-dev:latest
+          echo "=== zufa_atom2 created ==="
+
+      - name: Verify zufa_atom2 env
+        run: |
+          echo "=== ROCm version ==="
+          podman exec zufa_atom2 cat /opt/rocm/.info/version 2>/dev/null || echo "unknown"
+          echo "=== ATOM version ==="
+          podman exec zufa_atom2 python3 -c "import atom; print(atom.__version__)" 2>/dev/null || echo "unknown"
+          echo "=== aiter version ==="
+          podman exec zufa_atom2 python3 -c "import aiter; print(aiter.__version__)" 2>/dev/null || echo "unknown"
+          echo "=== GPU ==="
+          podman exec zufa_atom2 rocm-smi --showproductname 2>/dev/null | head -5
+          echo "=== Model check ==="
+          podman exec zufa_atom2 ls $MODEL/ | head -3
+
+      - name: Verify zufa_atom (old) env
+        run: |
+          echo "=== ROCm version ==="
+          podman exec zufa_atom cat /opt/rocm/.info/version 2>/dev/null || echo "unknown"
+          echo "=== ATOM version ==="
+          podman exec zufa_atom python3 -c "import atom; print(atom.__version__)" 2>/dev/null || echo "unknown"
+          echo "=== aiter version ==="
+          podman exec zufa_atom python3 -c "import aiter; print(aiter.__version__)" 2>/dev/null || echo "unknown"
+
+  bench-new-container:
+    runs-on: [self-hosted, mi355x]
+    needs: setup-new-container
+    timeout-minutes: 90
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
+
+      - name: Run bench in zufa_atom2 (new, rocm/atom-dev:latest)
+        run: |
+          podman exec -e ATOM_DISABLE_MMAP=true zufa_atom2 bash -c "cd $REPO && python3 -m atom.benchmarks.benchmark_serving --model $(podman exec zufa_atom2 bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && python3 -m atom.entrypoints.openai_server --model /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 --tensor-parallel-size 8 --kv_cache_dtype fp8 --max-num-seqs 512 --gpu-memory-utilization 0.90 --server-port 8100 &>/dev/null & sleep 1 && echo placeholder') 2>&1" || true
+          echo "Direct bench approach too complex, using sa_bench_mi355x.sh instead"
+
+      - name: Run bench in zufa_atom2 via sa_bench_mi355x.sh
+        run: |
+          podman exec -e ATOM_DISABLE_MMAP=true zufa_atom2 bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/sa_bench_mi355x.sh --model-mxfp4 /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --result-dir ./results_env_compare_new'
+
+      - name: Show new container results
+        if: always()
+        run: |
+          echo "=== zufa_atom2 (rocm/atom-dev:latest) ==="
+          cat $REPO/results_env_compare_new/summary.md 2>/dev/null || echo "No summary"
+          for f in $REPO/results_env_compare_new/result_*.json; do
+            [ -f "$f" ] || continue
+            python3 -c "import json; d=json.load(open('$f')); print(f'output_tps={d.get(\"output_throughput\",0):.1f} total_tps={d.get(\"total_token_throughput\",0):.1f} tpot_p50={d.get(\"tpot_p50\",d.get(\"median_tpot_ms\",0)):.1f}')"
+          done
+
+  bench-old-container:
+    runs-on: [self-hosted, mi355x]
+    needs: bench-new-container
+    timeout-minutes: 90
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
+
+      - name: Run bench in zufa_atom (old container)
+        run: |
+          podman exec zufa_atom bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/sa_bench_mi355x.sh --model-mxfp4 /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --result-dir ./results_env_compare_old'
+
+      - name: Show old container results
+        if: always()
+        run: |
+          echo "=== zufa_atom (old, rocm7.1.1) ==="
+          cat $REPO/results_env_compare_old/summary.md 2>/dev/null || echo "No summary"
+          for f in $REPO/results_env_compare_old/result_*.json; do
+            [ -f "$f" ] || continue
+            python3 -c "import json; d=json.load(open('$f')); print(f'output_tps={d.get(\"output_throughput\",0):.1f} total_tps={d.get(\"total_token_throughput\",0):.1f} tpot_p50={d.get(\"tpot_p50\",d.get(\"median_tpot_ms\",0)):.1f}')"
+          done
+
+      - name: Compare results
+        if: always()
+        run: |
+          echo "========================================="
+          echo "  ENVIRONMENT COMPARISON SUMMARY"
+          echo "========================================="
+          echo ""
+          echo "--- zufa_atom2 (rocm/atom-dev:latest, ROCm 7.2.1) ---"
+          for f in $REPO/results_env_compare_new/result_*.json; do
+            [ -f "$f" ] || continue
+            python3 -c "import json,os; d=json.load(open('$f')); print(f'  {os.path.basename(\"$f\")}: output={d.get(\"output_throughput\",0):.1f} total={d.get(\"total_token_throughput\",0):.1f} tpot={d.get(\"tpot_p50\",d.get(\"median_tpot_ms\",0)):.1f}ms')"
+          done
+          echo ""
+          echo "--- zufa_atom (old, ROCm 7.1.1) ---"
+          for f in $REPO/results_env_compare_old/result_*.json; do
+            [ -f "$f" ] || continue
+            python3 -c "import json,os; d=json.load(open('$f')); print(f'  {os.path.basename(\"$f\")}: output={d.get(\"output_throughput\",0):.1f} total={d.get(\"total_token_throughput\",0):.1f} tpot={d.get(\"tpot_p50\",d.get(\"median_tpot_ms\",0)):.1f}ms')"
+          done
+          echo ""
+          echo "ATOM CI reference (EP=1 TP=8 chat c=64): output=3587.75 total=7177.11"
