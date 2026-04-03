@@ -451,56 +451,11 @@ python3 -u -m atom.benchmarks.benchmark_serving \
     --request-rate inf \
     --ignore-eos \
     --save-result \
-    --save-detailed \
     --result-dir "$RESULT_DIR" \
     --result-filename "$TRACE_RESULT_FILE" >> "$SCRIPT_LOG" 2>&1 || {
     log "WARNING: Profiled benchmark failed"
 }
 log "Profiled benchmark done."
-
-# Extract per-request debug CSV from detailed JSON, then strip large arrays
-DETAILED_JSON="$RESULT_DIR/$TRACE_RESULT_FILE"
-if [[ -f "$DETAILED_JSON" ]]; then
-    PERREQ_CSV="$RESULT_DIR/per_request_${TAG}.csv"
-    if python3 - "$DETAILED_JSON" "$PERREQ_CSV" <<'PYEOF'
-import json, csv, sys
-with open(sys.argv[1]) as f:
-    d = json.load(f)
-ttfts = d.get('ttfts', [])
-itls = d.get('itls', [])
-olens = d.get('output_lens', [])
-with open(sys.argv[2], 'w', newline='') as out:
-    w = csv.writer(out)
-    w.writerow(['req_id','output_len','ttft_ms','tpot_ms','decode_time_ms','e2e_latency_ms'])
-    for i in range(len(ttfts)):
-        ttft = ttfts[i] * 1000
-        raw = itls[i] if i < len(itls) else []
-        itl_list = raw if isinstance(raw, list) else [raw]
-        olen = olens[i] if i < len(olens) else 0
-        decode = sum(t * 1000 for t in itl_list)
-        tpot = (decode / len(itl_list)) if itl_list else 0
-        e2e = ttft + decode
-        w.writerow([i, olen, f'{ttft:.2f}', f'{tpot:.2f}', f'{decode:.2f}', f'{e2e:.2f}'])
-PYEOF
-    then log "Saved per-request CSV: $PERREQ_CSV"
-    else log "WARNING: per-request CSV extraction failed"
-    fi
-    # Keep original as _detailed, write stripped version as main JSON
-    DETAILED_BACKUP="${DETAILED_JSON%.json}_detailed.json"
-    mv "$DETAILED_JSON" "$DETAILED_BACKUP"
-    if python3 - "$DETAILED_BACKUP" "$DETAILED_JSON" <<'PYEOF'
-import json, sys
-with open(sys.argv[1]) as f:
-    d = json.load(f)
-for k in ['input_lens','output_lens','ttfts','itls','generated_texts','errors']:
-    d.pop(k, None)
-with open(sys.argv[2], 'w') as f:
-    json.dump(d, f)
-PYEOF
-    then log "Kept detailed: $(basename $DETAILED_BACKUP), stripped: $TRACE_RESULT_FILE"
-    else log "WARNING: JSON strip failed"
-    fi
-fi
 
 log "Stopping profiler..."
 curl -s -X POST "http://0.0.0.0:${SERVER_PORT}/stop_profile" || true
