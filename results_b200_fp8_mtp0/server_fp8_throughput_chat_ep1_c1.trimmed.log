@@ -1,9 +1,0 @@
-=== Trimmed: 1125 -> 6 lines ===
-=== Source: server_fp8_throughput_chat_ep1_c1.log ===
-
-[SERVER RUNTIME]
-  Attention: AttentionRuntimeFeatures(chunked_prefill=False, cache_reuse=False, has_speculative_draft_tokens=False, chunk_size=8192, chunked_prefill_buffer_batch_size=4)
-
-[ERRORS]
-  You are using a model of type deepseek_v3 to instantiate a model of type . This is not supported for all configurations of models and can yield errors.
-
