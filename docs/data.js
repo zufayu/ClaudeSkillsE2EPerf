@@ -1,5 +1,5 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-04-03T05:52:15.882837",
+  "generated_at": "2026-04-03T12:15:06.259419",
   "runs": [
     {
       "run_id": "8xb200-fp8-20260321-mtp0-ep1",
@@ -2909,6 +2909,43 @@ window.DASHBOARD_DATA = {
             "3": 0.3169
           },
           "dar_source": "atom-ci-log"
+        }
+      ]
+    },
+    {
+      "run_id": "atom-mi355x-deepseek-r1-0528-mxfp4-tp8ep",
+      "series_key": "8\u00d7MI355X DeepSeek-R1-0528 MXFP4 (ATOM) [mtp0-tp8-ep]",
+      "platform": "8\u00d7MI355X",
+      "framework": "ATOM (0.1.3.dev1)",
+      "model": "DeepSeek-R1-0528",
+      "quantization": "MXFP4",
+      "gpu_count": 8,
+      "source": "manual",
+      "sources": [
+        "manual"
+      ],
+      "date": "2026-04-03",
+      "commit": "",
+      "commit_url": "",
+      "env_tag": "mtp0-tp8-ep",
+      "docker_image": "",
+      "benchmark_cmd": "",
+      "results": [
+        {
+          "isl": 1024,
+          "osl": 1024,
+          "conc": 64,
+          "scenario": "chat",
+          "config": "--kv_cache_dtype fp8 -tp 8 --enable-expert-parallel",
+          "ep_size": 8,
+          "dp_attention": false,
+          "output_tps": 3246.8,
+          "total_tps": 6493.6,
+          "request_tps": 3.17,
+          "tpot_p50": 18.9,
+          "ttft_p50": 0,
+          "itl_p50": 0,
+          "e2el_p50": 0
         }
       ]
     },
