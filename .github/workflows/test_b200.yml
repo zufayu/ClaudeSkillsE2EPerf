@@ -1,62 +1,24 @@
 name: Test B200 Runner
-
 on:
   workflow_dispatch:
-
 jobs:
   test:
     runs-on: [self-hosted, b200]
-    env:
-      NODE: hungry-hippo-fin-03-2
-      CONTAINER: zufa_trt
-      IMAGE: nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post2
-      SFS: /SFS-aGqda6ct
-      REPO_DIR: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
     steps:
-      - name: Remove old container, start zufa_trt
+      - name: Setup and scan
         run: |
-          ssh $NODE "docker rm -f trtllm-b200 2>/dev/null && echo 'Removed trtllm-b200' || echo 'trtllm-b200 not found'"
-          ssh $NODE "docker rm -f $CONTAINER 2>/dev/null || true"
-          ssh $NODE "docker run -d --name $CONTAINER --gpus all --ipc host \
-            --ulimit memlock=-1 --ulimit stack=67108864 \
-            -v /home:/home -v /mnt:/mnt -v /data:/data \
-            -v $SFS:$SFS \
-            --shm-size=64g -p 8000:8000 --cap-add=SYS_PTRACE \
-            $IMAGE sleep infinity"
-          echo "Container $CONTAINER started on $NODE"
-
-      - name: Verify GPU + model + repo
-        run: |
+          NODE=hungry-hippo-fin-03-2
+          CONTAINER=zufa_trt
+          IMAGE=nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post2
+          SFS=/SFS-aGqda6ct
+          ssh $NODE "docker rm -f trtllm-b200 2>/dev/null; docker rm -f $CONTAINER 2>/dev/null; docker run -d --name $CONTAINER --gpus all --ipc host --ulimit memlock=-1 --ulimit stack=67108864 -v /home:/home -v /mnt:/mnt -v /data:/data -v $SFS:$SFS --shm-size=64g -p 8000:8000 --cap-add=SYS_PTRACE $IMAGE sleep infinity"
           echo "=== GPU ==="
           ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader"
           echo "=== FP4 Model ==="
           ssh $NODE "docker exec $CONTAINER ls $SFS/models/DeepSeek-R1-0528-NVFP4-v2/ | head -10"
-          echo "=== Repo ==="
-          ssh $NODE "docker exec $CONTAINER ls $REPO_DIR/scripts/ | head -5"
-
-      - name: Scan FP4 result files
-        run: |
-          ssh $NODE "bash -c '
-            for d in $SFS/ubuntu/zufa/ClaudeSkillsE2EPerf/results_b200_fp4_*; do
-              echo \"### \$(basename \$d)\"
-              for f in \$d/result_*.json; do
-                [ -f \"\$f\" ] || continue
-                python3 -c \"
-import json,os,sys
-try:
-    with open(sys.argv[1]) as fh: r=json.load(fh)
-    bn=os.path.basename(sys.argv[1])
-    tpot=r.get(\\\"tpot_p50\\\",\\\"?\\\")
-    otps=r.get(\\\"output_tps\\\",\\\"?\\\")
-    conc=r.get(\\\"concurrency\\\",\\\"?\\\")
-    isl=r.get(\\\"isl\\\",\\\"?\\\")
-    osl=r.get(\\\"osl\\\",\\\"?\\\")
-    ep=r.get(\\\"ep_size\\\",\\\"?\\\")
-    mtp=r.get(\\\"mtp_size\\\",r.get(\\\"num_draft_tokens\\\",\\\"?\\\"))
-    print(f\\\"{bn}: isl={isl} osl={osl} c={conc} ep={ep} mtp={mtp} TPOT={tpot} output_tps={otps}\\\")
-except: print(f\\\"{os.path.basename(sys.argv[1])}: parse error\\\")
-\" \"\$f\"
-              done
-              echo
-            done
-          '"
+          echo "=== FP4 Results ==="
+          ssh $NODE "ls -d $SFS/ubuntu/zufa/ClaudeSkillsE2EPerf/results_b200_fp4_* 2>/dev/null"
+          for d in mtp0_4gpu mtp0_ep4 mtp0_fp4_ep8_c64_dp0; do
+            echo "### results_b200_fp4_$d"
+            ssh $NODE "for f in $SFS/ubuntu/zufa/ClaudeSkillsE2EPerf/results_b200_fp4_\$d/result_*.json; do [ -f \\\"\\\$f\\\" ] && python3 -c 'import json,os,sys; r=json.load(open(sys.argv[1])); print(os.path.basename(sys.argv[1]),\"isl=\"+str(r.get(\"isl\",\"?\")),\"osl=\"+str(r.get(\"osl\",\"?\")),\"c=\"+str(r.get(\"concurrency\",\"?\")),\"ep=\"+str(r.get(\"ep_size\",\"?\")),\"mtp=\"+str(r.get(\"num_draft_tokens\",r.get(\"mtp_size\",\"?\"))),\"TPOT=\"+str(r.get(\"tpot_p50\",\"?\")),\"otps=\"+str(r.get(\"output_tps\",\"?\")))' \\\"\\\$f\\\" 2>/dev/null; done" 2>/dev/null || echo "no data"
+          done
