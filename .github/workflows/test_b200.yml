@@ -7,9 +7,10 @@ jobs:
   test:
     runs-on: [self-hosted, b200]
     steps:
-      - name: Scan GPU nodes
+      - name: Search DeepSeek FP4 models on all nodes
         run: |
           for node in hungry-hippo-fin-03-1 hungry-hippo-fin-03-2 hungry-hippo-fin-03-3 hungry-hippo-fin-03-7; do
             echo "=== $node ==="
-            ssh -o ConnectTimeout=5 $node 'nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null && docker ps --format "{{.Names}} {{.Image}}" 2>/dev/null | head -5' 2>&1 || echo "UNREACHABLE"
+            ssh -o ConnectTimeout=5 $node 'find / -maxdepth 5 -type d -iname "*deepseek*" 2>/dev/null; find / -maxdepth 5 -type d -iname "*fp4*" 2>/dev/null; find / -maxdepth 5 -type d -iname "*nvfp4*" 2>/dev/null' 2>&1 | sort -u | head -30
+            echo "---"
           done
