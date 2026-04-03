@@ -18,7 +18,7 @@ jobs:
           podman run -dt --device=/dev/kfd --device=/dev/dri \
             -v /shared:/shared \
             --ipc=host --group-add video \
-            --shm-size=16G --privileged --cap-add=SYS_PTRACE \
+            --privileged --cap-add=SYS_PTRACE \
             --security-opt seccomp=unconfined \
             --ulimit memlock=-1 --ulimit stack=67108864 \
             -e ATOM_DISABLE_MMAP=true \
@@ -58,11 +58,6 @@ jobs:
     steps:
       - name: Sync repo
         run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
-
-      - name: Run bench in zufa_atom2 (new, rocm/atom-dev:latest)
-        run: |
-          podman exec -e ATOM_DISABLE_MMAP=true zufa_atom2 bash -c "cd $REPO && python3 -m atom.benchmarks.benchmark_serving --model $(podman exec zufa_atom2 bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && python3 -m atom.entrypoints.openai_server --model /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 --tensor-parallel-size 8 --kv_cache_dtype fp8 --max-num-seqs 512 --gpu-memory-utilization 0.90 --server-port 8100 &>/dev/null & sleep 1 && echo placeholder') 2>&1" || true
-          echo "Direct bench approach too complex, using sa_bench_mi355x.sh instead"
 
       - name: Run bench in zufa_atom2 via sa_bench_mi355x.sh
         run: |
