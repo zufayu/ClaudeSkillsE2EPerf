@@ -1,4 +1,4 @@
-name: MI355X Save Results
+name: MI355X Save Results v2
 on:
   push:
     paths:
