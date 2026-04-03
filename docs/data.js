@@ -1,5 +1,5 @@
 window.DASHBOARD_DATA = {
-  "generated_at": "2026-03-23T10:02:27.572545",
+  "generated_at": "2026-04-03T05:52:15.882837",
   "runs": [
     {
       "run_id": "8xb200-fp8-20260321-mtp0-ep1",
@@ -2195,6 +2195,131 @@ window.DASHBOARD_DATA = {
             "dp_attention": "true",
             "moe_backend": "DEEPGEMM",
             "piecewise_cuda_graphs": "false"
+          }
+        }
+      ]
+    },
+    {
+      "run_id": "8xb200-nvfp4-20260325-mtp0-ep8",
+      "series_key": "8\u00d7B200 DeepSeek-R1-0528 NVFP4 (TRT-LLM) [mtp0-ep8]",
+      "platform": "8\u00d7B200",
+      "framework": "TRT-LLM rc6.post2",
+      "model": "DeepSeek-R1-0528",
+      "quantization": "NVFP4",
+      "gpu_count": 8,
+      "source": "manual",
+      "sources": [
+        "manual"
+      ],
+      "date": "2026-03-25",
+      "commit": "",
+      "commit_url": "",
+      "env_tag": "mtp0-ep8",
+      "docker_image": "unknown-docker",
+      "benchmark_cmd": "",
+      "results": [
+        {
+          "isl": 1024,
+          "osl": 1024,
+          "conc": 64,
+          "scenario": "chat",
+          "config": "throughput",
+          "ep_size": 8,
+          "dp_attention": false,
+          "output_tps": 3921.01622318955,
+          "total_tps": 7843.8003434356315,
+          "request_tps": 4.253586902933096,
+          "tpot_p50": 15.841980890517048,
+          "ttft_p50": 68.71832750039175,
+          "itl_p50": 143.9008889719844,
+          "e2el_p50": 14670.113856031094,
+          "tpot_p99": 16.377153641838508,
+          "ttft_p99": 898.133394428296,
+          "itl_p99": 245.86881195195014,
+          "e2el_p99": 16667.553010234842,
+          "tpot_mean": 15.718131350592781,
+          "ttft_mean": 125.45683068474317,
+          "e2el_mean": 14605.75166947383,
+          "num_prompts": 640,
+          "completed": 640,
+          "duration": 150.461249436019,
+          "server_cmd": "PYTHONNOUSERSITE=1 mpirun -n 1 --oversubscribe --allow-run-as-root trtllm-serve /home/models/DeepSeek-R1-0528-NVFP4-v2 --port=8888 --trust_remote_code --backend=pytorch --max_seq_len=8192 --max_num_tokens=8192 --tp_size=8 --ep_size=8 --extra_llm_api_options=results_b200_mtp0_fp4_ep8_c64_dp0/config_fp4_throughput_chat_ep8_c64.yml",
+          "benchmark_cmd": "benchmark_serving.py --model /home/models/DeepSeek-R1-0528-NVFP4-v2 --port 8888 --backend openai --input-len 1024 --output-len 1024 --random-range-ratio 0.8 --num-prompts 640 --max-concurrency 64 --num-warmups 8 --result-filename result_fp4_throughput_chat_ep8_c64 --result-dir results_b200_mtp0_fp4_ep8_c64_dp0 --metadata max_model_len=8192 kv_cache_dtype=fp8 kv_cache_free_mem_fraction=0.8 tensor_parallel_size=8 ep_size=8 dp_attention=false moe_backend=TRTLLM mtp_layers=0 piecewise_cuda_graphs=true random_range_ratio=0.8",
+          "config_yaml": "cuda_graph_config:\n    enable_padding: true\n    max_batch_size: 64\nenable_attention_dp: false\nprint_iter_log: true\nkv_cache_config:\n    dtype: fp8\n    free_gpu_memory_fraction: 0.8\n    enable_block_reuse: false\nstream_interval: 10\nmoe_config:\n    backend: TRTLLM\ntorch_compile_config:\n    capture_num_tokens: [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2304, 2560, 2816, 3072, 3328, 3584, 3840, 4096, 4352, 4608, 4864, 5120, 5376, 5632, 5888, 6144, 6400, 6656, 6912, 7168, 7424, 7680, 7936, 8192]\n    enable_piecewise_cuda_graph: true\n",
+          "server_config": {
+            "max_model_len": "8192",
+            "kv_cache_dtype": "fp8",
+            "tensor_parallel_size": "8",
+            "gpu_count": "8",
+            "mtp_layers": "0",
+            "random_range_ratio": "0.8",
+            "kv_cache_free_mem_fraction": "0.8",
+            "ep_size": "8",
+            "dp_attention": "false",
+            "moe_backend": "TRTLLM",
+            "piecewise_cuda_graphs": "true"
+          }
+        }
+      ]
+    },
+    {
+      "run_id": "8xb200-nvfp4-20260403-mtp0-ep8-repro",
+      "series_key": "8\u00d7B200 DeepSeek-R1-0528 NVFP4 (TRT-LLM) [mtp0-ep8-repro]",
+      "platform": "8\u00d7B200",
+      "framework": "TRT-LLM rc6.post2",
+      "model": "DeepSeek-R1-0528",
+      "quantization": "NVFP4",
+      "gpu_count": 8,
+      "source": "manual",
+      "sources": [
+        "manual"
+      ],
+      "date": "2026-04-03",
+      "commit": "",
+      "commit_url": "",
+      "env_tag": "mtp0-ep8-repro",
+      "docker_image": "",
+      "benchmark_cmd": "",
+      "results": [
+        {
+          "isl": 1024,
+          "osl": 1024,
+          "conc": 64,
+          "scenario": "chat",
+          "config": "throughput",
+          "ep_size": 8,
+          "dp_attention": false,
+          "output_tps": 3811.433,
+          "total_tps": 7624.585,
+          "request_tps": 4.1347,
+          "tpot_p50": 16.296,
+          "ttft_p50": 69.316,
+          "itl_p50": 147.727,
+          "e2el_p50": 15109.529,
+          "tpot_p99": 16.858,
+          "ttft_p99": 880.987,
+          "itl_p99": 262.247,
+          "e2el_p99": 17146.938,
+          "tpot_mean": 16.165,
+          "ttft_mean": 125.504,
+          "e2el_mean": 15037.175,
+          "num_prompts": 640,
+          "completed": 640,
+          "duration": 154.787,
+          "server_cmd": "",
+          "benchmark_cmd": "",
+          "config_yaml": "",
+          "server_config": {
+            "max_model_len": "8192",
+            "kv_cache_dtype": "fp8",
+            "tensor_parallel_size": "8",
+            "gpu_count": "8",
+            "mtp_layers": "0",
+            "random_range_ratio": "0.8",
+            "ep_size": "8",
+            "dp_attention": "false",
+            "moe_backend": "TRTLLM",
+            "piecewise_cuda_graphs": "true"
           }
         }
       ]
