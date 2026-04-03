@@ -13,7 +13,6 @@ jobs:
         run: |
           git -C $REPO reset HEAD -- . 2>/dev/null || true
           git -C $REPO checkout -- . 2>/dev/null || true
-          git -C $REPO clean -fd 2>/dev/null || true
           git -C $REPO pull
 
       - name: Read decode_breakdown.xlsx
