@@ -7,14 +7,24 @@ jobs:
   test:
     runs-on: [self-hosted, b200]
     steps:
-      - name: System info
+      - name: Start TRT-LLM container if not running
         run: |
-          echo "=== hostname ==="
-          hostname
-          echo "=== GPU ==="
-          nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo "No GPU"
-          echo "=== disk ==="
-          df -h / | tail -1
-          echo "=== docker ==="
-          docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null | head -5 || echo "No docker"
+          if sudo docker ps --format '{{.Names}}' | grep -q '^trtllm-b200$'; then
+            echo "Container trtllm-b200 already running"
+          else
+            echo "Starting trtllm-b200 container..."
+            sudo docker rm -f trtllm-b200 2>/dev/null || true
+            sudo docker run -d --name trtllm-b200 --gpus all --ipc host \
+              --ulimit memlock=-1 --ulimit stack=67108864 \
+              -v /home:/home -v /mnt:/mnt -v /data:/data \
+              --shm-size=64g -p 8000:8000 --cap-add=SYS_PTRACE \
+              nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post2 sleep infinity
+            echo "Container started"
+          fi
+
+      - name: Verify GPU inside container
+        run: |
+          sudo docker exec trtllm-b200 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+          echo "=== TRT-LLM version ==="
+          sudo docker exec trtllm-b200 python3 -c "import tensorrt_llm; print(tensorrt_llm.__version__)" 2>/dev/null || echo "version check skipped"
           echo "=== done ==="
