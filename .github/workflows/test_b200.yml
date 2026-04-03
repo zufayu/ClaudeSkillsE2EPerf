@@ -2,36 +2,51 @@ name: Test B200 Runner
 on:
   workflow_dispatch:
 jobs:
-  check-repos:
+  cleanup-and-sync:
     runs-on: [self-hosted, b200]
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
-      NODE: hungry-hippo-fin-03-2
+      SFS_REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      OLD_HOME: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
+      SYMLINK_SRC: /SFS-aGqda6ct/ubuntu/zufa
+      SYMLINK_DST: /home/ubuntu/zufa
     steps:
-      - name: Check repo locations across nodes
+      - name: Cleanup old repo + symlink on all nodes
         run: |
           for N in hungry-hippo-fin-03-2 hungry-hippo-fin-03-1 hungry-hippo-fin-03-3 hungry-hippo-fin-03-7; do
             echo "=== $N ==="
-            ssh $N "echo '--- /home/ubuntu/zufa ---' && ls -la /home/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null && cat /home/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null && git -C /home/ubuntu/zufa/ClaudeSkillsE2EPerf log --oneline -3 2>/dev/null || echo 'NOT FOUND'" 2>/dev/null || echo "SSH failed"
-            ssh $N "echo '--- SFS ---' && ls -la /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null && cat /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null && git -C /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf log --oneline -3 2>/dev/null || echo 'NOT FOUND'" 2>/dev/null || echo "SSH failed"
-            ssh $N "echo '--- Are they same inode? ---' && stat -c '%i %d' /home/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null && stat -c '%i %d' /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null || echo 'cannot compare'" 2>/dev/null || echo "SSH failed"
+            ssh $N "if [ -d $OLD_HOME/.git ] && [ ! -L $SYMLINK_DST ]; then echo 'Removing old repo...'; rm -rf $SYMLINK_DST; echo 'Creating symlink $SYMLINK_DST -> $SYMLINK_SRC'; ln -s $SYMLINK_SRC $SYMLINK_DST; echo 'Done'; else echo 'Already symlinked or no old repo'; ls -la $SYMLINK_DST 2>/dev/null || echo 'path does not exist'; fi"
             echo ""
           done
-
-      - name: Check jumphost repo
-        run: |
           echo "=== jumphost ==="
-          echo "--- /home/ubuntu/zufa ---"
-          ls -la /home/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null && cat /home/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null && git -C /home/ubuntu/zufa/ClaudeSkillsE2EPerf log --oneline -3 2>/dev/null || echo "NOT FOUND"
-          echo "--- SFS ---"
-          ls -la /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null && cat /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null && git -C /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf log --oneline -3 2>/dev/null || echo "NOT FOUND"
-          echo "--- Are they same inode? ---"
-          stat -c '%i %d' /home/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null
-          stat -c '%i %d' /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null || echo "cannot compare"
+          if [ -d $OLD_HOME/.git ] && [ ! -L $SYMLINK_DST ]; then
+            echo "Removing old repo..."
+            rm -rf $SYMLINK_DST
+            echo "Creating symlink $SYMLINK_DST -> $SYMLINK_SRC"
+            ln -s $SYMLINK_SRC $SYMLINK_DST
+            echo "Done"
+          else
+            echo "Already symlinked or no old repo"
+            ls -la $SYMLINK_DST 2>/dev/null || echo "path does not exist"
+          fi
 
-      - name: Check container mounts
+      - name: Git pull SFS repo
         run: |
-          echo "=== Container zufa_trt on node-2 ==="
-          ssh $NODE "docker exec zufa_trt bash -c 'echo \"--- /home/ubuntu/zufa ---\" && ls /home/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null && git -C /home/ubuntu/zufa/ClaudeSkillsE2EPerf log --oneline -1 2>/dev/null || echo NOT_FOUND'" || echo "failed"
-          ssh $NODE "docker exec zufa_trt bash -c 'echo \"--- /SFS ---\" && ls /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf/.git/HEAD 2>/dev/null && git -C /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf log --oneline -1 2>/dev/null || echo NOT_FOUND'" || echo "failed"
-          ssh $NODE "docker exec zufa_trt bash -c 'echo \"--- df mounts ---\" && df -h /home /SFS-aGqda6ct 2>/dev/null | head -5'" || echo "failed"
+          echo "=== Before pull ==="
+          git -C $SFS_REPO log --oneline -3
+          echo ""
+          git -C $SFS_REPO pull
+          echo ""
+          echo "=== After pull ==="
+          git -C $SFS_REPO log --oneline -3
+
+      - name: Verify symlinks
+        run: |
+          for N in hungry-hippo-fin-03-2 hungry-hippo-fin-03-1 hungry-hippo-fin-03-3 hungry-hippo-fin-03-7; do
+            echo "=== $N ==="
+            ssh $N "ls -la /home/ubuntu/zufa && git -C /home/ubuntu/zufa/ClaudeSkillsE2EPerf log --oneline -1"
+            echo ""
+          done
+          echo "=== jumphost ==="
+          ls -la /home/ubuntu/zufa
+          git -C /home/ubuntu/zufa/ClaudeSkillsE2EPerf log --oneline -1
