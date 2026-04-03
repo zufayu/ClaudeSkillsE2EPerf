@@ -1,10 +1,10 @@
 {
-  "run_id": "atom-mi355x-deepseek-r1-0528-mxfp4-tp8ep",
+  "run_id": "atom-mi355x-deepseek-r1-0528-mxfp4-tp8-ep8",
   "platform": "8\u00d7MI355X",
   "framework": "ATOM (0.1.3.dev1)",
   "model": "DeepSeek-R1-0528",
   "quantization": "MXFP4",
-  "env_tag": "mtp0-tp8-ep",
+  "env_tag": "mtp0-tp8-ep8",
   "gpu_count": 8,
   "source": "manual",
   "date": "2026-04-03",
