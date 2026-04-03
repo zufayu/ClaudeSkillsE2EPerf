@@ -15,12 +15,13 @@ jobs:
         run: |
           podman rm -f zufa_atom2 2>/dev/null || true
           podman pull docker.io/rocm/atom-dev:latest
-          podman run -dt --device=/dev/kfd --device=/dev/dri \
+          podman run -dt --group-add keep-groups --network=host --device=/dev/kfd --device=/dev/dri \
+            --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
             -v /shared:/shared \
-            --ipc=host --group-add video \
-            --privileged --cap-add=SYS_PTRACE \
-            --security-opt seccomp=unconfined \
-            --ulimit memlock=-1 --ulimit stack=67108864 \
+            -v /shared/data/amd_int:/shared/data/amd_int \
+            -v /shared/amdgpu/home/zufa_yu_qle:/shared/amdgpu/home/zufa_yu_qle \
+            --workdir /shared/amdgpu/home/zufa_yu_qle \
+            --shm-size=64G --ulimit stack=67108864 \
             -e ATOM_DISABLE_MMAP=true \
             --name zufa_atom2 \
             docker.io/rocm/atom-dev:latest
