@@ -1,8 +1,8 @@
-name: MI355X MXFP4 TP8+EP Benchmark
+name: MI355X MXFP4 TP8+EP Trace
 on:
   workflow_dispatch:
 jobs:
-  mxfp4-tp8-ep-bench:
+  mxfp4-tp8-ep-trace:
     runs-on: [self-hosted, mi355x]
     timeout-minutes: 120
     env:
@@ -24,29 +24,33 @@ jobs:
           echo "=== Podman container ==="
           podman ps --format "{{.Names}} {{.Status}}" | grep zufa_atom
           echo "=== GPUs ==="
-          podman exec $CONTAINER rocm-smi --showproductname 2>/dev/null | head -20 || podman exec $CONTAINER rocm-smi | head -20
-          echo "=== ATOM ==="
-          podman exec $CONTAINER pip show atom 2>/dev/null | grep -E "^(Name|Version)" || echo "ATOM installed (no pip metadata)"
+          podman exec $CONTAINER rocm-smi --showproductname 2>/dev/null | head -10 || podman exec $CONTAINER rocm-smi | head -10
           echo "=== Model ==="
           podman exec $CONTAINER ls $MODEL/config.json && echo "Model found"
+          echo "=== ATOM parse_trace ==="
+          podman exec $CONTAINER ls /app/ATOM/tools/parse_trace.py && echo "parse_trace.py found"
 
-      - name: Run MXFP4 TP=8+EP benchmark (chat, c=64)
+      - name: Collect trace (chat, c=64, TP=8+EP, profile-prompts=128)
         timeout-minutes: 90
         run: |
-          podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --ep --result-dir ./results_mi355x_mxfp4_mtp0_ep8_tp8"
+          podman exec $CONTAINER bash -c "cd $REPO && bash scripts/collect_atom_trace.sh --model $MODEL --scenario chat --concurrency 64 --tp 8 --ep --profile-prompts 128 --result-dir ./results_mi355x_mxfp4_mtp0_ep8_tp8_trace"
 
-      - name: Show results
+      - name: Show trace results
         if: always()
         run: |
+          TDIR=$REPO/results_mi355x_mxfp4_mtp0_ep8_tp8_trace
           echo "=== Result files ==="
-          podman exec $CONTAINER ls -la $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8/ 2>/dev/null || echo "No results dir"
+          podman exec $CONTAINER ls -lh $TDIR/ 2>/dev/null || echo "No results dir"
           echo ""
-          echo "=== JSON results ==="
-          for f in $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8/*.json; do
-            [ -f "$f" ] || continue
-            echo "--- $(basename $f) ---"
-            python3 -c "import json; d=json.load(open('$f')); print(f'  duration={d.get(\"duration\",\"?\")}s completed={d.get(\"completed\",\"?\")} mean_tpot={d.get(\"mean_tpot_ms\",\"?\")}ms mean_ttft={d.get(\"mean_ttft_ms\",\"?\")}ms output_tput={d.get(\"output_throughput\",\"?\")} tok/s')"
-          done
+          echo "=== Decode walltime CSV ==="
+          podman exec $CONTAINER cat $TDIR/decode_walltime_*.csv 2>/dev/null | head -30 || echo "No decode CSV"
+          echo ""
+          echo "=== Kernel breakdown ==="
+          podman exec $CONTAINER cat $TDIR/decode_breakdown.xlsx 2>/dev/null && echo "(binary xlsx)" || echo "No breakdown xlsx"
+          podman exec $CONTAINER ls -lh $TDIR/*breakdown* 2>/dev/null || echo "No breakdown files"
+          echo ""
+          echo "=== Trace script log ==="
+          podman exec $CONTAINER cat $TDIR/trace_*.log 2>/dev/null | tail -60 || echo "No trace log"
           echo ""
           echo "=== Server log tail ==="
-          tail -50 $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8/server*.log 2>/dev/null | head -80 || echo "No server log"
+          podman exec $CONTAINER tail -30 $TDIR/server_*.log 2>/dev/null || echo "No server log"
