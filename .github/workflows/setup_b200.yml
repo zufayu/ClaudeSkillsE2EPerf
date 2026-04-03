@@ -19,56 +19,55 @@ jobs:
     env:
       NODE: ${{ inputs.node }}
       REPO_DIR: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
-      CONTAINER: trtllm-b200
+      CONTAINER: zufa_trt
       IMAGE: nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post2
+      SFS: /SFS-aGqda6ct
     steps:
-      - name: Clone repo on jumphost
+      - name: Remove old container, start zufa_trt
         run: |
-          if [ -d "$REPO_DIR/.git" ]; then
-            echo "Repo exists, pulling latest..."
-            cd "$REPO_DIR" && git pull
-          else
-            echo "Cloning repo..."
-            mkdir -p /home/ubuntu/zufa
-            git clone https://github.com/zufayu/ClaudeSkillsE2EPerf.git "$REPO_DIR"
-          fi
-          echo "Repo ready at $REPO_DIR"
-          ls "$REPO_DIR/scripts/" | head -10
+          ssh $NODE "docker rm -f trtllm-b200 2>/dev/null && echo 'Removed trtllm-b200' || echo 'trtllm-b200 not found'"
+          ssh $NODE "docker rm -f $CONTAINER 2>/dev/null || true"
+          ssh $NODE "docker run -d --name $CONTAINER --gpus all --ipc host \
+            --ulimit memlock=-1 --ulimit stack=67108864 \
+            -v /home:/home -v /mnt:/mnt -v /data:/data \
+            -v $SFS:$SFS \
+            --shm-size=64g -p 8000:8000 --cap-add=SYS_PTRACE \
+            $IMAGE sleep infinity"
+          echo "Container $CONTAINER started on $NODE"
 
-      - name: Check repo visible from GPU node
-        run: |
-          ssh $NODE "ls $REPO_DIR/scripts/ 2>/dev/null | head -5" && echo "Repo shared via NFS" || echo "WARNING: repo NOT visible from GPU node"
-
-      - name: Pull Docker image on GPU node
-        run: |
-          ssh $NODE "docker pull $IMAGE"
-
-      - name: Start container on GPU node
-        run: |
-          ssh $NODE "
-            if docker ps --format '{{.Names}}' | grep -q '^${CONTAINER}$'; then
-              echo 'Container already running'
-            else
-              docker rm -f ${CONTAINER} 2>/dev/null || true
-              docker run -d --name ${CONTAINER} --gpus all --ipc host \
-                --ulimit memlock=-1 --ulimit stack=67108864 \
-                -v /home:/home -v /mnt:/mnt -v /data:/data \
-                --shm-size=64g -p 8000:8000 --cap-add=SYS_PTRACE \
-                ${IMAGE} sleep infinity
-              echo 'Container started'
-            fi
-          "
-
-      - name: Verify GPU + paths inside container
+      - name: Verify GPU + model paths
         run: |
           echo "=== GPU ==="
           ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader"
-          echo "=== TRT-LLM version ==="
-          ssh $NODE "docker exec $CONTAINER python3 -c 'import tensorrt_llm; print(tensorrt_llm.__version__)'" 2>/dev/null || echo "version check skipped"
-          echo "=== Repo inside container ==="
-          ssh $NODE "docker exec $CONTAINER ls $REPO_DIR/scripts/ 2>/dev/null | head -5" || echo "Repo NOT visible inside container"
-          echo "=== Model paths ==="
-          ssh $NODE "docker exec $CONTAINER bash -c 'ls /home/models/ 2>/dev/null; ls /data/models/ 2>/dev/null; ls /mnt/models/ 2>/dev/null'" || echo "No model dir found"
-          echo "=== Node: $NODE ==="
-          echo "=== Container: $CONTAINER ==="
-          echo "=== DONE ==="
+          echo "=== FP4 Model ==="
+          ssh $NODE "docker exec $CONTAINER ls $SFS/models/DeepSeek-R1-0528-NVFP4-v2/ | head -10"
+          echo "=== Repo ==="
+          ssh $NODE "docker exec $CONTAINER ls $REPO_DIR/scripts/ | head -5"
+
+      - name: List B200 FP4 result directories
+        run: |
+          echo "=== Result dirs ==="
+          ssh $NODE "docker exec $CONTAINER bash -c 'for d in $SFS/ubuntu/zufa/ClaudeSkillsE2EPerf/results_b200_fp4_*; do echo \"### \$d\"; ls \$d/*.json 2>/dev/null | head -5; echo \"Total: \$(ls \$d/*.json 2>/dev/null | wc -l) files\"; done'"
+
+      - name: Show FP4 result summaries (TPOT focus)
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c '
+            for d in $SFS/ubuntu/zufa/ClaudeSkillsE2EPerf/results_b200_fp4_*; do
+              echo \"### \$(basename \$d)\"
+              for f in \$d/result_*.json; do
+                [ -f \"\$f\" ] || continue
+                python3 -c \"
+import json, os
+with open(\\\"\\x27\$f\\x27\\\") as fh: r=json.load(fh)
+bn=os.path.basename(\\\"\\x27\$f\\x27\\\")
+tpot=r.get(\\\"tpot_p50\\\", r.get(\\\"token_metrics\\\",{}).get(\\\"time_per_output_token_p50\\\",\\\"?\\\"))
+otps=r.get(\\\"output_tps\\\", r.get(\\\"token_metrics\\\",{}).get(\\\"output_throughput\\\",\\\"?\\\"))
+conc=r.get(\\\"concurrency\\\", r.get(\\\"config\\\",{}).get(\\\"concurrency\\\",\\\"?\\\"))
+isl=r.get(\\\"isl\\\", r.get(\\\"config\\\",{}).get(\\\"isl\\\",\\\"?\\\"))
+osl=r.get(\\\"osl\\\", r.get(\\\"config\\\",{}).get(\\\"osl\\\",\\\"?\\\"))
+print(f\\\"{bn}: isl={isl} osl={osl} c={conc} TPOT={tpot} output_tps={otps}\\\")
+\" 2>/dev/null || echo \"\$(basename \$f): parse error\"
+              done
+              echo
+            done
+          '"
