@@ -451,8 +451,18 @@ python3 -u -m atom.benchmarks.benchmark_serving \
     --request-rate inf \
     --ignore-eos \
     --save-result \
+    --percentile-metrics "ttft,tpot,itl,e2el" \
     --result-dir "$RESULT_DIR" \
-    --result-filename "$TRACE_RESULT_FILE" >> "$SCRIPT_LOG" 2>&1 || {
+    --result-filename "$TRACE_RESULT_FILE" \
+    --metadata \
+        "max_model_len=$MAX_MODEL_LEN" \
+        "gpu_memory_utilization=$GPU_MEM_UTIL" \
+        "kv_cache_dtype=$KV_CACHE_DTYPE" \
+        "tensor_parallel_size=$TP" \
+        "expert_parallel=$EXPERT_PARALLEL" \
+        "max_num_seqs=$MAX_NUM_SEQS" \
+        "profile_num_prompts=$PROFILE_NUM_PROMPTS" \
+        "warmup_num_prompts=$WARMUP_NUM_PROMPTS" >> "$SCRIPT_LOG" 2>&1 || {
     log "WARNING: Profiled benchmark failed"
 }
 log "Profiled benchmark done."
@@ -506,3 +516,35 @@ log "  Traces:    $RESULT_DIR/"
 log "  Decode CSV: $DECODE_CSV"
 log "  Log:       $SCRIPT_LOG"
 log "============================================================"
+
+# Step 8: Generate summary.md
+SUMMARY_FILE="$RESULT_DIR/summary.md"
+cat > "$SUMMARY_FILE" << 'HEADER'
+# DeepSeek R1 Profiling Results (ATOM/vLLM)
+## MI355X 8×GPU
+
+| Config | Scenario | CONC | Total Tput | Output Tput | TPOT (ms) | TTFT (ms) |
+|--------|----------|------|------------|-------------|-----------|-----------|
+HEADER
+
+for f in "$RESULT_DIR"/result_profiled_*.json; do
+    [[ -f "$f" ]] || continue
+    python3 -c "
+import json, sys, os
+try:
+    with open('$f') as fh:
+        data = json.load(fh)
+    fname = os.path.basename('$f').replace('.json', '')
+    out_tps = data.get('output_throughput', 0)
+    in_tps = data.get('input_throughput', 0)
+    total_tps = data.get('total_token_throughput', in_tps + out_tps)
+    ttft_p50 = data.get('ttft_p50', data.get('median_ttft_ms', 0))
+    tpot_p50 = data.get('tpot_p50', data.get('median_tpot_ms', 0))
+    print(f'| profiling | $SCENARIO | $CONCURRENCY | {total_tps:.1f} | {out_tps:.1f} | {tpot_p50:.1f} | {ttft_p50:.1f} |')
+except Exception as e:
+    print(f'| ERROR | $SCENARIO | $CONCURRENCY | - | - | - | {e} |', file=sys.stderr)
+" >> "$SUMMARY_FILE" 2>/dev/null || true
+done
+
+log "Summary written to: $SUMMARY_FILE"
+cat "$SUMMARY_FILE"
