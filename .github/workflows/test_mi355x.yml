@@ -1,13 +1,14 @@
-name: Test MI355X Runner
+name: MI355X MXFP4 TP8+EP Benchmark
 on:
   workflow_dispatch:
 jobs:
-  smoke-test:
+  mxfp4-tp8-ep-bench:
     runs-on: [self-hosted, mi355x]
-    timeout-minutes: 10
+    timeout-minutes: 120
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
       CONTAINER: zufa_atom
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8
     steps:
       - name: Git pull repo
         run: |
@@ -18,35 +19,34 @@ jobs:
           echo "=== Latest commit ==="
           git -C $REPO log --oneline -3
 
-      - name: Check podman container
+      - name: Check environment
         run: |
-          echo "=== Podman containers ==="
-          podman ps --format "{{.Names}} {{.Image}} {{.Status}}"
-          echo ""
-          echo "=== Check zufa_atom ==="
-          podman exec $CONTAINER echo "Container is alive"
+          echo "=== Podman container ==="
+          podman ps --format "{{.Names}} {{.Status}}" | grep zufa_atom
+          echo "=== GPUs ==="
+          podman exec $CONTAINER rocm-smi --showproductname 2>/dev/null | head -20 || podman exec $CONTAINER rocm-smi | head -20
+          echo "=== ATOM ==="
+          podman exec $CONTAINER python3 -c "import atom; print('ATOM', atom.__version__)"
+          echo "=== Model ==="
+          podman exec $CONTAINER ls $MODEL/config.json && echo "Model found"
 
-      - name: Check GPUs (rocm-smi)
-        run: podman exec $CONTAINER rocm-smi --showproductname 2>/dev/null || podman exec $CONTAINER rocm-smi
-
-      - name: Check ATOM installation
-        run: podman exec $CONTAINER python3 -c "import atom; print('ATOM version:', atom.__version__)" 2>/dev/null || podman exec $CONTAINER pip show atom 2>/dev/null || echo "ATOM not detected via pip"
-
-      - name: Check model paths
+      - name: Run MXFP4 TP=8+EP benchmark (chat, c=64)
+        timeout-minutes: 90
         run: |
-          echo "=== /shared/data/amd_int models ==="
-          podman exec $CONTAINER ls /shared/data/amd_int/ 2>/dev/null | head -20
-          echo ""
-          echo "=== DeepSeek models ==="
-          podman exec $CONTAINER find /shared/data/amd_int -maxdepth 2 -name "config.json" 2>/dev/null | head -10
-          echo ""
-          echo "=== Repo scripts ==="
-          podman exec $CONTAINER ls $REPO/scripts/sa_bench_mi355x.sh 2>/dev/null && echo "sa_bench_mi355x.sh found" || echo "Script not found in container"
+          podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --ep --result-dir ./results_mi355x_mxfp4_mtp0_ep8_tp8"
 
-      - name: List existing MI355X results
+      - name: Show results
+        if: always()
         run: |
-          for d in $REPO/results_mi355x*; do
-            [ -d "$d" ] || continue
-            echo "=== $(basename $d) ==="
-            ls "$d"/*.json 2>/dev/null | wc -l | xargs -I{} echo "  {} result files"
+          echo "=== Result files ==="
+          podman exec $CONTAINER ls -la $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8/ 2>/dev/null || echo "No results dir"
+          echo ""
+          echo "=== JSON results ==="
+          for f in $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8/*.json; do
+            [ -f "$f" ] || continue
+            echo "--- $(basename $f) ---"
+            python3 -c "import json; d=json.load(open('$f')); print(f'  duration={d.get(\"duration\",\"?\")}s completed={d.get(\"completed\",\"?\")} mean_tpot={d.get(\"mean_tpot_ms\",\"?\")}ms mean_ttft={d.get(\"mean_ttft_ms\",\"?\")}ms output_tput={d.get(\"output_throughput\",\"?\")} tok/s')"
           done
+          echo ""
+          echo "=== Server log tail ==="
+          tail -50 $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8/server*.log 2>/dev/null | head -80 || echo "No server log"

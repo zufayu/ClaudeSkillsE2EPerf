@@ -61,6 +61,7 @@ PROFILE_NUM_PROMPTS=""      # defaults to WARMUP_NUM_PROMPTS if not set
 ROCTRACER_MAX_EVENTS=""     # if set, auto-generate libkineto.conf (default 1M, use 10M+ for long traces)
 FLUSH_TIMEOUT=300
 LAYER=40
+EXPERT_PARALLEL="false"
 
 # ======================== Argument Parsing ====================================
 usage() {
@@ -77,6 +78,7 @@ Options:
   --scenario SCENARIO       chat (1K/1K), reasoning (1K/8K), summarize (8K/1K) [default: chat]
   --concurrency N           Request concurrency [default: 64]
   --tp N                    Tensor parallelism [default: 4]
+  --ep                      Enable expert parallelism (--enable-expert-parallel)
   --port PORT               Server port [default: 8000]
   --gpu-mem-util FLOAT      GPU memory utilization [default: 0.90]
   --max-model-len N         Override max model length
@@ -124,6 +126,7 @@ while [[ $# -gt 0 ]]; do
         --roctracer-max-events) ROCTRACER_MAX_EVENTS="$2"; shift 2 ;;
         --flush-timeout)    FLUSH_TIMEOUT="$2"; shift 2 ;;
         --layer)            LAYER="$2"; shift 2 ;;
+        --ep)               EXPERT_PARALLEL="true"; shift 1 ;;
         -h|--help)          usage ;;
         *)                  echo "Unknown arg: $1"; exit 1 ;;
     esac
@@ -363,7 +366,11 @@ if [[ -n "$ROCTRACER_MAX_EVENTS" ]]; then
 fi
 
 # Step 2: Start ATOM server with profiling enabled
-log "Starting ATOM server (TP=$TP, profiler enabled)..."
+EP_ARGS=()
+if [[ "$EXPERT_PARALLEL" == "true" ]]; then
+    EP_ARGS+=(--enable-expert-parallel)
+fi
+log "Starting ATOM server (TP=$TP, EP=$EXPERT_PARALLEL, profiler enabled)..."
 
 python3 -m atom.entrypoints.openai_server \
     --model "$MODEL" \
@@ -374,7 +381,9 @@ python3 -m atom.entrypoints.openai_server \
     --gpu-memory-utilization "$GPU_MEM_UTIL" \
     --kv_cache_dtype "$KV_CACHE_DTYPE" \
     --torch-profiler-dir "$TRACE_DIR" \
-    --mark-trace > "$RESULT_DIR/server_${TAG}.log" 2>&1 &
+    --mark-trace \
+    "${EP_ARGS[@]}" \
+    > "$RESULT_DIR/server_${TAG}.log" 2>&1 &
 SERVER_PID=$!
 log "Server PID: $SERVER_PID"
 

@@ -54,6 +54,7 @@ SCENARIO_FILTER="all"        # all | chat | reasoning | summarize
 CONC_FILTER=""               # empty = use default sweep; "128" or "4 128 256" = specific values
 MAX_MODEL_LEN_OVERRIDE=""    # optional: override computed max_model_len
 SERVER_PORT=8000             # ATOM API server port (--server-port)
+EXPERT_PARALLEL="false"      # --enable-expert-parallel for ATOM MoE
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -65,6 +66,7 @@ while [[ $# -gt 0 ]]; do
         --port)              SERVER_PORT="$2"; shift 2 ;;
         --result-dir)        RESULT_DIR="$2"; shift 2 ;;
         --tp)                TP="$2"; shift 2 ;;
+        --ep)                EXPERT_PARALLEL="true"; shift 1 ;;
         --scenario)          SCENARIO_FILTER="$2"; shift 2 ;;
         --concurrency)       CONC_FILTER="$2"; shift 2 ;;
         --max-model-len)     MAX_MODEL_LEN_OVERRIDE="$2"; shift 2 ;;
@@ -80,6 +82,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --port PORT             ATOM API server port (default: 8000)"
             echo "  --result-dir DIR        Results directory (default: ./results_mi355x)"
             echo "  --tp N                  Tensor parallelism (default: 8)"
+            echo "  --ep                    Enable expert parallelism (--enable-expert-parallel)"
             echo "  --max-model-len N       Override max model length"
             echo ""
             echo "Filtering (run a subset):"
@@ -371,6 +374,11 @@ run_single_point() {
         )
     fi
 
+    # Expert parallelism for MoE models
+    if [[ "$EXPERT_PARALLEL" == "true" ]]; then
+        serve_args+=(--enable-expert-parallel)
+    fi
+
     # ROCm-specific env vars
     export NCCL_SOCKET_IFNAME=lo
     export VLLM_USE_TRITON_FLASH_ATTN=0
@@ -394,8 +402,9 @@ run_single_point() {
 
         local num_prompts=$(( conc * 10 ))
         [[ $num_prompts -lt 20 ]] && num_prompts=20
+        local num_warmups=$(( conc * 2 ))
 
-        log "  Running benchmark: ISL=$isl, OSL=$osl, CONC=$conc, NUM_PROMPTS=$num_prompts"
+        log "  Running benchmark: ISL=$isl, OSL=$osl, CONC=$conc, NUM_PROMPTS=$num_prompts, WARMUPS=$num_warmups"
 
         # Capture ATOM and aiter versions
         local atom_version aiter_version
@@ -413,6 +422,7 @@ run_single_point() {
             --random-range-ratio "$RANDOM_RANGE_RATIO"
             --num-prompts "$num_prompts"
             --max-concurrency "$conc"
+            --num-warmups "$num_warmups"
             --request-rate inf
             --ignore-eos
             --save-result
@@ -425,6 +435,7 @@ run_single_point() {
                 "enforce_eager=$ENFORCE_EAGER"
                 "kv_cache_dtype=fp8"
                 "tensor_parallel_size=$TP"
+                "expert_parallel=$EXPERT_PARALLEL"
                 "max_num_seqs=$MAX_NUM_SEQS"
                 "mtp_layers=$MTP_LAYERS"
                 "random_range_ratio=$RANDOM_RANGE_RATIO"
