@@ -34,8 +34,11 @@ jobs:
 
       - name: Check model paths
         run: |
-          echo "=== /data models ==="
-          podman exec $CONTAINER ls /data/ 2>/dev/null | grep -i deep || echo "No DeepSeek in /data"
+          echo "=== /shared/data/amd_int models ==="
+          podman exec $CONTAINER ls /shared/data/amd_int/ 2>/dev/null | head -20
+          echo ""
+          echo "=== DeepSeek models ==="
+          podman exec $CONTAINER find /shared/data/amd_int -maxdepth 2 -name "config.json" 2>/dev/null | head -10
           echo ""
           echo "=== Repo scripts ==="
           podman exec $CONTAINER ls $REPO/scripts/sa_bench_mi355x.sh 2>/dev/null && echo "sa_bench_mi355x.sh found" || echo "Script not found in container"
