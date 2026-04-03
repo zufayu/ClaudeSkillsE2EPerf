@@ -1,0 +1,74 @@
+name: Setup B200 Node
+
+on:
+  workflow_dispatch:
+    inputs:
+      node:
+        description: 'GPU node to setup'
+        type: choice
+        options:
+          - hungry-hippo-fin-03-2
+          - hungry-hippo-fin-03-7
+          - hungry-hippo-fin-03-1
+          - hungry-hippo-fin-03-3
+        default: hungry-hippo-fin-03-2
+
+jobs:
+  setup:
+    runs-on: [self-hosted, b200]
+    env:
+      NODE: ${{ inputs.node }}
+      REPO_DIR: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
+      CONTAINER: trtllm-b200
+      IMAGE: nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post2
+    steps:
+      - name: Clone repo on jumphost
+        run: |
+          if [ -d "$REPO_DIR/.git" ]; then
+            echo "Repo exists, pulling latest..."
+            cd "$REPO_DIR" && git pull
+          else
+            echo "Cloning repo..."
+            mkdir -p /home/ubuntu/zufa
+            git clone https://github.com/zufayu/ClaudeSkillsE2EPerf.git "$REPO_DIR"
+          fi
+          echo "Repo ready at $REPO_DIR"
+          ls "$REPO_DIR/scripts/" | head -10
+
+      - name: Check repo visible from GPU node
+        run: |
+          ssh $NODE "ls $REPO_DIR/scripts/ 2>/dev/null | head -5" && echo "Repo shared via NFS" || echo "WARNING: repo NOT visible from GPU node"
+
+      - name: Pull Docker image on GPU node
+        run: |
+          ssh $NODE "docker pull $IMAGE"
+
+      - name: Start container on GPU node
+        run: |
+          ssh $NODE "
+            if docker ps --format '{{.Names}}' | grep -q '^${CONTAINER}$'; then
+              echo 'Container already running'
+            else
+              docker rm -f ${CONTAINER} 2>/dev/null || true
+              docker run -d --name ${CONTAINER} --gpus all --ipc host \
+                --ulimit memlock=-1 --ulimit stack=67108864 \
+                -v /home:/home -v /mnt:/mnt -v /data:/data \
+                --shm-size=64g -p 8000:8000 --cap-add=SYS_PTRACE \
+                ${IMAGE} sleep infinity
+              echo 'Container started'
+            fi
+          "
+
+      - name: Verify GPU + paths inside container
+        run: |
+          echo "=== GPU ==="
+          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader"
+          echo "=== TRT-LLM version ==="
+          ssh $NODE "docker exec $CONTAINER python3 -c 'import tensorrt_llm; print(tensorrt_llm.__version__)'" 2>/dev/null || echo "version check skipped"
+          echo "=== Repo inside container ==="
+          ssh $NODE "docker exec $CONTAINER ls $REPO_DIR/scripts/ 2>/dev/null | head -5" || echo "Repo NOT visible inside container"
+          echo "=== Model paths ==="
+          ssh $NODE "docker exec $CONTAINER bash -c 'ls /home/models/ 2>/dev/null; ls /data/models/ 2>/dev/null; ls /mnt/models/ 2>/dev/null'" || echo "No model dir found"
+          echo "=== Node: $NODE ==="
+          echo "=== Container: $CONTAINER ==="
+          echo "=== DONE ==="
