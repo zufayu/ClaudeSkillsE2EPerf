@@ -1,0 +1,53 @@
+name: MI355X Save Results + Trace Breakdown
+on:
+  workflow_dispatch: {}
+jobs:
+  save-results:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 10
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+    steps:
+      - name: List result files
+        run: |
+          for dir in results_mi355x_mxfp4_mtp0_ep8_tp8 results_mi355x_mxfp4_mtp0_ep8_tp8_trace results_mi355x_mxfp4_mtp0_ep1_tp4; do
+            echo "=== $dir ==="
+            podman exec $CONTAINER find $REPO/$dir -type f 2>/dev/null | sort || echo "Not found"
+            echo ""
+          done
+
+      - name: Git add non-json files and commit
+        run: |
+          cd $REPO
+          git config user.email "ci@github.com"
+          git config user.name "MI355X CI"
+          git checkout -- . 2>/dev/null || true
+          git pull --rebase
+          for dir in results_mi355x_mxfp4_mtp0_ep8_tp8 results_mi355x_mxfp4_mtp0_ep8_tp8_trace results_mi355x_mxfp4_mtp0_ep1_tp4; do
+            if [ -d "$dir" ]; then
+              find "$dir" -type f \( -name '*.log' -o -name '*.csv' -o -name '*.xlsx' -o -name '*.txt' \) -exec git add {} +
+              echo "Added files from $dir"
+            fi
+          done
+          echo "=== Staged files ==="
+          git diff --cached --name-only
+          if git diff --cached --quiet; then
+            echo "No new files to commit"
+          else
+            git commit -m "data: save MI355X TP8+EP results (logs, csv, xlsx)
+
+Bench (TP=8+EP chat c=64) + Trace (bs=64 decode breakdown) + Old TP=4 EP=1 data.
+Excludes .json files per user request.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+            git push
+          fi
+
+      - name: Show committed result files
+        if: always()
+        run: |
+          cd $REPO
+          git log --oneline -3
+          echo ""
+          git ls-files 'results_mi355x_*' | head -50
