@@ -1,0 +1,49 @@
+name: Test MI355X Runner
+on:
+  workflow_dispatch:
+jobs:
+  smoke-test:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 10
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+    steps:
+      - name: Git pull repo
+        run: |
+          git -C $REPO reset HEAD -- . 2>/dev/null || true
+          git -C $REPO checkout -- . 2>/dev/null || true
+          git -C $REPO clean -fd 2>/dev/null || true
+          git -C $REPO pull
+          echo "=== Latest commit ==="
+          git -C $REPO log --oneline -3
+
+      - name: Check podman container
+        run: |
+          echo "=== Podman containers ==="
+          podman ps --format "{{.Names}} {{.Image}} {{.Status}}"
+          echo ""
+          echo "=== Check zufa_atom ==="
+          podman exec $CONTAINER echo "Container is alive"
+
+      - name: Check GPUs (rocm-smi)
+        run: podman exec $CONTAINER rocm-smi --showproductname 2>/dev/null || podman exec $CONTAINER rocm-smi
+
+      - name: Check ATOM installation
+        run: podman exec $CONTAINER python3 -c "import atom; print('ATOM version:', atom.__version__)" 2>/dev/null || podman exec $CONTAINER pip show atom 2>/dev/null || echo "ATOM not detected via pip"
+
+      - name: Check model paths
+        run: |
+          echo "=== /data models ==="
+          podman exec $CONTAINER ls /data/ 2>/dev/null | grep -i deep || echo "No DeepSeek in /data"
+          echo ""
+          echo "=== Repo scripts ==="
+          podman exec $CONTAINER ls $REPO/scripts/sa_bench_mi355x.sh 2>/dev/null && echo "sa_bench_mi355x.sh found" || echo "Script not found in container"
+
+      - name: List existing MI355X results
+        run: |
+          for d in $REPO/results_mi355x*; do
+            [ -d "$d" ] || continue
+            echo "=== $(basename $d) ==="
+            ls "$d"/*.json 2>/dev/null | wc -l | xargs -I{} echo "  {} result files"
+          done
