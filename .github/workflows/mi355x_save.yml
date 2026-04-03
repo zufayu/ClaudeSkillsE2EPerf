@@ -1,4 +1,4 @@
-name: MI355X Save Results + Trace Breakdown
+name: MI355X Save Results
 on:
   push:
     paths:
