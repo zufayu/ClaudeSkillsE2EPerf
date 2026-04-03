@@ -1,6 +1,6 @@
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
-> **Last updated:** 2026-04-01 v19
+> **Last updated:** 2026-04-03 v20
 > **Model:** DeepSeek-R1-0528-NVFP4-v2, FP4
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
 > **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅
@@ -95,6 +95,60 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 >                                            ↑ qkv_a 多跑 ~9.5μs
 > 关键路径 = max(33.1, 42.6) = 42.6μs，moefinalize 完全隐藏
 > ```
+
+### 跨平台对齐算子表（37 行，按逻辑功能对齐）
+
+> **数据来源：** B200 nsys trace 10 层平均 / MI355X Kineto trace 全层平均 / kernel-pairs-corrected.tsv
+> **对齐原则：** 按逻辑功能（非执行时序）逐行对齐，同一行的 B200 和 MI355X kernel 做同一件事。一端独有的算子另一端留空。
+> **GAP(B-M)：** 正值 = B200 更慢，负值 = MI355X 更慢
+
+| block | ID | 逻辑算子 | B200 kernel | B200 μs | MI355X module | MI355X kernel | MI355X μs | GAP(B-M) | 备注 |
+|-------|-----|---------|-------------|---------|---------------|---------------|-----------|----------|------|
+| pre_attn_comm | 1 | TP_AR+residual+RMSNorm(融合) | moefinalize_lamport | 33.11 | | | 0 | 33.11 | B200独有:EP_AR+加权求和+residual+pre-attn_RMSNorm全融合;与下行qkv_a并行 |
+| pre_attn_comm | 2 | TP_reduce_scatter | | 0 | input_layernorm | reduce_scatter_cross_device_store | 18.28 | -18.28 | MI355X独有:TP=4 xGMI通信第一步 |
+| pre_attn_comm | 3 | local_load+RMSNorm | | 0 | input_layernorm | local_device_load_rmsnorm | 6.80 | -6.80 | MI355X独有:通信第二步+RMSNorm |
+| qkv_proj | 4 | per_token_quant(BF16→FP8) | | 0 | per_token_quant_hip | dynamic_per_token_scaled_quant | 5.72 | -5.72 | MI355X独有:qkv_a走FP8需先量化输入 |
+| qkv_proj | 5 | qkv_a_proj_GEMM | nvjet_splitK_TNT | 25.12 | gemm_a8w8_bpreshuffle | gemm_xdl_preshuffle | 11.00 | 14.12 | 同一GEMM[64x7168]x[7168x2112];B200=BF16 MI355X=FP8 |
+| qkv_proj | 6 | qkv_a_splitK_reduce | splitKreduce(bf16) | 3.68 | | | 0 | 3.68 | B200独有:cuBLAS splitK第二步;MI355X的CK单kernel完成 |
+| qkv_proj | 7 | q_norm(RMSNorm) | RMSNormKernel | 2.64 | | | 0 | 2.64 | B200独有:MI355X融入Row9的fused_rms |
+| qkv_proj | 8 | k_norm(RMSNorm) | RMSNormKernel(Stream8907) | 2.48 | | | 0 | 2.48 | B200独有:另一stream并行;MI355X融入Row9 |
+| qkv_proj | 9 | fused_RMS+FP8_group_quant | | 0 | _fused_rms_fp8_group_quant | fused_rms_fp8_group_quant_kernel | 5.52 | -5.52 | MI355X独有:融合q/k_norm+FP8量化;对标B200 Row7+8(5.12us) |
+| qkv_proj | 10 | q_b_proj_GEMM | nvjet_tst_TNN | 5.65 | q_proj_and_k_up_proj | gemm_xdl_preshuffle | 7.12 | -1.47 | 同一GEMM[64x1536]x[1536x3072/TP];Q展开 |
+| qkv_proj | 11 | k_concat | CatArrayBatchedCopy | 4.89 | | | 0 | 4.89 | B200独有:K拼接RoPE部分;MI355X可能融入rope_kernel |
+| qkv_proj | 12 | uk_gemm(K_expansion) | nvjet_tst_TNT | 3.76 | q_proj_and_k_up_proj | batched_gemm_a8w8_quant | 5.88 | -2.12 | 同一GEMM[64x512]x[512x2048/TP];kv_a→K_heads |
+| rope_attn | 13 | RoPE+KV_cache_write | applyMLARopeAndAssignQKV | 3.46 | rope_and_kv_cache | fuse_qk_rope_concat_and_cache_mla | 5.20 | -1.74 | 两者都是融合kernel;MI355X额外含concat |
+| rope_attn | 14 | Attention(FMHA/MLA) | fmhaSm100f(含reduce) | 20.67 | mla_decode | mla_a8w8_qh16_qseqlen1 | 24.08 | -3.41 | Q×KT→softmax→×V;B200单kernel含reduce;MI355X TP=4读2x_KV_cache |
+| rope_attn | 15 | MLA_reduce | | 0 | mla_decode | kn_mla_reduce_v1_ps | 6.72 | -6.72 | MI355X独有:多头reduce;B200已融入fmhaSm100f |
+| out_proj | 16 | uv_gemm(V_expansion) | nvjet_tst | 3.74 | v_up_proj_and_o_proj | batched_gemm_a8w8_quant | 6.64 | -2.90 | 同一GEMM[64x512]x[512x2048/TP];kv_a→V_heads |
+| out_proj | 17 | o_proj_quant | quantize_with_block_size(FP4) | 2.46 | v_up_proj_and_o_proj | dynamic_per_token_scaled_quant(FP8) | 5.40 | -2.94 | B200=block-scale BF16→FP4;MI355X=per-token BF16→FP8 |
+| out_proj | 18 | o_proj_GEMM | nvjet_ootst_FP4 | 6.13 | v_up_proj_and_o_proj | gemm_xdl_preshuffle(FP8) | 13.48 | -7.35 | 同一GEMM[64x2048]x[2048x7168/TP];MI355X效率极低3.4%BW |
+| post_attn | 19 | TP_AR+residual+RMSNorm | userbuffers_rmsnorm(融合) | 15.15 | post_attn_layernorm | reduce_scatter_cross_device_store | 19.76 | -4.61 | 同一功能:post-attn TP通信+pre-MoE_RMSNorm |
+| post_attn | 20 | local_load+RMSNorm(step2) | | 0 | post_attn_layernorm | local_device_load_rmsnorm | 5.24 | -5.24 | MI355X独有第二步;B200已融入Row19 |
+| post_attn | 21 | residual_AllGather(EP) | userbuffers_allgather | 9.74 | | | 0 | 9.74 | B200独有:EP=8分片后需AG恢复完整residual;MI355X EP=1无需 |
+| router | 22 | router_GEMM | nvjet_tss_splitK | 5.42 | gemm_a16w16 | bf16gemm_splitk | 9.24 | -3.82 | router GEMM[64x7168]x[7168x256]BF16;MI355X shared_expert融入MoeMxGemm |
+| router | 23 | router_splitK_reduce | splitKreduce(fp32) | 2.73 | | | 0 | 2.73 | B200独有:MI355X的CK内含或无独立reduce |
+| router | 24 | MoE_gate_up_quant | quantize_with_block_size | 2.93 | | | 0 | 2.93 | B200独有:BF16→FP4量化;MI355X融入Row28的fused_quant_sort |
+| router | 25 | TopK_select | routingMainKernel | 4.30 | mxfp4_moe | grouped_topk_opt_sort | 5.16 | -0.86 | 从256expert选top-8;数据量极小Kernel-Lat |
+| router | 26 | expert_sort(phase1) | routingIndicesCluster | 5.12 | mxfp4_moe | MoeSorting_P0_v2 | 5.20 | -0.08 | 按expert_ID分组排序 |
+| router | 27 | expert_sort(phase2+3) | | 0 | mxfp4_moe | MoeSorting_P23 | 5.20 | -5.20 | MI355X独有:3-phase_sort多一个阶段 |
+| moe_expert | 28 | gate_up_quant+sort(融合) | | 0 | mxfp4_moe | fused_mxfp4_quant_moe_sort | 9.44 | -9.44 | MI355X独有:BF16→MXFP4量化+排序融合;对标B200 Row24 |
+| moe_expert | 29 | gate_up_GEMM(+SwiGLU) | bmm_E2m1(FP4含SwiGLU) | 59.55 | mxfp4_moe | kernel_moe_mxgemm_2lds | 123.60 | -64.05 | 核心MoE;2.07x=per-GPU权重2x(4vs8GPU);两者~95%BW |
+| moe_expert | 30 | down_quant+sort(融合) | | 0 | mxfp4_moe | fused_mxfp4_quant_moe_sort | 5.12 | -5.12 | MI355X独有:第二次quant+sort融合 |
+| moe_expert | 31 | down_GEMM | bmm_Bfloat16(FP4→BF16) | 32.77 | mxfp4_moe | kernel_moe_mxgemm_2lds(atomic) | 61.48 | -28.71 | 1.88x≈per-GPU权重2x;MI355X用atomic_add |
+| shared_exp | 32 | shared_gate_up_quant | quantize_with_block_size | 3.75 | | | 0 | 3.75 | B200独有:MI355X shared_expert融入Row29+31的MoeMxGemm |
+| shared_exp | 33 | shared_gate_up_GEMM | nvjet_ootst_FP4 | 10.03 | | | 0 | 10.03 | B200独有:MI355X作为always-active expert编入grouped_GEMM |
+| shared_exp | 34 | SiLU×Mul | silu_and_mul_kernel | 1.64 | | | 0 | 1.64 | B200独有:MI355X SwiGLU融入MoeMxGemm epilogue |
+| shared_exp | 35 | shared_down_quant | quantize_with_block_size | 2.17 | | | 0 | 2.17 | B200独有:MI355X融入MoeMxGemm |
+| shared_exp | 36 | shared_down_GEMM | nvjet_ootst_FP4 | 3.81 | | | 0 | 3.81 | B200独有:MI355X融入MoeMxGemm |
+| moe_finalize | 37 | moe_finalize(=Row1) | moefinalize_lamport | (=Row1) | | | 0 | 0 | 同Row1:层尾=下一层层首;仅计一次不重复 |
+| | | | **B200_SUM** | **276.91** | | **MI355X_SUM** | **371.26** | **-94.35** | |
+
+**对齐表关键发现：**
+- **Row 1 moefinalize_lamport** 融合了 EP AllReduce + 加权求和 + residual add + pre-attn RMSNorm，是层尾=下一层层首的跨层融合 kernel，与下一行 qkv_a 并行执行（关键路径被 qkv_a 遮盖）
+- **MI355X 无独立 shared_expert kernel**（Row 32-36 全空），shared expert 作为 always-active expert 编入 MoeMxGemm grouped GEMM
+- **MI355X gemm_a16w16 (Row 22, 9.24μs) = router GEMM**，非 shared expert（执行顺序在 topK 之前，权重/时间分析确认）
+- **MoE sparse GEMM (Row 29+31)** 差距 92.76μs，其中 ~95% 来自 GPU 数差异（4 vs 8 GPU → per-GPU 权重 2x），两平台 HBM BW 利用率均 ~95%
+- **总差距 94.35μs**：MoE GEMM 贡献 92.76μs (98%)，通信+Norm 贡献 ~25μs，被 B200 qkv_a BF16 劣势（-14μs）和 shared expert 劣势（-21μs）部分抵消
 
 ## MI355X TPOT 25ms 来源分析
 
@@ -296,6 +350,7 @@ bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-03 v20 | **跨平台对齐算子表。** 新增 37 行按逻辑功能对齐的 B200 vs MI355X kernel 对比表。关键修正：(1) moefinalize_lamport 融合 EP_AR+residual+pre-attn_RMSNorm（跨层融合）；(2) gemm_a16w16=router GEMM 非 shared_expert；(3) MI355X shared_expert 融入 MoeMxGemm grouped GEMM。总差距 94.35μs 中 MoE GEMM 贡献 98%（GPU 数 4vs8 差异）|
 | 2026-04-01 v19 | **MI355X bs=64 kernel breakdown 修正。** v18 的 L1 kernel 数据（165.7μs）系 parse_trace.py 取了 bs=1 decode 事件。用 `run_parse_trace.py --target-bs 64` 重新生成，正确值 344.0μs/层。L1→L2 overhead 从 53% 降至 2.7%（344×61=21.0ms ≈ 实测 21.6ms）。MoE 从 44.8μs→188.0μs 变为绝对主导（55%）。删除 53% overhead 的错误推测（HIP Graph overhead、missing kernels）|
 | 2026-04-01 v18 | **MI355X TPOT 25ms 来源分析完成。** 建立三层时间栈模型（L1→L2→L3）。L2→L3 gap: prefill interleaving 导致约 4.3% 的 decode step 被打断（~85ms vs 正常 ~22ms），BS-weighted avg 重建 25.3ms ≈ benchmark 24.9ms。说明跨平台算子对比的 TP/EP 局限性 |
 | 2026-03-30 v17 | **MI355X 配置对齐复测完成。** 对齐 SA CI 配置（max-model-len=2248, enforce_eager=false, gpu_memory_util=0.90）。ATOM 0.1.3.dev1 + aiter v0.1.12。Output TPS/GPU=624.9 vs CI 600.7 (+4.0%)，Interactivity=40.09 vs 38.55 (+4.0%)。此前 v16 结果偏差大（-56%）系配置未对齐所致。修正对标数据表和环境对比表 |
