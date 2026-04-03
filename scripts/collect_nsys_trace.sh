@@ -514,6 +514,7 @@ run_serve_mode() {
     local num_prompts=$(( CONCURRENCY * 10 ))
     [[ $num_prompts -lt 20 ]] && num_prompts=20
 
+    local warmups=$(( CONCURRENCY * 2 ))
     local bench_args=(
         --model "$MODEL"
         --port "$PORT"
@@ -523,9 +524,19 @@ run_serve_mode() {
         --random-range-ratio 0.8
         --num-prompts "$num_prompts"
         --max-concurrency "$CONCURRENCY"
-        --num-warmups 0
+        --num-warmups "$warmups"
         --result-filename "nsys_serving_${TAG}"
         --result-dir "$TRACE_DIR"
+        --metadata
+            "max_seq_len=$MAX_SEQ_LEN"
+            "max_num_tokens=$MAX_NUM_TOKENS"
+            "tensor_parallel_size=$TP"
+            "ep_size=$EP"
+            "dp_attention=$DP"
+            "quant=$QUANT"
+            "config=$CONFIG"
+            "mtp_layers=$MTP_LAYERS"
+            "iter_range=$ITER_RANGE"
     )
 
     log "Running benchmark_serving..."
@@ -565,3 +576,41 @@ log "============================================================"
 log "  TRACE CAPTURE COMPLETE"
 log "  Output: $TRACE_DIR/${TAG}.nsys-rep"
 log "============================================================"
+
+# Generate summary.md from result JSONs (if serve mode produced them)
+SUMMARY_FILE="$TRACE_DIR/summary.md"
+HAS_RESULTS=false
+for f in "$TRACE_DIR"/nsys_serving_*.json; do
+    [[ -f "$f" ]] && HAS_RESULTS=true && break
+done
+if [[ "$HAS_RESULTS" == "true" ]]; then
+    cat > "$SUMMARY_FILE" << 'HEADER'
+# Nsys Profiling Results (TRT-LLM)
+## B200 8×GPU
+
+| Mode | Quant | Scenario | EP | CONC | Total Tput | Output Tput | TPOT (ms) | TTFT (ms) |
+|------|-------|----------|----|------|------------|-------------|-----------|-----------|
+HEADER
+
+    for f in "$TRACE_DIR"/nsys_serving_*.json; do
+        [[ -f "$f" ]] || continue
+        python3 -c "
+import json, sys, os
+try:
+    with open('$f') as fh:
+        data = json.load(fh)
+    out_tps = data.get('output_throughput', 0)
+    in_tps = data.get('input_throughput', 0)
+    total_tps = data.get('total_token_throughput', in_tps + out_tps)
+    ttft_p50 = data.get('ttft_p50', data.get('median_ttft_ms', 0))
+    tpot_p50 = data.get('tpot_p50', data.get('median_tpot_ms', 0))
+    ep = data.get('ep_size', '$EP')
+    print(f'| profiling | $QUANT | $SCENARIO | {ep} | $CONCURRENCY | {total_tps:.1f} | {out_tps:.1f} | {tpot_p50:.1f} | {ttft_p50:.1f} |')
+except Exception as e:
+    print(f'| ERROR | - | - | - | - | - | - | - | {e} |', file=sys.stderr)
+" >> "$SUMMARY_FILE" 2>/dev/null || true
+    done
+
+    log "Summary written to: $SUMMARY_FILE"
+    cat "$SUMMARY_FILE"
+fi
