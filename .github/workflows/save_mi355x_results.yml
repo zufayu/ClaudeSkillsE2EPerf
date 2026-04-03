@@ -1,6 +1,6 @@
 name: MI355X Save Results to Git
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
 jobs:
   save-results:
     runs-on: [self-hosted, mi355x]
