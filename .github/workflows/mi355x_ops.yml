@@ -1,5 +1,7 @@
 name: MI355X Ops
 on:
+  repository_dispatch:
+    types: [mi355x-ops]
   workflow_dispatch:
     inputs:
       task:
