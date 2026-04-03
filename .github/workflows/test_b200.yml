@@ -19,126 +19,21 @@ jobs:
           git -C $SFS_REPO log --oneline -3
 
       - name: Analyze existing server logs for prefill interleaving
+        run: python3 $SFS_REPO/scripts/analyze_iter_logs.py $SFS_REPO
+
+      - name: List FP4 server logs
         run: |
-          echo "============================================================"
-          echo "  Prefill Interleaving Analysis from Server Iter Logs"
-          echo "============================================================"
-          echo ""
-
-          # Find all full (non-trimmed) server logs on SFS
-          for DIR in $SFS_REPO/results_b200_*/; do
-            DIRNAME=$(basename "$DIR")
-            for LOG in "$DIR"/server_*.log; do
-              [ -f "$LOG" ] || continue
-              # Skip trimmed logs
-              echo "$LOG" | grep -q "trimmed" && continue
-
-              BASENAME=$(basename "$LOG" .log)
-              LINES=$(wc -l < "$LOG")
-              [ "$LINES" -lt 100 ] && continue
-
-              echo "=== $DIRNAME / $BASENAME ($LINES lines) ==="
-
-              # Count iterations with ctx (prefill) vs generation (decode)
-              # Also detect mixed (both > 0)
-              python3 -c "
-import re, sys
-prefill_only = 0
-decode_only = 0
-mixed = 0
-empty = 0
-prefill_tokens_list = []
-gen_tokens_list = []
-step_times_prefill = []
-step_times_decode = []
-
-with open('$LOG') as f:
-    for line in f:
-        m = re.search(r\"num_ctx_requests': (\d+), 'num_ctx_tokens': (\d+), 'num_generation_tokens': (\d+)\", line)
-        if not m:
-            continue
-        ctx_req = int(m.group(1))
-        ctx_tok = int(m.group(2))
-        gen_tok = int(m.group(3))
-
-        tm = re.search(r'host_step_time = ([\d.]+)', line)
-        step_ms = float(tm.group(1)) if tm else 0
-
-        if ctx_req > 0 and gen_tok > 0:
-            mixed += 1
-        elif ctx_req > 0:
-            prefill_only += 1
-            prefill_tokens_list.append(ctx_tok)
-            step_times_prefill.append(step_ms)
-        elif gen_tok > 0:
-            decode_only += 1
-            gen_tokens_list.append(gen_tok)
-            step_times_decode.append(step_ms)
-        else:
-            empty += 1
-
-total = prefill_only + decode_only + mixed + empty
-if total == 0:
-    print('  No iter data found')
-    sys.exit(0)
-
-print(f'  Total iters:    {total}')
-print(f'  Pure prefill:   {prefill_only} ({prefill_only/total*100:.1f}%)')
-print(f'  Pure decode:    {decode_only} ({decode_only/total*100:.1f}%)')
-print(f'  Mixed (overlap):{mixed} ({mixed/total*100:.1f}%)')
-print(f'  Empty:          {empty}')
-
-if step_times_decode:
-    avg_decode = sum(step_times_decode) / len(step_times_decode)
-    # Filter out cold-start steps (> 100ms)
-    steady = [t for t in step_times_decode if t < 100]
-    avg_steady = sum(steady) / len(steady) if steady else 0
-    print(f'  Decode step (all): {avg_decode:.2f}ms avg')
-    print(f'  Decode step (steady <100ms): {avg_steady:.2f}ms avg (n={len(steady)})')
-
-if step_times_prefill:
-    # Filter cold-start
-    warm = [t for t in step_times_prefill if t < 500]
-    if warm:
-        print(f'  Prefill step (warm <500ms): {sum(warm)/len(warm):.2f}ms avg (n={len(warm)})')
-
-if gen_tokens_list:
-    from collections import Counter
-    gc = Counter(gen_tokens_list)
-    top3 = gc.most_common(3)
-    print(f'  Gen tokens distribution: {top3}')
-print()
-" 2>/dev/null || echo "  Parse error"
-            done
-          done
-
-      - name: Analyze FP4 EP8 c64 server log (from SA benchmark run)
-        run: |
-          echo "============================================================"
-          echo "  Looking for FP4 server logs"
-          echo "============================================================"
-          # Check all FP4 result dirs for server logs
+          echo "=== FP4 result directories ==="
           for DIR in $SFS_REPO/results_b200*fp4* $SFS_REPO/results_b200_mtp0_fp4*; do
             [ -d "$DIR" ] || continue
-            echo "=== $(basename $DIR) ==="
-            ls -la "$DIR"/server*.log "$DIR"/*.log 2>/dev/null || echo "  No server logs"
-            echo ""
+            echo "--- $(basename $DIR) ---"
+            ls -la "$DIR"/server*.log "$DIR"/*.log 2>/dev/null || echo "  No logs"
           done
 
-          # Also check if the original SA benchmark left iter logs somewhere
-          echo "=== Check for iter log in config/result files ==="
+      - name: Show FP4 EP8 c64 benchmark results
+        run: |
           for f in $SFS_REPO/results_b200_mtp0_fp4_ep8_c64_dp0/*.json; do
             [ -f "$f" ] || continue
             echo "--- $(basename $f) ---"
-            python3 -c "
-import json
-with open('$f') as fh:
-    d = json.load(fh)
-print(f'  duration: {d.get(\"duration\", \"?\")}s')
-print(f'  completed: {d.get(\"completed\", \"?\")}')
-print(f'  mean_tpot: {d.get(\"mean_tpot_ms\", \"?\")}ms')
-print(f'  median_tpot: {d.get(\"median_tpot_ms\", \"?\")}ms')
-print(f'  mean_ttft: {d.get(\"mean_ttft_ms\", \"?\")}ms')
-print(f'  server_cmd: {d.get(\"server_cmd\", \"?\")[:120]}...')
-" 2>/dev/null
+            python3 -c "import json; d=json.load(open('$f')); print(f'  duration={d.get(\"duration\",\"?\")}s completed={d.get(\"completed\",\"?\")} mean_tpot={d.get(\"mean_tpot_ms\",\"?\")}ms mean_ttft={d.get(\"mean_ttft_ms\",\"?\")}ms')"
           done
