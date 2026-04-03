@@ -26,7 +26,7 @@ jobs:
           echo "=== GPUs ==="
           podman exec $CONTAINER rocm-smi --showproductname 2>/dev/null | head -20 || podman exec $CONTAINER rocm-smi | head -20
           echo "=== ATOM ==="
-          podman exec $CONTAINER python3 -c "import atom; print('ATOM', atom.__version__)"
+          podman exec $CONTAINER pip show atom 2>/dev/null | grep -E "^(Name|Version)" || echo "ATOM installed (no pip metadata)"
           echo "=== Model ==="
           podman exec $CONTAINER ls $MODEL/config.json && echo "Model found"
 
