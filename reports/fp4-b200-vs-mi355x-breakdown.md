@@ -50,40 +50,6 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 ## Per-Module Kernel 级分析（10 层平均）
 
-> **数据来源：** B200 nsys trace，FP4, TP=8, EP=8, DP=false, c=64，trtllm-bench 离线模式，iter 100-150
-> **统计口径：** 第 40-49 层（连续 10 层）平均值，含 min/max 波动范围
-> **算子定义：** 按逻辑功能合并 kernel（splitKreduce 合入 GEMM，quantize 合入目标 GEMM），方便跨平台对比
-> **MI355X 数据：** 见下方独立表格（TP/EP 不同，不宜逐行直接对比）
-> **moefinalize_lamport：** 已移至跨平台对齐表 Row 1（融合 EP_AR+residual+pre-attn_RMSNorm，与 qkv_a 并行，关键路径被遮盖）
-
-| # | 算子 | Type | GEMM Shape (per GPU) | 计算内容 | B200 Kernel(s) | Avg μs | % | Min | Max | 精度 |
-|---|------|------|---------------------|---------|---------------|--------|------|-----|-----|------|
-| 1 | **qkv_a_proj** | GEMM | `[bs,7168]×[7168,2112]` 不随TP split | q_a+kv_a 低秩压缩 | nvjet tst splitK + reduce | **42.6** | 17.0% | 28.5 | 69.1 | BF16×BF16 |
-| 2 | q/k_norm | Norm | — | Q、K RMSNorm ×2 | RMSNormKernel ×2 | 4.6 | 1.8% | 2.4 | 5.3 | BF16 |
-| 3 | q_b_proj | GEMM | `[bs,1536]×[1536,3072]` 128h/8=16, 16×192 | Q 展开 | nvjet tst | 5.7 | 2.3% | 5.4 | 5.8 | BF16×BF16 |
-| 4 | k_concat | Mem | — | K 拼接（RoPE 部分） | CatArrayBatchedCopy | 4.4† | 1.8% | 0.0 | 5.1 | — |
-| 5 | uk_gemm | GEMM | `[bs,512]×[512,2048]` 16×128 | kv_b K 展开 | nvjet tst | 3.8 | 1.5% | 3.6 | 4.0 | BF16×BF16 |
-| 6 | rope_cache | Mem | — | RoPE + KV cache 写入 | applyMLARopeAndAssignQKV | 3.5 | 1.4% | 3.3 | 3.6 | BF16 |
-| 7 | **fmha** | Attn | — | MLA attention | fmhaSm100f QkvE4m3 | **20.7** | 8.2% | 20.1 | 21.7 | FP8 E4M3 KV |
-| 8 | uv_gemm | GEMM | `[bs,512]×[512,2048]` 16×128 | kv_b V 投影 | nvjet tst | 3.7 | 1.5% | 3.5 | 4.1 | BF16×BF16 |
-| 9 | **out_proj** | GEMM | `[bs,2048]×[2048,7168]` + allreduce | o_proj GEMM（含 BF16→FP4 量化） | quantize + nvjet ootst | **8.6** | 3.4% | 8.4 | 8.8 | FP4×FP4 |
-| 10 | **tp_allreduce+norm** | Comm+Norm | — | TP AR + residual add + pre-MLP norm | userbuffers_rmsnorm | **15.2** | 6.1% | 13.1 | 17.3 | BF16 |
-| 11 | residual_ag | Comm | — | residual allgather | userbuffers_allgather | 9.7 | 3.9% | 9.0 | 10.1 | BF16 |
-| 12 | router | Route | `[bs,7168]×[7168,256]` splitK | Router GEMM + topK + sort | nvjet splitK + reduce + routing ×2 | 12.0 | 4.8% | 8.0 | 13.2 | BF16 |
-| 13 | **moe_gemm** | GEMM | grouped: `[7168,4096]`+`[2048,7168]` ×32exp/GPU | gate+up+SwiGLU+down（含量化） | quantize + bmm_E2m1 + bmm_BF16 | **95.3** | 37.9% | 79.4 | 104.9 | FP4×FP4 |
-| 14 | shared_expert | GEMM | `[bs,7168]×[7168,?]`+`[bs,?,7168]` 2 GEMMs | gate+up+SiLU+down（含量化×2） | quantize×2 + ootst×2 + silu | 21.4 | 8.5% | 20.9 | 21.8 | FP4×FP4 |
-
-> † k_concat 和 q/k_norm 的第二个 RMSNorm 在 Stream 8907 上执行，部分层 copy-paste 丢失，平均值略偏低。
-> **高方差算子：** qkv_a_proj（std=11.4μs）层间波动大，受 splitK 调度影响。
-
-#### 合计
-
-| 口径 | B200 μs | 说明 |
-|------|---------|------|
-| **关键路径（单层）** | **251.1** | 14 算子求和（moefinalize 与 qkv_a 并行，已被遮盖） |
-| **61 decode 层实测** | **15,600** | nsys 端到端实测 15.6ms |
-| **关键路径 × 61 估算** | **15,317** | 251.1 × 61 = 15.3ms，与实测偏差仅 2% |
-
 ### 跨平台对齐算子表（37 行，按逻辑功能对齐）
 
 > **数据来源：** B200 nsys trace 10 层平均 / MI355X Kineto trace 全层平均 / kernel-pairs-corrected.tsv
