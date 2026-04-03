@@ -20,37 +20,40 @@ jobs:
           echo "=== Latest commit ==="
           git -C $SFS_REPO log --oneline -3
 
-      - name: Find TRT-LLM container
-        id: find-container
+      - name: Find GPU node with zufa_trt container
+        id: find-node
         run: |
-          echo "=== All running containers ==="
-          docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null || true
-          CONTAINER=$(docker ps --format '{{.Names}}' --filter "ancestor=nvcr.io/nvidia/tensorrt-llm/release" 2>/dev/null | head -1)
-          if [ -z "$CONTAINER" ]; then
-            CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i -E 'trt|zufa|llm' | head -1)
+          for N in hungry-hippo-fin-03-2 hungry-hippo-fin-03-1 hungry-hippo-fin-03-3 hungry-hippo-fin-03-7; do
+            echo "Checking $N..."
+            if ssh $N "docker ps --format '{{.Names}}' | grep -q zufa_trt" 2>/dev/null; then
+              echo "Found zufa_trt on $N"
+              echo "node=$N" >> "$GITHUB_OUTPUT"
+              ssh $N "docker ps --format '{{.Names}} {{.Image}} {{.Status}}'" 2>/dev/null
+              break
+            fi
+          done
+          if ! grep -q node "$GITHUB_OUTPUT" 2>/dev/null; then
+            echo "ERROR: zufa_trt container not found on any node"
+            exit 1
           fi
-          if [ -z "$CONTAINER" ]; then
-            CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | head -1)
-          fi
-          echo "Selected container: $CONTAINER"
-          echo "container=$CONTAINER" >> "$GITHUB_OUTPUT"
 
       - name: Collect nsys trace (bench mode, FP4 chat c=64 EP=8)
+        timeout-minutes: 100
         run: |
-          CONTAINER="${{ steps.find-container.outputs.container }}"
-          echo "Using container: $CONTAINER"
-          docker exec $CONTAINER bash -c 'cd /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf && bash scripts/collect_nsys_trace.sh --model /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2 --mode bench --scenario chat --concurrency 64 --quant fp4 --config throughput --tp 8 --ep 8 --dp false --iter-range 100-150 --num-requests 200 --trace-dir ./results_b200_fp4_repro_ep8_c64/traces --skip-export'
+          NODE="${{ steps.find-node.outputs.node }}"
+          echo "Running on $NODE in zufa_trt container"
+          ssh $NODE "docker exec zufa_trt bash -c 'cd /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf && bash scripts/collect_nsys_trace.sh --model /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2 --mode bench --scenario chat --concurrency 64 --quant fp4 --config throughput --tp 8 --ep 8 --dp false --iter-range 100-150 --num-requests 200 --trace-dir ./results_b200_fp4_repro_ep8_c64/traces --skip-export'"
 
       - name: Analyze nsys trace
         run: |
-          CONTAINER="${{ steps.find-container.outputs.container }}"
-          docker exec $CONTAINER bash -c 'cd /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf && bash scripts/analyze_nsys_trace.sh --trace ./results_b200_fp4_repro_ep8_c64/traces/nsys_fp4_throughput_chat_tp8_ep8_c64_iter100-150.nsys-rep --top 30'
+          NODE="${{ steps.find-node.outputs.node }}"
+          ssh $NODE "docker exec zufa_trt bash -c 'cd /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf && bash scripts/analyze_nsys_trace.sh --trace ./results_b200_fp4_repro_ep8_c64/traces/nsys_fp4_throughput_chat_tp8_ep8_c64_iter100-150.nsys-rep --top 30'"
 
       - name: Show trace files
         if: always()
         run: |
           echo "=== Trace directory ==="
-          ls -lah $TRACE_DIR/ 2>/dev/null || echo "Trace dir not found"
+          ls -lah $TRACE_DIR/ 2>/dev/null || echo "Trace dir not found (check SFS)"
           echo ""
           echo "=== Collect log ==="
-          cat $TRACE_DIR/collect_trace_nsys_fp4_throughput_chat_tp8_ep8_c64_iter100-150.log 2>/dev/null || echo "No collect log"
+          cat $TRACE_DIR/collect_trace_nsys_fp4_throughput_chat_tp8_ep8_c64_iter100-150.log 2>/dev/null | tail -50 || echo "No collect log"
