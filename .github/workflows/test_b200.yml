@@ -37,8 +37,7 @@ jobs:
           echo "=== Local changes ==="
           git -C $SFS_REPO status --short
           echo "=== Fix permissions + reset + clean + pull ==="
-          sudo chown -R ubuntu:ubuntu $SFS_REPO/.git || true
-          sudo chown -R ubuntu:ubuntu $SFS_REPO/results_b200_mtp0_fp4_ep8_c64_dp0/ 2>/dev/null || true
+          sudo chown -R ubuntu:ubuntu $SFS_REPO || true
           git -C $SFS_REPO reset HEAD -- . 2>/dev/null || true
           git -C $SFS_REPO checkout -- . 2>/dev/null || true
           git -C $SFS_REPO clean -fd 2>/dev/null || true
