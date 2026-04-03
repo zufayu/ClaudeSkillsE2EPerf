@@ -5,20 +5,14 @@ jobs:
   test:
     runs-on: [self-hosted, b200]
     steps:
-      - name: Setup and scan
+      - name: Scan FP4 results
         run: |
           NODE=hungry-hippo-fin-03-2
-          CONTAINER=zufa_trt
-          IMAGE=nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post2
           SFS=/SFS-aGqda6ct
-          ssh $NODE "docker rm -f trtllm-b200 2>/dev/null; docker rm -f $CONTAINER 2>/dev/null; docker run -d --name $CONTAINER --gpus all --ipc host --ulimit memlock=-1 --ulimit stack=67108864 -v /home:/home -v /mnt:/mnt -v /data:/data -v $SFS:$SFS --shm-size=64g -p 8000:8000 --cap-add=SYS_PTRACE $IMAGE sleep infinity"
-          echo "=== GPU ==="
-          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader"
-          echo "=== FP4 Model ==="
-          ssh $NODE "docker exec $CONTAINER ls $SFS/models/DeepSeek-R1-0528-NVFP4-v2/ | head -10"
-          echo "=== FP4 Results ==="
-          ssh $NODE "ls -d $SFS/ubuntu/zufa/ClaudeSkillsE2EPerf/results_b200_fp4_* 2>/dev/null"
-          for d in mtp0_4gpu mtp0_ep4 mtp0_fp4_ep8_c64_dp0; do
-            echo "### results_b200_fp4_$d"
-            ssh $NODE "for f in $SFS/ubuntu/zufa/ClaudeSkillsE2EPerf/results_b200_fp4_\$d/result_*.json; do [ -f \\\"\\\$f\\\" ] && python3 -c 'import json,os,sys; r=json.load(open(sys.argv[1])); print(os.path.basename(sys.argv[1]),\"isl=\"+str(r.get(\"isl\",\"?\")),\"osl=\"+str(r.get(\"osl\",\"?\")),\"c=\"+str(r.get(\"concurrency\",\"?\")),\"ep=\"+str(r.get(\"ep_size\",\"?\")),\"mtp=\"+str(r.get(\"num_draft_tokens\",r.get(\"mtp_size\",\"?\"))),\"TPOT=\"+str(r.get(\"tpot_p50\",\"?\")),\"otps=\"+str(r.get(\"output_tps\",\"?\")))' \\\"\\\$f\\\" 2>/dev/null; done" 2>/dev/null || echo "no data"
-          done
+          BASE=$SFS/ubuntu/zufa/ClaudeSkillsE2EPerf
+          echo "=== Result dirs ==="
+          ssh $NODE "ls -d $BASE/results_b200_fp4_* $BASE/results_b200_mtp*fp4* 2>/dev/null"
+          echo "=== File counts ==="
+          ssh $NODE "for d in $BASE/results_b200_fp4_* $BASE/results_b200_mtp*fp4*; do [ -d \"\$d\" ] && echo \"\$(basename \$d): \$(ls \$d/result_*.json 2>/dev/null | wc -l) json files\"; done"
+          echo "=== Content sample ==="
+          ssh $NODE "find $BASE/results_b200_fp4_mtp0_4gpu $BASE/results_b200_fp4_mtp0_ep4 $BASE/results_b200_mtp0_fp4_ep8_c64_dp0 -name 'result_*.json' 2>/dev/null | sort | while read f; do echo '---'; echo \$(basename \$(dirname \$f))/\$(basename \$f); python3 -c 'import json,sys;r=json.load(open(sys.argv[1]));print(\"isl=%s osl=%s c=%s ep=%s mtp=%s TPOT=%s otps=%s\"%(r.get(\"isl\",\"?\"),r.get(\"osl\",\"?\"),r.get(\"concurrency\",\"?\"),r.get(\"ep_size\",\"?\"),r.get(\"num_draft_tokens\",r.get(\"mtp_size\",\"?\")),r.get(\"tpot_p50\",\"?\"),r.get(\"output_tps\",\"?\")))' \$f 2>/dev/null || cat \$f | python3 -c 'import json,sys;r=json.load(sys.stdin);ks=[k for k in r.keys()];print(\"keys:\",ks[:10])'; done"
