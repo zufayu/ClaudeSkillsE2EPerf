@@ -20,13 +20,31 @@ jobs:
           echo "=== Latest commit ==="
           git -C $SFS_REPO log --oneline -3
 
+      - name: Find TRT-LLM container
+        id: find-container
+        run: |
+          echo "=== All running containers ==="
+          docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null || true
+          CONTAINER=$(docker ps --format '{{.Names}}' --filter "ancestor=nvcr.io/nvidia/tensorrt-llm/release" 2>/dev/null | head -1)
+          if [ -z "$CONTAINER" ]; then
+            CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i -E 'trt|zufa|llm' | head -1)
+          fi
+          if [ -z "$CONTAINER" ]; then
+            CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | head -1)
+          fi
+          echo "Selected container: $CONTAINER"
+          echo "container=$CONTAINER" >> "$GITHUB_OUTPUT"
+
       - name: Collect nsys trace (bench mode, FP4 chat c=64 EP=8)
         run: |
-          docker exec zufa_trt bash -c 'cd /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf && bash scripts/collect_nsys_trace.sh --model /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2 --mode bench --scenario chat --concurrency 64 --quant fp4 --config throughput --tp 8 --ep 8 --dp false --iter-range 100-150 --num-requests 200 --trace-dir ./results_b200_fp4_repro_ep8_c64/traces --skip-export'
+          CONTAINER="${{ steps.find-container.outputs.container }}"
+          echo "Using container: $CONTAINER"
+          docker exec $CONTAINER bash -c 'cd /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf && bash scripts/collect_nsys_trace.sh --model /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2 --mode bench --scenario chat --concurrency 64 --quant fp4 --config throughput --tp 8 --ep 8 --dp false --iter-range 100-150 --num-requests 200 --trace-dir ./results_b200_fp4_repro_ep8_c64/traces --skip-export'
 
       - name: Analyze nsys trace
         run: |
-          docker exec zufa_trt bash -c 'cd /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf && bash scripts/analyze_nsys_trace.sh --trace ./results_b200_fp4_repro_ep8_c64/traces/nsys_fp4_throughput_chat_tp8_ep8_c64_iter100-150.nsys-rep --top 30'
+          CONTAINER="${{ steps.find-container.outputs.container }}"
+          docker exec $CONTAINER bash -c 'cd /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf && bash scripts/analyze_nsys_trace.sh --trace ./results_b200_fp4_repro_ep8_c64/traces/nsys_fp4_throughput_chat_tp8_ep8_c64_iter100-150.nsys-rep --top 30'
 
       - name: Show trace files
         if: always()
