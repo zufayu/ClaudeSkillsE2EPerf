@@ -1,49 +1,59 @@
-name: MI355X Read Trace Breakdown
+name: MI355X MXFP4 TP8+EP Trace + Breakdown
 on:
   workflow_dispatch:
 jobs:
-  read-breakdown:
+  mxfp4-tp8-ep-trace:
     runs-on: [self-hosted, mi355x]
-    timeout-minutes: 10
+    timeout-minutes: 120
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
       CONTAINER: zufa_atom
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8
+      TDIR: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf/results_mi355x_mxfp4_mtp0_ep8_tp8_trace
     steps:
-      - name: Git pull repo
+      - name: Git pull repo (preserve results)
         run: |
-          git -C $REPO reset HEAD -- . 2>/dev/null || true
           git -C $REPO checkout -- . 2>/dev/null || true
           git -C $REPO pull
+          echo "=== Latest commit ==="
+          git -C $REPO log --oneline -3
 
-      - name: Read decode_breakdown.xlsx
+      - name: Collect trace (chat, c=64, TP=8+EP, profile-prompts=128)
+        timeout-minutes: 90
+        run: |
+          podman exec $CONTAINER bash -c "cd $REPO && bash scripts/collect_atom_trace.sh --model $MODEL --scenario chat --concurrency 64 --tp 8 --ep --profile-prompts 128 --result-dir ./results_mi355x_mxfp4_mtp0_ep8_tp8_trace"
+
+      - name: Read decode_breakdown.xlsx as text
+        if: always()
         run: |
           podman exec $CONTAINER python3 -c "
-          import openpyxl, sys
+          import openpyxl
           for fname in ['decode_breakdown.xlsx', 'prefill_breakdown.xlsx']:
-              path = '$REPO/results_mi355x_mxfp4_mtp0_ep8_tp8_trace/' + fname
+              path = '$TDIR/' + fname
               try:
                   wb = openpyxl.load_workbook(path)
               except Exception as e:
                   print(f'=== {fname}: FAILED ({e}) ===')
                   continue
-              for sheet_name in wb.sheetnames:
-                  ws = wb[sheet_name]
-                  print(f'=== {fname} / {sheet_name} ({ws.max_row} rows x {ws.max_column} cols) ===')
+              for sn in wb.sheetnames:
+                  ws = wb[sn]
+                  print(f'=== {fname} / {sn} ({ws.max_row}r x {ws.max_column}c) ===')
                   for row in ws.iter_rows(values_only=True):
                       print('\t'.join(str(c) if c is not None else '' for c in row))
                   print()
           "
 
-      - name: Read decode walltime CSV (full)
+      - name: Decode walltime CSV + EP verification
+        if: always()
         run: |
-          podman exec $CONTAINER cat $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8_trace/decode_walltime_*.csv 2>/dev/null || echo "No CSV"
-
-      - name: Read trace script log
-        run: |
-          podman exec $CONTAINER cat $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8_trace/trace_*.log 2>/dev/null | tail -80 || echo "No log"
-
-      - name: Check EP in server log
-        run: |
-          podman exec $CONTAINER head -100 $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8_trace/server_*.log 2>/dev/null | grep -iE "(enable.expert|expert.parallel|ep_size|parallel_config|tensor_parallel|TP|EP)" | head -20 || echo "No EP info found"
-          echo "---"
-          podman exec $CONTAINER head -50 $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8_trace/server_*.log 2>/dev/null || echo "No server log"
+          echo "=== Decode walltime CSV ==="
+          podman exec $CONTAINER cat $TDIR/decode_walltime_*.csv 2>/dev/null || echo "No CSV"
+          echo ""
+          echo "=== Result files ==="
+          podman exec $CONTAINER ls -lh $TDIR/ 2>/dev/null || echo "No dir"
+          echo ""
+          echo "=== Server log head (EP check) ==="
+          podman exec $CONTAINER head -50 $TDIR/server_*.log 2>/dev/null || echo "No log"
+          echo ""
+          echo "=== Trace script log tail ==="
+          podman exec $CONTAINER tail -40 $TDIR/trace_*.log 2>/dev/null || echo "No log"
