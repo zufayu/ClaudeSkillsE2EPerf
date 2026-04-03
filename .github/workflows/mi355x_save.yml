@@ -1,6 +1,8 @@
 name: MI355X Save Results + Trace Breakdown
 on:
-  workflow_dispatch: {}
+  push:
+    paths:
+      - '.github/workflows/mi355x_save.yml'
 jobs:
   save-results:
     runs-on: [self-hosted, mi355x]
