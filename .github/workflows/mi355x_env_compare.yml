@@ -14,7 +14,7 @@ jobs:
       - name: Create zufa_atom2 from rocm/atom-dev:latest
         run: |
           podman rm -f zufa_atom2 2>/dev/null || true
-          podman pull rocm/atom-dev:latest
+          podman pull docker.io/rocm/atom-dev:latest
           podman run -dt --device=/dev/kfd --device=/dev/dri \
             -v /shared:/shared \
             --ipc=host --group-add video \
@@ -23,7 +23,7 @@ jobs:
             --ulimit memlock=-1 --ulimit stack=67108864 \
             -e ATOM_DISABLE_MMAP=true \
             --name zufa_atom2 \
-            rocm/atom-dev:latest
+            docker.io/rocm/atom-dev:latest
           echo "=== zufa_atom2 created ==="
 
       - name: Verify zufa_atom2 env
