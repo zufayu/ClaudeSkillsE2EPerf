@@ -1,14 +1,13 @@
-name: MI355X MXFP4 TP8+EP Trace
+name: MI355X Read Trace Breakdown
 on:
   workflow_dispatch:
 jobs:
-  mxfp4-tp8-ep-trace:
+  read-breakdown:
     runs-on: [self-hosted, mi355x]
-    timeout-minutes: 120
+    timeout-minutes: 10
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
       CONTAINER: zufa_atom
-      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8
     steps:
       - name: Git pull repo
         run: |
@@ -16,41 +15,36 @@ jobs:
           git -C $REPO checkout -- . 2>/dev/null || true
           git -C $REPO clean -fd 2>/dev/null || true
           git -C $REPO pull
-          echo "=== Latest commit ==="
-          git -C $REPO log --oneline -3
 
-      - name: Check environment
+      - name: Read decode_breakdown.xlsx
         run: |
-          echo "=== Podman container ==="
-          podman ps --format "{{.Names}} {{.Status}}" | grep zufa_atom
-          echo "=== GPUs ==="
-          podman exec $CONTAINER rocm-smi --showproductname 2>/dev/null | head -10 || podman exec $CONTAINER rocm-smi | head -10
-          echo "=== Model ==="
-          podman exec $CONTAINER ls $MODEL/config.json && echo "Model found"
-          echo "=== ATOM parse_trace ==="
-          podman exec $CONTAINER ls /app/ATOM/tools/parse_trace.py && echo "parse_trace.py found"
+          podman exec $CONTAINER python3 -c "
+          import openpyxl, sys
+          for fname in ['decode_breakdown.xlsx', 'prefill_breakdown.xlsx']:
+              path = '$REPO/results_mi355x_mxfp4_mtp0_ep8_tp8_trace/' + fname
+              try:
+                  wb = openpyxl.load_workbook(path)
+              except Exception as e:
+                  print(f'=== {fname}: FAILED ({e}) ===')
+                  continue
+              for sheet_name in wb.sheetnames:
+                  ws = wb[sheet_name]
+                  print(f'=== {fname} / {sheet_name} ({ws.max_row} rows x {ws.max_column} cols) ===')
+                  for row in ws.iter_rows(values_only=True):
+                      print('\t'.join(str(c) if c is not None else '' for c in row))
+                  print()
+          "
 
-      - name: Collect trace (chat, c=64, TP=8+EP, profile-prompts=128)
-        timeout-minutes: 90
+      - name: Read decode walltime CSV (full)
         run: |
-          podman exec $CONTAINER bash -c "cd $REPO && bash scripts/collect_atom_trace.sh --model $MODEL --scenario chat --concurrency 64 --tp 8 --ep --profile-prompts 128 --result-dir ./results_mi355x_mxfp4_mtp0_ep8_tp8_trace"
+          podman exec $CONTAINER cat $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8_trace/decode_walltime_*.csv 2>/dev/null || echo "No CSV"
 
-      - name: Show trace results
-        if: always()
+      - name: Read trace script log
         run: |
-          TDIR=$REPO/results_mi355x_mxfp4_mtp0_ep8_tp8_trace
-          echo "=== Result files ==="
-          podman exec $CONTAINER ls -lh $TDIR/ 2>/dev/null || echo "No results dir"
-          echo ""
-          echo "=== Decode walltime CSV ==="
-          podman exec $CONTAINER cat $TDIR/decode_walltime_*.csv 2>/dev/null | head -30 || echo "No decode CSV"
-          echo ""
-          echo "=== Kernel breakdown ==="
-          podman exec $CONTAINER cat $TDIR/decode_breakdown.xlsx 2>/dev/null && echo "(binary xlsx)" || echo "No breakdown xlsx"
-          podman exec $CONTAINER ls -lh $TDIR/*breakdown* 2>/dev/null || echo "No breakdown files"
-          echo ""
-          echo "=== Trace script log ==="
-          podman exec $CONTAINER cat $TDIR/trace_*.log 2>/dev/null | tail -60 || echo "No trace log"
-          echo ""
-          echo "=== Server log tail ==="
-          podman exec $CONTAINER tail -30 $TDIR/server_*.log 2>/dev/null || echo "No server log"
+          podman exec $CONTAINER cat $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8_trace/trace_*.log 2>/dev/null | tail -80 || echo "No log"
+
+      - name: Check EP in server log
+        run: |
+          podman exec $CONTAINER head -100 $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8_trace/server_*.log 2>/dev/null | grep -iE "(enable.expert|expert.parallel|ep_size|parallel_config|tensor_parallel|TP|EP)" | head -20 || echo "No EP info found"
+          echo "---"
+          podman exec $CONTAINER head -50 $REPO/results_mi355x_mxfp4_mtp0_ep8_tp8_trace/server_*.log 2>/dev/null || echo "No server log"
