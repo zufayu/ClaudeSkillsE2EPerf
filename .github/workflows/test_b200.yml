@@ -1,0 +1,20 @@
+name: Test B200 Runner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: [self-hosted, b200]
+    steps:
+      - name: System info
+        run: |
+          echo "=== hostname ==="
+          hostname
+          echo "=== GPU ==="
+          nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo "No GPU"
+          echo "=== disk ==="
+          df -h / | tail -1
+          echo "=== docker ==="
+          docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null | head -5 || echo "No docker"
+          echo "=== done ==="
