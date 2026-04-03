@@ -1,0 +1,46 @@
+name: MI355X Rename and Save
+on:
+  push:
+    paths:
+      - '.github/workflows/mi355x_rename.yml'
+jobs:
+  rename-save:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 10
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git pull --rebase
+
+      - name: Delete old directory
+        run: cd $REPO && rm -rf results_mi355x_mxfp4_mtp0_ep8_tp8 && echo "Deleted results_mi355x_mxfp4_mtp0_ep8_tp8"
+
+      - name: Rename trace to profiling
+        run: cd $REPO && if [ -d results_mi355x_mxfp4_mtp0_ep8_tp8_trace ]; then mv results_mi355x_mxfp4_mtp0_ep8_tp8_trace results_mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling && echo "Renamed OK"; else echo "Source dir not found, checking if already renamed" && ls -d results_mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling 2>/dev/null || echo "Neither found"; fi
+
+      - name: Git add profiling files
+        run: |
+          cd $REPO
+          git config user.email "ci@github.com"
+          git config user.name "MI355X CI"
+          DIR=results_mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling
+          if [ -d "$DIR" ]; then
+            git add -f "$DIR"/*.xlsx "$DIR"/*.csv "$DIR"/*.log "$DIR"/result_profiled_trace_*.json 2>/dev/null || true
+            echo "=== Staged files ==="
+            git diff --cached --name-only
+            if git diff --cached --quiet; then
+              echo "No new files to commit"
+            else
+              git commit -m "data: add MI355X MXFP4 TP=8 EP=8 profiling data (xlsx, csv, log, result json)
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+              git push
+            fi
+          else
+            echo "Profiling dir not found"
+          fi
+
+      - name: Show result
+        if: always()
+        run: cd $REPO && git log --oneline -3 && echo "" && ls -la results_mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling/ 2>/dev/null || echo "Dir not found"
