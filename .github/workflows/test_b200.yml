@@ -2,56 +2,37 @@ name: Test B200 Runner
 on:
   workflow_dispatch:
 jobs:
-  cleanup-and-sync:
+  nsys-profiling:
     runs-on: [self-hosted, b200]
-    timeout-minutes: 10
+    timeout-minutes: 120
     env:
       SFS_REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
-      OLD_HOME: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
-      SYMLINK_SRC: /SFS-aGqda6ct/ubuntu/zufa
-      SYMLINK_DST: /home/ubuntu/zufa
+      MODEL: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      TRACE_DIR: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf/results_b200_fp4_repro_ep8_c64/traces
     steps:
-      - name: Cleanup old repo + symlink on all nodes
-        run: |
-          for N in hungry-hippo-fin-03-2 hungry-hippo-fin-03-1 hungry-hippo-fin-03-3 hungry-hippo-fin-03-7; do
-            echo "=== $N ==="
-            ssh $N "if [ -d $OLD_HOME/.git ] && [ ! -L $SYMLINK_DST ]; then echo 'Removing old repo...'; rm -rf $SYMLINK_DST; echo 'Creating symlink $SYMLINK_DST -> $SYMLINK_SRC'; ln -s $SYMLINK_SRC $SYMLINK_DST; echo 'Done'; else echo 'Already symlinked or no old repo'; ls -la $SYMLINK_DST 2>/dev/null || echo 'path does not exist'; fi"
-            echo ""
-          done
-          echo "=== jumphost ==="
-          if [ -d $OLD_HOME/.git ] && [ ! -L $SYMLINK_DST ]; then
-            echo "Removing old repo..."
-            rm -rf $SYMLINK_DST
-            echo "Creating symlink $SYMLINK_DST -> $SYMLINK_SRC"
-            ln -s $SYMLINK_SRC $SYMLINK_DST
-            echo "Done"
-          else
-            echo "Already symlinked or no old repo"
-            ls -la $SYMLINK_DST 2>/dev/null || echo "path does not exist"
-          fi
-
       - name: Git pull SFS repo
         run: |
-          echo "=== Before pull ==="
-          git -C $SFS_REPO log --oneline -3
-          echo "=== Local changes ==="
-          git -C $SFS_REPO status --short
-          echo "=== Fix permissions + reset + clean + pull ==="
           sudo chown -R ubuntu:ubuntu $SFS_REPO || true
           git -C $SFS_REPO reset HEAD -- . 2>/dev/null || true
           git -C $SFS_REPO checkout -- . 2>/dev/null || true
           git -C $SFS_REPO clean -fd 2>/dev/null || true
           git -C $SFS_REPO pull
-          echo "=== After pull ==="
+          echo "=== Latest commit ==="
           git -C $SFS_REPO log --oneline -3
 
-      - name: Verify symlinks
+      - name: Collect nsys trace (bench mode, FP4 chat c=64 EP=8)
         run: |
-          for N in hungry-hippo-fin-03-2 hungry-hippo-fin-03-1 hungry-hippo-fin-03-3 hungry-hippo-fin-03-7; do
-            echo "=== $N ==="
-            ssh $N "ls -la /home/ubuntu/zufa && git -C /home/ubuntu/zufa/ClaudeSkillsE2EPerf log --oneline -1"
-            echo ""
-          done
-          echo "=== jumphost ==="
-          ls -la /home/ubuntu/zufa
-          git -C /home/ubuntu/zufa/ClaudeSkillsE2EPerf log --oneline -1
+          docker exec zufa_trt bash -c 'cd /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf && bash scripts/collect_nsys_trace.sh --model /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2 --mode bench --scenario chat --concurrency 64 --quant fp4 --config throughput --tp 8 --ep 8 --dp false --iter-range 100-150 --num-requests 200 --trace-dir ./results_b200_fp4_repro_ep8_c64/traces --skip-export'
+
+      - name: Analyze nsys trace
+        run: |
+          docker exec zufa_trt bash -c 'cd /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf && bash scripts/analyze_nsys_trace.sh --trace ./results_b200_fp4_repro_ep8_c64/traces/nsys_fp4_throughput_chat_tp8_ep8_c64_iter100-150.nsys-rep --top 30'
+
+      - name: Show trace files
+        if: always()
+        run: |
+          echo "=== Trace directory ==="
+          ls -lah $TRACE_DIR/ 2>/dev/null || echo "Trace dir not found"
+          echo ""
+          echo "=== Collect log ==="
+          cat $TRACE_DIR/collect_trace_nsys_fp4_throughput_chat_tp8_ep8_c64_iter100-150.log 2>/dev/null || echo "No collect log"
