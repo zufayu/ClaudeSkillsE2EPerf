@@ -150,12 +150,10 @@ esac
 # Compute defaults
 WARMUP_NUM_PROMPTS=$(( CONCURRENCY * 2 ))
 
-# Profile prompts default to warmup prompts to capture prefill-decode interleaving
-[[ -z "$PROFILE_NUM_PROMPTS" ]] && PROFILE_NUM_PROMPTS=$WARMUP_NUM_PROMPTS
+# Profile prompts default to benchmark standard: CONC * 10
+[[ -z "$PROFILE_NUM_PROMPTS" ]] && PROFILE_NUM_PROMPTS=$(( CONCURRENCY * 10 ))
 
-if [[ -z "$MAX_MODEL_LEN" ]]; then
-    MAX_MODEL_LEN=$(( ISL + OSL + 200 ))
-fi
+# If MAX_MODEL_LEN not set, let ATOM use its default (no --max-model-len passed)
 
 # ======================== Utilities ===========================================
 TS() { date '+%Y-%m-%d %H:%M:%S'; }
@@ -372,11 +370,16 @@ if [[ "$EXPERT_PARALLEL" == "true" ]]; then
 fi
 log "Starting ATOM server (TP=$TP, EP=$EXPERT_PARALLEL, profiler enabled)..."
 
+MAX_MODEL_LEN_ARGS=()
+if [[ -n "$MAX_MODEL_LEN" ]]; then
+    MAX_MODEL_LEN_ARGS+=(--max-model-len "$MAX_MODEL_LEN")
+fi
+
 python3 -m atom.entrypoints.openai_server \
     --model "$MODEL" \
     --server-port "$SERVER_PORT" \
     --tensor-parallel-size "$TP" \
-    --max-model-len "$MAX_MODEL_LEN" \
+    "${MAX_MODEL_LEN_ARGS[@]}" \
     --max-num-seqs "$MAX_NUM_SEQS" \
     --gpu-memory-utilization "$GPU_MEM_UTIL" \
     --kv_cache_dtype "$KV_CACHE_DTYPE" \

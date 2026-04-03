@@ -1,46 +1,84 @@
-name: MI355X Rename and Save
+name: MI355X Profiling
 on:
   push:
     paths:
       - '.github/workflows/mi355x_rename.yml'
 jobs:
-  rename-save:
+  profiling-ep1:
     runs-on: [self-hosted, mi355x]
-    timeout-minutes: 10
+    timeout-minutes: 120
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8
     steps:
       - name: Sync repo
-        run: cd $REPO && git stash && git pull --rebase && git stash pop 2>/dev/null || true
+        run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
 
-      - name: Delete old directory
-        run: cd $REPO && rm -rf results_mi355x_mxfp4_mtp0_ep8_tp8 && echo "Deleted results_mi355x_mxfp4_mtp0_ep8_tp8"
+      - name: Delete old EP1 profiling data
+        run: cd $REPO && rm -rf results_mi355x_dsr_mxfp4_mtp0_ep1_tp8_profiling && echo "Deleted old EP1 profiling data"
 
-      - name: Rename trace to profiling
-        run: cd $REPO && if [ -d results_mi355x_mxfp4_mtp0_ep8_tp8_trace ]; then mv results_mi355x_mxfp4_mtp0_ep8_tp8_trace results_mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling && echo "Renamed OK"; else echo "Source dir not found, checking if already renamed" && ls -d results_mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling 2>/dev/null || echo "Neither found"; fi
+      - name: Run EP1 TP8 profiling
+        run: podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/collect_atom_trace.sh --model /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 --scenario chat --concurrency 64 --tp 8 --result-dir ./results_mi355x_dsr_mxfp4_mtp0_ep1_tp8_profiling'
 
-      - name: Git add profiling files
+      - name: Save EP1 results to git
+        run: |
+          cd $REPO
+          git config user.email "ci@github.com"
+          git config user.name "MI355X CI"
+          DIR=results_mi355x_dsr_mxfp4_mtp0_ep1_tp8_profiling
+          if [ -d "$DIR" ]; then
+            git add -f "$DIR"/*.xlsx "$DIR"/*.csv "$DIR"/*.log "$DIR"/result_profiled_*.json "$DIR"/summary.md 2>/dev/null || true
+            echo "=== Staged files ==="
+            git diff --cached --name-only
+            if ! git diff --cached --quiet; then
+              git commit -m "data: MI355X MXFP4 EP=1 TP=8 profiling (chat c=64, default max_model_len)
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+              git push
+            fi
+          fi
+
+      - name: Show EP1 result
+        if: always()
+        run: cd $REPO && ls -la results_mi355x_dsr_mxfp4_mtp0_ep1_tp8_profiling/ 2>/dev/null && cat results_mi355x_dsr_mxfp4_mtp0_ep1_tp8_profiling/summary.md 2>/dev/null || echo "No results"
+
+  profiling-ep8:
+    runs-on: [self-hosted, mi355x]
+    needs: profiling-ep1
+    timeout-minutes: 120
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
+
+      - name: Delete old EP8 profiling data
+        run: cd $REPO && rm -rf results_mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling && echo "Deleted old EP8 profiling data"
+
+      - name: Run EP8 TP8 profiling
+        run: podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/collect_atom_trace.sh --model /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 --scenario chat --concurrency 64 --tp 8 --ep --result-dir ./results_mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling'
+
+      - name: Save EP8 results to git
         run: |
           cd $REPO
           git config user.email "ci@github.com"
           git config user.name "MI355X CI"
           DIR=results_mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling
           if [ -d "$DIR" ]; then
-            git add -f "$DIR"/*.xlsx "$DIR"/*.csv "$DIR"/*.log "$DIR"/result_profiled_trace_*.json 2>/dev/null || true
+            git add -f "$DIR"/*.xlsx "$DIR"/*.csv "$DIR"/*.log "$DIR"/result_profiled_*.json "$DIR"/summary.md 2>/dev/null || true
             echo "=== Staged files ==="
             git diff --cached --name-only
-            if git diff --cached --quiet; then
-              echo "No new files to commit"
-            else
-              git commit -m "data: add MI355X MXFP4 TP=8 EP=8 profiling data (xlsx, csv, log, result json)
+            if ! git diff --cached --quiet; then
+              git commit -m "data: MI355X MXFP4 EP=8 TP=8 profiling (chat c=64, default max_model_len)
 
           Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
               git push
             fi
-          else
-            echo "Profiling dir not found"
           fi
 
-      - name: Show result
+      - name: Show EP8 result
         if: always()
-        run: cd $REPO && git log --oneline -3 && echo "" && ls -la results_mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling/ 2>/dev/null || echo "Dir not found"
+        run: cd $REPO && ls -la results_mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling/ 2>/dev/null && cat results_mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling/summary.md 2>/dev/null || echo "No results"
