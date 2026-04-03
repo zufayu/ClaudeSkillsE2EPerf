@@ -36,10 +36,10 @@ jobs:
           git -C $SFS_REPO log --oneline -3
           echo "=== Local changes ==="
           git -C $SFS_REPO status --short
-          echo "=== Stash + pull ==="
-          git -C $SFS_REPO stash || true
+          echo "=== Reset + pull ==="
+          git -C $SFS_REPO reset HEAD -- . 2>/dev/null || true
+          git -C $SFS_REPO checkout -- . 2>/dev/null || true
           git -C $SFS_REPO pull
-          git -C $SFS_REPO stash pop || true
           echo "=== After pull ==="
           git -C $SFS_REPO log --oneline -3
 
