@@ -34,9 +34,12 @@ jobs:
         run: |
           echo "=== Before pull ==="
           git -C $SFS_REPO log --oneline -3
-          echo ""
+          echo "=== Local changes ==="
+          git -C $SFS_REPO status --short
+          echo "=== Stash + pull ==="
+          git -C $SFS_REPO stash || true
           git -C $SFS_REPO pull
-          echo ""
+          git -C $SFS_REPO stash pop || true
           echo "=== After pull ==="
           git -C $SFS_REPO log --oneline -3
 
