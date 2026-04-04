@@ -29,10 +29,12 @@ jobs:
           echo "=== branch ==="
           ssh $NODE "cd $REPO && git branch -a"
 
-      - name: Fix git state — abort rebase, checkout main, pull
+      - name: Fix git state — abort rebase, fix permissions, checkout main
         if: inputs.task == 'fix-git-and-push-profiling'
         run: |
-          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; git checkout main 2>/dev/null; git reset --hard origin/main && git pull --rebase origin main"
+          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; true"
+          ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
+          ssh $NODE "cd $REPO && git checkout main 2>/dev/null; git reset --hard origin/main && git pull --rebase origin main"
           echo "=== After fix ==="
           ssh $NODE "cd $REPO && git log --oneline -5"
           ssh $NODE "cd $REPO && git status"
