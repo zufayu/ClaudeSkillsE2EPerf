@@ -56,6 +56,7 @@ DAR_NUM_REQUESTS=200          # number of requests for DAR measurement
 DAR_CONCURRENCY=32            # concurrency for DAR measurement
 DAR_WARMUP=5                  # warmup requests for DAR measurement
 GPUS=""                        # empty = all GPUs; "0,1,2,3" = specific GPUs
+CONTAINER_IMAGE=""             # original docker image name (passed from host)
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -75,6 +76,7 @@ while [[ $# -gt 0 ]]; do
         --dar-warmup)       DAR_WARMUP="$2"; shift 2 ;;
         --dp)               DP_OVERRIDE="$2"; shift 2 ;;
         --gpus)             GPUS="$2"; shift 2 ;;
+        --container-image)  CONTAINER_IMAGE="$2"; shift 2 ;;
         -h|--help)
             echo "Usage: bash sa_bench_b200.sh --model-fp4 <path> --model-fp8 <path> [options]"
             echo ""
@@ -445,6 +447,10 @@ EOF
         # SA InferenceX: --num-warmups "$((2 * max_concurrency))"
         local warmups="${NUM_WARMUPS:-$(( conc * 2 ))}"
 
+        # Capture software version
+        local trtllm_version
+        trtllm_version=$(python3 -c "import tensorrt_llm; print(tensorrt_llm.__version__)" 2>/dev/null || echo "unknown")
+
         local bench_args=(
             --model "$model"
             --port "$PORT"
@@ -469,6 +475,8 @@ EOF
                 "mtp_layers=$MTP_LAYERS"
                 "piecewise_cuda_graphs=$PIECEWISE_CUDA_GRAPHS"
                 "random_range_ratio=$RANDOM_RANGE_RATIO"
+                "trtllm_version=$trtllm_version"
+                "container_image=$CONTAINER_IMAGE"
         )
         if [[ -n "$BENCH_SERVING_DIR" ]]; then
             bench_args+=(--bench-serving-dir "$BENCH_SERVING_DIR")
@@ -483,8 +491,8 @@ EOF
         # --- Inject reproduce commands into result JSON ---
         local result_json="$RESULT_DIR/${result_filename}.json"
         if [[ -f "$result_json" ]]; then
-            # Detect docker image from env or label
-            local docker_image="${DOCKER_IMAGE:-${TRTLLM_IMAGE:-}}"
+            # Detect docker image from --container-image arg, env, or label
+            local docker_image="${CONTAINER_IMAGE:-${DOCKER_IMAGE:-${TRTLLM_IMAGE:-}}}"
             if [[ -z "$docker_image" && -f /.dockerenv ]]; then
                 docker_image="unknown-docker"
             fi
@@ -859,7 +867,7 @@ log "  Scenario:    $SCENARIO_FILTER -> ${SCENARIOS[*]}"
 log "  Concurrency: ${CONC_SWEEP[*]}"
 log "  Warmups:     ${NUM_WARMUPS:-conc*2}"
 log "  Range Ratio: $RANDOM_RANGE_RATIO"
-log "  Docker Img:  ${DOCKER_IMAGE:-<not set, set DOCKER_IMAGE env to record>}"
+log "  Container:   ${CONTAINER_IMAGE:-<not set, use --container-image>}"
 log "============================================================"
 echo ""
 

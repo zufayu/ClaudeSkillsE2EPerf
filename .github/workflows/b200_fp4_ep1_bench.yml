@@ -25,9 +25,12 @@ jobs:
           ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader"
           ssh $NODE "docker exec $CONTAINER ls $MODEL_FP4/ | head -5"
 
+      - name: Get container image name
+        run: echo "IMAGE=$(ssh $NODE "docker inspect $CONTAINER --format '{{.Config.Image}}'" 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
       - name: Run FP4 throughput benchmark (chat c=64 EP=1)
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_b200.sh --model-fp4 $MODEL_FP4 --configs fp4-throughput --scenario chat --concurrency 64 --ep-sizes 1 --result-dir ./$RESULT_DIR'"
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_b200.sh --model-fp4 $MODEL_FP4 --configs fp4-throughput --scenario chat --concurrency 64 --ep-sizes 1 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'"
 
       - name: Show results
         if: always()

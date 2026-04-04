@@ -55,6 +55,7 @@ CONC_FILTER=""               # empty = use default sweep; "128" or "4 128 256" =
 MAX_MODEL_LEN_OVERRIDE=""    # optional: override computed max_model_len
 SERVER_PORT=8000             # ATOM API server port (--server-port)
 EXPERT_PARALLEL="false"      # --enable-expert-parallel for ATOM MoE
+CONTAINER_IMAGE=""           # original docker/podman image name (passed from host)
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -67,6 +68,7 @@ while [[ $# -gt 0 ]]; do
         --result-dir)        RESULT_DIR="$2"; shift 2 ;;
         --tp)                TP="$2"; shift 2 ;;
         --ep)                EXPERT_PARALLEL="true"; shift 1 ;;
+        --container-image)   CONTAINER_IMAGE="$2"; shift 2 ;;
         --scenario)          SCENARIO_FILTER="$2"; shift 2 ;;
         --concurrency)       CONC_FILTER="$2"; shift 2 ;;
         --max-model-len)     MAX_MODEL_LEN_OVERRIDE="$2"; shift 2 ;;
@@ -406,10 +408,11 @@ run_single_point() {
 
         log "  Running benchmark: ISL=$isl, OSL=$osl, CONC=$conc, NUM_PROMPTS=$num_prompts, WARMUPS=$num_warmups"
 
-        # Capture ATOM and aiter versions
-        local atom_version aiter_version
+        # Capture software versions
+        local atom_version aiter_version rocm_version
         atom_version=$(python3 -c "import atom; print(atom.__version__)" 2>/dev/null || echo "unknown")
         aiter_version=$(python3 -c "import aiter; print(aiter.__version__)" 2>/dev/null || echo "unknown")
+        rocm_version=$(cat /opt/rocm/.info/version 2>/dev/null || echo "unknown")
 
         local bench_cmd=(
             python3 -m atom.benchmarks.benchmark_serving
@@ -441,6 +444,8 @@ run_single_point() {
                 "random_range_ratio=$RANDOM_RANGE_RATIO"
                 "atom_version=$atom_version"
                 "aiter_version=$aiter_version"
+                "rocm_version=$rocm_version"
+                "container_image=$CONTAINER_IMAGE"
         )
 
         set -x

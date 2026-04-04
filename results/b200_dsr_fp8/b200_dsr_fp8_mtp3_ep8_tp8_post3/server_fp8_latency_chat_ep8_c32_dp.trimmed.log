@@ -1,0 +1,145 @@
+=== Trimmed: 10628 -> 62 lines ===
+=== Source: server_fp8_latency_chat_ep8_c32_dp.log ===
+
+[SERVER RUNTIME]
+  LLM Args:
+    model='/home/models/models--DeepSeek-R1-0528'
+    tokenizer=None
+    tokenizer_mode='auto'
+    skip_tokenizer_init=False
+    trust_remote_code=True
+    tensor_parallel_size=8
+    dtype='auto'
+    revision=None
+    tokenizer_revision=None
+    pipeline_parallel_size=1
+    context_parallel_size=1
+    gpus_per_node=8
+    moe_cluster_parallel_size=-1
+    moe_tensor_parallel_size=-1
+    moe_expert_parallel_size=8
+    enable_attention_dp=True
+    enable_lm_head_tp_in_adp=False
+    pp_partition=None
+    cp_config={}
+    load_format=<LoadFormat.AUTO: 0>
+    fail_fast_on_attention_window_too_large=False
+    enable_lora=False
+    lora_config=None
+    kv_cache_config=KvCacheConfig(enable_block_reuse=False, max_tokens=1272050, max_attention_window=None, sink_token_length=None, free_gpu_memory_fraction=0.7, host_cache_size=None, onboard_blocks=True, cross_kv_cache_fraction=None, secondary_offload_min_priority=None, event_buffer_max_size=0, attention_dp_events_gather_period_ms=5, enable_partial_reuse=True, copy_on_partial_reuse=True, use_uvm=False, max_gpu_total_bytes=44694761574, dtype='fp8', mamba_ssm_cache_dtype='auto', tokens_per_block=32)
+    enable_chunked_prefill=False
+    guided_decoding_backend=None
+    batched_logits_processor=None
+    iter_stats_max_iterations=None
+    request_stats_max_iterations=None
+    peft_cache_config=None
+    scheduler_config=SchedulerConfig(capacity_scheduler_policy=<CapacitySchedulerPolicy.GUARANTEED_NO_EVICT: 'GUARANTEED_NO_EVICT'>, context_chunking_policy=None, dynamic_batch_config=DynamicBatchConfig(enable_batch_size_tuning=True, enable_max_num_tokens_tuning=False, dynamic_batch_moving_average_window=128))
+    cache_transceiver_config=None
+    sparse_attention_config=None
+    speculative_config=MTPDecodingConfig(max_draft_len=1, max_total_draft_tokens=1, speculative_model_dir=None, max_concurrency=None, draft_len_schedule=None, load_format=None, acceptance_window=None, acceptance_length_threshold=None, allow_advanced_sampling=False, num_nextn_predict_layers=1, use_relaxed_acceptance_for_thinking=False, relaxed_topk=1, relaxed_delta=0.0, use_mtp_vanilla=False, mtp_eagle_one_model=True, num_nextn_predict_layers_from_model_config=1, begin_thinking_phase_token=128798, end_thinking_phase_token=128799)
+    max_batch_size=2048
+    max_input_len=1024
+    max_seq_len=8192
+    max_beam_width=1
+    max_num_tokens=8192
+    gather_generation_logits=False
+    num_postprocess_workers=0
+    postprocess_tokenizer_dir='/home/models/models--DeepSeek-R1-0528'
+    reasoning_parser=None
+    decoding_config=None
+    mpi_session=None
+    otlp_traces_endpoint=None
+    backend='pytorch'
+    return_perf_metrics=False
+    orchestrator_type=None
+    env_overrides=None
+    garbage_collection_gen0_threshold=20000
+    cuda_graph_config=CudaGraphConfig(batch_sizes=[1, 2, 4], max_batch_size=4, enable_padding=True)
+    attention_dp_config=AttentionDpConfig(enable_balance=True, timeout_iters=60, batching_wait_iters=0)
+    disable_overlap_scheduler=False
+    moe_config=MoeConfig(backend='DEEPGEMM', max_num_tokens=None, load_balancer=None, disable_finalize_fusion=False, use_low_precision_moe_combine=False)
+    nvfp4_gemm_config=Nvfp4GemmConfig(allowed_backends=['cutlass', 'cublaslt', 'cuda_core'])
+    attn_backend='TRTLLM'
+    sampler_type=<SamplerType.auto: 'auto'>
+    sampler_force_async_worker=False
+    enable_iter_perf_stats=False
+    enable_iter_req_stats=False
+    print_iter_log=True
+    perf_metrics_max_requests=0
+    batch_wait_timeout_ms=0
+    batch_wait_timeout_iters=0
+    batch_wait_max_tokens_ratio=0
+    torch_compile_config=None
+    enable_autotuner=True
+    enable_layerwise_nvtx_marker=False
+    enable_min_latency=False
+    stream_interval=10
+    force_dynamic_quantization=False
+    allreduce_strategy='AUTO'
+    checkpoint_loader=None
+    checkpoint_format='HF'
+    kv_connector_config=None
+    mm_encoder_only=False
+    ray_worker_extension_cls=None
+    ray_placement_config=None
+    enable_sleep=False
+    disable_flashinfer_sampling=False
+  Attention: AttentionRuntimeFeatures(chunked_prefill=False, cache_reuse=False, has_speculative_draft_tokens=False, chunk_size=8192, chunked_prefill_buffer_batch_size=4)
+  Runtime: max_seq_len=8195, max_num_requests=2048, max_num_tokens=8192, max_batch_size=2048
+  Runtime: max_seq_len=8195, max_num_requests=2048, max_num_tokens=8192, max_batch_size=2048
+  Communication: NVLinkOneSided: Allocating workspace with size 1884291456 bytes.ep_rank: 0, ep_size: 8, top_k: 8, max_num_tokens_per_rank: 8192
+  MoE: DeepGemmFusedMoE selects alltoall_method_type <AlltoallMethodType.NotEnabled: 0>
+
+[MEMORY]
+  Model weights (torch): 111.66 GiB
+  Model weights (non-torch): 6.80 GiB
+  Peak memory: 121.08 GiB, KV cache: 41.63 GiB (fraction=0.7)
+  Estimated KV cache: 41.63 GiB
+  PyTorch memory fraction: 0.7425851372846415 (132.44085693359375 GiB)
+
+[ERRORS]
+  You are using a model of type deepseek_v3 to instantiate a model of type . This is not supported for all configurations of models and can yield errors.
+  Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/tensorrt_llm/_torch/modules/multi_stream_uti[03/19/2026-21:22:42] [TRT-LLM] [RANK 0] [E] Encountered an error in forward function: setStorage: sizes [32, 22528, 7168], strides [161480704, 7168, 1], storage offset 0, and itemsize 1 requiring a storage size of 5167382528 are out of bounds for storage of size 3758096384
+  [03/19/2026-21:22:42] [TRT-LLM] [RANK 2] [E] Encountered an error in forward function: setStorage: sizes [32, 22528, 7168], strides [161480704, 7168, 1], storage offset 0, and itemsize 1 requiring a storage size of 5167382528 are out of bounds for storage of size 3758096384
+  RuntimeError: setStorage: sizes [32, 22528, 7168], strides [161480704, 7168, 1], storage offset 0, and itemsize 1 requiring a storage size of 5167382528 are out of bounds for storage of size 3758096384
+  [03/19/2026-21:22:42] [TRT-LLM] [RANK 6] [E] Error in event loop: Sampling failed
+  [03/19/2026-21:22:42] [TRT-LLM] [RANK 6] [E] Traceback (most recent call last):
+  AssertionError: Sampling failed
+  Exception in thread Thread-3 (_event_loop_wrapper):
+  handler(response.error_msg)
+  File "/usr/local/lib/python3.12/dist-packages/tensorrt_llm/executor/executor.py", line 280, in _handle_background_error
+  raise error
+  tensorrt_llm.executor.utils.RequestError: setStorage: sizes [32, 22528, 7168], strides [161480704, 7168, 1], storage offset 0, and itemsize 1 requiring a storage size of 5167382528 are out of bounds for storage of size 3758096384
+  [03/19/2026-21:22:42] [TRT-LLM] [E] Traceback (most recent call last):
+  [31mERROR[0m:    Exception in ASGI application
+  + Exception Group Traceback (most recent call last):
+  |     raise BaseExceptionGroup(
+  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  | Traceback (most recent call last):
+  |   File "/usr/local/lib/python3.12/dist-packages/starlette/middleware/errors.py", line 186, in __call__
+  |   File "/usr/local/lib/python3.12/dist-packages/starlette/middleware/errors.py", line 164, in __call__
+  |   File "/usr/local/lib/python3.12/dist-packages/starlette/middleware/exceptions.py", line 63, in __call__
+  |     await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  |   File "/usr/local/lib/python3.12/dist-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+  |   File "/usr/local/lib/python3.12/dist-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+  |     await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  |     handler(response.error_msg)
+  |   File "/usr/local/lib/python3.12/dist-packages/tensorrt_llm/executor/executor.py", line 280, in _handle_background_error
+  |     raise error
+  | tensorrt_llm.executor.utils.RequestError: setStorage: sizes [32, 22528, 7168], strides [161480704, 7168, 1], storage offset 0, and itemsize 1 requiring a storage size of 5167382528 are out of bounds for storage of size 3758096384
+  During handling of the above exception, another exception occurred:
+  File "/usr/local/lib/python3.12/dist-packages/starlette/middleware/errors.py", line 186, in __call__
+  File "/usr/local/lib/python3.12/dist-packages/starlette/middleware/errors.py", line 164, in __call__
+  File "/usr/local/lib/python3.12/dist-packages/starlette/middleware/exceptions.py", line 63, in __call__
+  await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/usr/local/lib/python3.12/dist-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+  File "/usr/local/lib/python3.12/dist-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+  await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+
+[WARNINGS]
+  [03/19/2026-21:17:02] [TRT-LLM] [RANK 0] [W] Falling back to greedy decoding for MTP. If you want to use non-greedy sampling, please set allow_advanced_sampling=True.
+
+[STATUS]
+  Server startup: OK
+

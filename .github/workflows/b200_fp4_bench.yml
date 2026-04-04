@@ -13,7 +13,7 @@ jobs:
       SFS: /SFS-aGqda6ct
       REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
-      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_post2
     steps:
       - name: Sync repo
         run: |
@@ -25,9 +25,15 @@ jobs:
           ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader"
           ssh $NODE "docker exec $CONTAINER ls $MODEL_FP4/ | head -5"
 
-      - name: Run FP4 throughput benchmark (chat c=64 EP=8)
+      - name: Get container image name
+        run: echo "IMAGE=$(ssh $NODE "docker inspect $CONTAINER --format '{{.Config.Image}}'" 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: Clean old results
+        run: ssh $NODE "rm -rf $REPO/$RESULT_DIR/*"
+
+      - name: Run FP4 throughput benchmark (chat c=64 EP=8 DP=false)
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_b200.sh --model-fp4 $MODEL_FP4 --configs fp4-throughput --scenario chat --concurrency 64 --ep-sizes 8 --result-dir ./$RESULT_DIR'"
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_b200.sh --model-fp4 $MODEL_FP4 --configs fp4-throughput --scenario chat --concurrency 64 --ep-sizes 8 --dp false --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'"
 
       - name: Show results
         if: always()
@@ -39,7 +45,7 @@ jobs:
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
           ssh $NODE "cd $REPO && git add -f $RESULT_DIR/ && git diff --cached --name-only"
-          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=8 TP=8 bench (chat c=64, post2)
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=8 TP=8 DP=false bench (chat c=64, post2)
 
           Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push; else echo 'Nothing to commit'; fi"
 

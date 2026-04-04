@@ -1,0 +1,21 @@
+cuda_graph_config:
+    enable_padding: true
+    max_batch_size: 4
+enable_attention_dp: true
+print_iter_log: true
+kv_cache_config:
+    dtype: fp8
+    free_gpu_memory_fraction: 0.7
+    enable_block_reuse: false
+stream_interval: 10
+moe_config:
+    backend: DEEPGEMM
+speculative_config:
+    decoding_type: MTP
+    num_nextn_predict_layers: 1
+return_perf_metrics: true
+perf_metrics_max_requests: 140
+attention_dp_config:
+    batching_wait_iters: 0
+    enable_balance: true
+    timeout_iters: 60

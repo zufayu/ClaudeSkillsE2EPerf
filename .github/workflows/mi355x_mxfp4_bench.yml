@@ -18,8 +18,11 @@ jobs:
       - name: Sync repo
         run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
 
+      - name: Get container image name
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
       - name: Run MXFP4 EP1 TP8 bench (chat c=64)
-        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp8_rocm721"
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --container-image '${{ env.IMAGE }}' --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp8_rocm721"
 
       - name: Show results
         if: always()
@@ -34,8 +37,11 @@ jobs:
       CONTAINER: zufa_atom2
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
     steps:
+      - name: Get container image name
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
       - name: Run MXFP4 EP8 TP8 bench (chat c=64)
-        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --ep --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm721"
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --ep --container-image '${{ env.IMAGE }}' --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm721"
 
       - name: Show results
         if: always()
@@ -50,8 +56,11 @@ jobs:
       CONTAINER: zufa_atom2
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
     steps:
+      - name: Get container image name
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
       - name: Run MXFP4 EP1 TP4 bench (chat c=64)
-        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 4 --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp4_rocm721"
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 4 --container-image '${{ env.IMAGE }}' --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp4_rocm721"
 
       - name: Show results
         if: always()
@@ -72,8 +81,11 @@ jobs:
       - name: Sync repo
         run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
 
+      - name: Get container image name
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
       - name: Run MXFP4 EP1 TP8 bench (chat c=64)
-        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp8_rocm711"
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --container-image '${{ env.IMAGE }}' --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp8_rocm711"
 
       - name: Show results
         if: always()
@@ -88,8 +100,11 @@ jobs:
       CONTAINER: zufa_atom
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
     steps:
+      - name: Get container image name
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
       - name: Run MXFP4 EP8 TP8 bench (chat c=64)
-        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --ep --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711"
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --ep --container-image '${{ env.IMAGE }}' --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711"
 
       - name: Show results
         if: always()
@@ -104,8 +119,11 @@ jobs:
       CONTAINER: zufa_atom
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
     steps:
+      - name: Get container image name
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
       - name: Run MXFP4 EP1 TP4 bench (chat c=64)
-        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 4 --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp4_rocm711"
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 4 --container-image '${{ env.IMAGE }}' --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp4_rocm711"
 
       - name: Show results
         if: always()
