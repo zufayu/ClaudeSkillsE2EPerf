@@ -1,0 +1,58 @@
+name: B200 Ops
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Task to run"
+        type: choice
+        options:
+          - fix-git-and-push-profiling
+          - status-only
+        default: fix-git-and-push-profiling
+jobs:
+  fix-b200:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 15
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_trt
+      SFS: /SFS-aGqda6ct
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_post2_profiling
+    steps:
+      - name: Show current git state
+        run: |
+          echo "=== git status ==="
+          ssh $NODE "cd $REPO && git status"
+          echo "=== git log ==="
+          ssh $NODE "cd $REPO && git log --oneline -5"
+          echo "=== branch ==="
+          ssh $NODE "cd $REPO && git branch -a"
+
+      - name: Fix detached HEAD — checkout main and pull
+        if: inputs.task == 'fix-git-and-push-profiling'
+        run: |
+          ssh $NODE "cd $REPO && git checkout main 2>/dev/null || git checkout -b main origin/main"
+          ssh $NODE "cd $REPO && git pull --rebase origin main"
+          echo "=== After fix ==="
+          ssh $NODE "cd $REPO && git log --oneline -5"
+
+      - name: List profiling results
+        run: |
+          echo "=== Profiling dir ==="
+          ssh $NODE "ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No profiling dir'"
+
+      - name: Commit and push profiling data (no nsys-rep)
+        if: inputs.task == 'fix-git-and-push-profiling'
+        run: |
+          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && git add -f $RESULT_DIR/*.log $RESULT_DIR/*.yml $RESULT_DIR/*.jsonl $RESULT_DIR/*.json $RESULT_DIR/*.md $RESULT_DIR/*.csv $RESULT_DIR/*.xlsx 2>/dev/null && git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=8 TP=8 DP=false profiling (chat c=64, post2)
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push; else echo 'Nothing new to commit'; fi"
+
+      - name: Show final state
+        if: always()
+        run: |
+          ssh $NODE "cd $REPO && git log --oneline -5"
+          ssh $NODE "cd $REPO && git status"

@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Sync repo
         run: |
-          ssh $NODE "cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true"
+          ssh $NODE "cd $REPO && git checkout main 2>/dev/null || true && git stash 2>/dev/null || true && git pull --rebase origin main && git stash pop 2>/dev/null || true"
           ssh $NODE "cd $REPO && git log --oneline -3"
 
       - name: Verify container and GPU
@@ -25,7 +25,7 @@ jobs:
           ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2"
 
       - name: Clean old results
-        run: ssh $NODE "rm -rf $REPO/$RESULT_DIR/*"
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/*' 2>/dev/null || ssh $NODE 'rm -rf $REPO/$RESULT_DIR/*' 2>/dev/null || true"
 
       - name: Run FP4 EP8 profiling (bench mode, chat c=64, DP=false)
         run: |
