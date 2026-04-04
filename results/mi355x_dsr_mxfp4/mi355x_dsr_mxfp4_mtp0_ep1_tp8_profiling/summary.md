@@ -3,4 +3,4 @@
 
 | Config | Scenario | CONC | Total Tput | Output Tput | TPOT (ms) | TTFT (ms) |
 |--------|----------|------|------------|-------------|-----------|-----------|
-| profiling | chat | 64 | 6265.6 | 3132.1 | 19.9 | 120.2 |
+| profiling | chat | 64 | 6302.5 | 3150.6 | 19.8 | 117.3 |
