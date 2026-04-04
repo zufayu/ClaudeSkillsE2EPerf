@@ -49,7 +49,7 @@ jobs:
           ssh $NODE "cd $REPO && git add -f $RESULT_DIR/ 2>/dev/null && git diff --cached --name-only"
           ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 SGLang FP4 TP=4 EP=4 bench (chat c=64, sglang059)
 
-          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push; else echo 'Nothing to commit'; fi"
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
 
       - name: Show final state
         if: always()
@@ -94,7 +94,7 @@ jobs:
           ssh $NODE "cd $REPO && git add -f $RESULT_DIR/ 2>/dev/null && git diff --cached --name-only"
           ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 SGLang FP4 TP=8 EP=8 bench (chat c=64, sglang059)
 
-          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push; else echo 'Nothing to commit'; fi"
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
 
       - name: Show final state
         if: always()
