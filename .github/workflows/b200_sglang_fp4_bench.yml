@@ -42,9 +42,10 @@ jobs:
           ssh $NODE "ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'"
           ssh $NODE "cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'"
 
-      - name: Git commit and push results
+      - name: Fix file ownership and commit results
         if: always()
         run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
           ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; git add -f $RESULT_DIR/ 2>/dev/null && git diff --cached --name-only"
           ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 SGLang FP4 TP=4 EP=4 bench (chat c=64, sglang059)
@@ -87,9 +88,10 @@ jobs:
           ssh $NODE "ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'"
           ssh $NODE "cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'"
 
-      - name: Git commit and push results
+      - name: Fix file ownership and commit results
         if: always()
         run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
           ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; git add -f $RESULT_DIR/ 2>/dev/null && git diff --cached --name-only"
           ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 SGLang FP4 TP=8 EP=8 bench (chat c=64, sglang059)
