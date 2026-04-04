@@ -56,17 +56,26 @@ def log(msg):
 
 
 def cleanup(port):
-    """Kill anything on the port and GPU."""
+    """Kill anything on the port and GPU, with retry."""
     subprocess.run(f"fuser -k -9 {port}/tcp", shell=True, capture_output=True)
     time.sleep(2)
-    result = subprocess.run("fuser /dev/kfd", shell=True, capture_output=True, text=True)
-    pids = result.stdout.strip()
-    if pids:
-        log(f"Killing GPU processes: {pids}")
+    # Retry GPU cleanup up to 3 times
+    for attempt in range(3):
+        result = subprocess.run("fuser /dev/kfd", shell=True, capture_output=True, text=True)
+        pids = result.stdout.strip()
+        if not pids:
+            break
+        log(f"Killing GPU processes (attempt {attempt+1}): {pids}")
         subprocess.run(f"kill -9 {pids}", shell=True, capture_output=True)
-        time.sleep(2)
+        time.sleep(5)
     subprocess.run("rm -f /dev/shm/aiter_*", shell=True, capture_output=True)
     subprocess.run("rm -rf /tmp/trace", shell=True, capture_output=True)
+    # Final check
+    result = subprocess.run("fuser /dev/kfd", shell=True, capture_output=True, text=True)
+    if result.stdout.strip():
+        log(f"WARNING: GPU still in use after cleanup: {result.stdout.strip()}")
+    else:
+        log("GPU cleanup verified — all clear")
 
 
 def start_server(args, phase):
@@ -233,8 +242,8 @@ def run_phase(args, phase):
         if phase != "baseline":
             start_stop_profile(args.port, "stop")
             # Wait for trace flush
-            log("Waiting for trace flush (30s)...")
-            time.sleep(30)
+            log("Waiting for trace flush (60s)...")
+            time.sleep(60)
 
         # Read result
         result_file = Path(args.result_dir) / f"result_{phase}.json"
