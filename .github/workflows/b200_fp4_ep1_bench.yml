@@ -46,3 +46,4 @@ jobs:
       - name: Show final state
         if: always()
         run: ssh $NODE "cd $REPO && git log --oneline -3"
+# retrigger
