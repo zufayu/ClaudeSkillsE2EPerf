@@ -1,10 +1,10 @@
 {
-  "run_id": "8xmi355x-mxfp4-20260403-mtp0-ci",
+  "run_id": "8xmi355x-mxfp4-20260403-mtp0-ep1-tp8-ci",
   "platform": "8\u00d7MI355X",
   "framework": "ATOM (efde2bef)",
   "model": "DeepSeek-R1-0528",
   "quantization": "MXFP4",
-  "env_tag": "mtp0",
+  "env_tag": "mtp0-ep1-tp8",
   "gpu_count": 8,
   "source": "ci-nightly",
   "date": "2026-04-03",

@@ -1,0 +1,53 @@
+{
+  "run_id": "8xmi355x-mxfp4-20260404-mtp0-ep1-tp4-rocm721",
+  "platform": "8\u00d7MI355X",
+  "framework": "ATOM 0.1.3.dev1",
+  "model": "DeepSeek-R1-0528",
+  "quantization": "MXFP4",
+  "gpu_count": 4,
+  "source": "manual",
+  "date": "2026-04-04",
+  "docker_image": "",
+  "results": [
+    {
+      "isl": 1024,
+      "osl": 1024,
+      "conc": 64,
+      "scenario": "chat",
+      "config": "throughput",
+      "ep_size": null,
+      "dp_attention": false,
+      "output_tps": 2526.8433754667344,
+      "total_tps": 5054.826047154532,
+      "request_tps": 2.741163840149959,
+      "tpot_p50": 24.750540123872657,
+      "ttft_p50": 104.5273890485987,
+      "itl_p50": 20.656273933127522,
+      "e2el_p50": 22867.209456511773,
+      "tpot_p99": 26.20629747892036,
+      "ttft_p99": 2465.5153174558654,
+      "itl_p99": 89.78166542947307,
+      "e2el_p99": 26842.961114959326,
+      "tpot_mean": 24.43491315673426,
+      "ttft_mean": 262.7422620462312,
+      "e2el_mean": 22782.863891487796,
+      "num_prompts": 640,
+      "completed": 640,
+      "duration": 233.4774706370663,
+      "server_cmd": "",
+      "benchmark_cmd": "",
+      "config_yaml": "",
+      "server_config": {
+        "max_model_len": "2248",
+        "kv_cache_dtype": "fp8",
+        "tensor_parallel_size": "4",
+        "mtp_layers": "0",
+        "random_range_ratio": "0.8",
+        "gpu_memory_utilization": "0.90",
+        "enforce_eager": "false",
+        "max_num_seqs": "512"
+      }
+    }
+  ],
+  "env_tag": "mtp0-ep1-tp4-rocm721"
+}
