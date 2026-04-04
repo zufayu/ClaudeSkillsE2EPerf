@@ -406,15 +406,15 @@ def convert_atom_to_runs(atom_data):
             }
             results.append(result)
 
-        run_key = f"atom-mi355x-{model_clean.lower()}{mtp_tag}"
-        mtp_env_tag = f"mtp{m.group(1)}" if (is_mtp and m) else "mtp0"
+        mtp_str = f"mtp{m.group(1)}" if (is_mtp and m) else "mtp0"
+        run_key = f"{gpu_count}xmi355x-{quant.lower()}-{date_str.replace('-','')}-{mtp_str}-ci"
         runs[run_key] = {
             "run_id": run_key,
             "platform": f"{gpu_count}×MI355X",
             "framework": f"ATOM ({commit.get('id', 'unknown')[:8]})",
             "model": model_clean,
             "quantization": quant,
-            "env_tag": mtp_env_tag,
+            "env_tag": mtp_str,
             "gpu_count": gpu_count,
             "source": "ci-nightly",
             "date": date_str,
@@ -484,9 +484,17 @@ def main():
                             result["dp_attention"] = dp
                             if launch_args:
                                 result["config"] = launch_args
-                        # Update env_tag with EP info
+                        # Update env_tag and run_key with EP/TP info
+                        tag_parts = [run["env_tag"]]
                         if ep is not None:
-                            run["env_tag"] = f"{run['env_tag']}-ep{ep}"
+                            tag_parts.append(f"ep{ep}")
+                        if tp is not None:
+                            tag_parts.append(f"tp{tp}")
+                        run["env_tag"] = "-".join(tag_parts)
+                        # Update run_key to include ep/tp
+                        old_key = run_key
+                        new_key = run_key.replace("-ci", f"-ep{ep or 1}-tp{tp or 8}-ci")
+                        run["run_id"] = new_key
                         parts = []
                         if tp is not None:
                             parts.append(f"TP={tp}")
@@ -556,7 +564,7 @@ def main():
                 if len(run["results"]) > 3:
                     print(f"    ... and {len(run['results']) - 3} more")
             else:
-                out_path = os.path.join(args.output_dir, f"{run_key}.json")
+                out_path = os.path.join(args.output_dir, f"{run['run_id']}.json")
                 os.makedirs(args.output_dir, exist_ok=True)
                 with open(out_path, "w") as f:
                     json.dump(run, f, indent=2)

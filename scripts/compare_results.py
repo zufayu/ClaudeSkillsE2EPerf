@@ -132,7 +132,7 @@ def main():
     if args.dirs:
         dirs = args.dirs
     else:
-        dirs = sorted(glob.glob("results_b200_*") + glob.glob("results_h20_*"))
+        dirs = sorted(glob.glob("results/b200_*/*") + glob.glob("results/mi355x_*/*") + glob.glob("results_b200_*") + glob.glob("results_h20_*"))
         dirs = [d for d in dirs if os.path.isdir(d) and not d.endswith("_test")]
 
     if not dirs:
