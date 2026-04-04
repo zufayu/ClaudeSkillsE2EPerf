@@ -26,29 +26,25 @@ jobs:
           echo "=== git log ==="
           ssh $NODE "cd $REPO && git log --oneline -5"
 
-      - name: Fix git state and sync
+      - name: Hard reset to origin/main
         if: inputs.task == 'sync-and-push'
         run: |
-          ssh $NODE "cd $REPO && rm -rf .git/rebase-merge .git/rebase-apply .git/MERGE_HEAD .git/REBASE_HEAD 2>/dev/null; true"
+          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; true"
+          ssh $NODE "cd $REPO && rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; true"
           ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
-          ssh $NODE "cd $REPO && git fetch origin main && git checkout -B main FETCH_HEAD"
-          ssh $NODE "cd $REPO && git pull --rebase origin main"
-          echo "=== After sync ==="
-          ssh $NODE "cd $REPO && git log --oneline -5"
-          ssh $NODE "cd $REPO && git status"
+          ssh $NODE "cd $REPO && git reset --hard 2>/dev/null; true"
+          ssh $NODE "cd $REPO && git fetch origin main && git checkout -B main FETCH_HEAD --force"
+          echo "=== After reset ==="
+          ssh $NODE "cd $REPO && git log --oneline -3 && git status --short"
 
-      - name: Push any unpushed commits
+      - name: Re-add and push any result data on disk
         if: inputs.task == 'sync-and-push'
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
-          UNPUSHED=$(ssh $NODE "cd $REPO && git log origin/main..HEAD --oneline" 2>/dev/null)
-          if [ -n "$UNPUSHED" ]; then
-            echo "Unpushed commits:"
-            echo "$UNPUSHED"
-            ssh $NODE "cd $REPO && git push"
-          else
-            echo "No unpushed commits"
-          fi
+          ssh $NODE "cd $REPO && for d in results/b200_dsr_fp4/*/; do for ext in log yml jsonl json md csv xlsx; do git add -f \$d*.\$ext 2>/dev/null; done; done; git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 result data (re-committed after git reset)
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push; else echo 'Nothing new to commit'; fi"
 
       - name: Show final state
         if: always()
