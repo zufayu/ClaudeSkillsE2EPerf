@@ -1,0 +1,25 @@
+=== Trimmed: 16520 -> 5 lines ===
+=== Source: server_mxfp4_throughput_chat_c64.log ===
+
+======================================================================
+REPRODUCE INFO (from result JSON)
+======================================================================
+
+Key Config:
+  model_id: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
+  max_model_len: 2248
+  tensor_parallel_size: 4
+  mtp_layers: 0
+  max_concurrency: 64
+  num_prompts: 640
+
+RESULT: OK - 640/640 completed, output_throughput=2526.8 tok/s
+  median_ttft_ms: 104.5273890485987
+  median_tpot_ms: 24.750540123872657
+======================================================================
+
+[STATUS]
+  Server startup: OK
+  Server shutdown:
+  Server shutdown:
+
