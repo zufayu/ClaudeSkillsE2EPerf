@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Sync repo
         run: |
-          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; git checkout main 2>/dev/null; git stash 2>/dev/null; git pull --rebase origin main; git stash pop 2>/dev/null; true"
+          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
           ssh $NODE "cd $REPO && git log --oneline -3"
 
       - name: Verify container and GPU
@@ -46,7 +46,7 @@ jobs:
         if: always()
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
-          ssh $NODE "cd $REPO && git add -f $RESULT_DIR/ 2>/dev/null && git diff --cached --name-only"
+          ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; git add -f $RESULT_DIR/ 2>/dev/null && git diff --cached --name-only"
           ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 SGLang FP4 TP=4 EP=4 bench (chat c=64, sglang059)
 
           Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
@@ -69,7 +69,7 @@ jobs:
     steps:
       - name: Sync repo
         run: |
-          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; git checkout main 2>/dev/null; git stash 2>/dev/null; git pull --rebase origin main; git stash pop 2>/dev/null; true"
+          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
 
       - name: Get container image name
         run: echo "IMAGE=$(ssh $NODE "docker inspect $CONTAINER --format '{{.Config.Image}}'" 2>/dev/null || echo unknown)" >> $GITHUB_ENV
@@ -91,7 +91,7 @@ jobs:
         if: always()
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
-          ssh $NODE "cd $REPO && git add -f $RESULT_DIR/ 2>/dev/null && git diff --cached --name-only"
+          ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; git add -f $RESULT_DIR/ 2>/dev/null && git diff --cached --name-only"
           ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 SGLang FP4 TP=8 EP=8 bench (chat c=64, sglang059)
 
           Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
