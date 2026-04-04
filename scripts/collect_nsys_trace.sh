@@ -428,8 +428,9 @@ run_bench_mode() {
     local nsys_cmd=(
         nsys profile
         -o "$TRACE_DIR/${TAG}" -f true
-        -t 'cuda,nvtx,python-gil' -c cudaProfilerApi
+        -t 'cuda,nvtx' -c cudaProfilerApi
         --cuda-graph-trace node
+        --sample=none --cpuctxsw=none
         -e TLLM_PROFILE_RECORD_GC=1,TLLM_LLMAPI_ENABLE_NVTX=1
         --trace-fork-before-exec=true
     )
@@ -482,8 +483,9 @@ run_serve_mode() {
     local nsys_cmd=(
         nsys profile
         -o "$TRACE_DIR/${TAG}" -f true
-        -t 'cuda,nvtx,python-gil' -c cudaProfilerApi
+        -t 'cuda,nvtx' -c cudaProfilerApi
         --cuda-graph-trace node
+        --sample=none --cpuctxsw=none
         -e TLLM_PROFILE_RECORD_GC=1,TLLM_LLMAPI_ENABLE_NVTX=1
         --trace-fork-before-exec=true
     )

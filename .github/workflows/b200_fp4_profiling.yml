@@ -1,8 +1,6 @@
 name: B200 FP4 Profiling
 on:
-  push:
-    paths:
-      - '.github/workflows/b200_fp4_profiling.yml'
+  workflow_dispatch:
 jobs:
   fp4-ep8-profiling:
     runs-on: [self-hosted, b200]
@@ -17,7 +15,7 @@ jobs:
     steps:
       - name: Sync repo
         run: |
-          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; git checkout main 2>/dev/null; git stash 2>/dev/null; git pull --rebase origin main; git stash pop 2>/dev/null; true"
+          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
           ssh $NODE "cd $REPO && git log --oneline -3"
 
       - name: Verify container and GPU
@@ -25,11 +23,11 @@ jobs:
           ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2"
 
       - name: Clean old results
-        run: ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/*' 2>/dev/null || ssh $NODE 'rm -rf $REPO/$RESULT_DIR/*' 2>/dev/null || true"
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true' && rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true"
 
-      - name: Run FP4 EP8 profiling (bench mode, chat c=64, DP=false)
+      - name: Run FP4 EP8 profiling (serve mode, chat c=64, DP=false)
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_nsys_trace.sh --model $MODEL_FP4 --mode bench --scenario chat --concurrency 64 --quant fp4 --config throughput --tp 8 --ep 8 --dp false --trace-dir ./$RESULT_DIR'"
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_nsys_trace.sh --model $MODEL_FP4 --mode serve --scenario chat --concurrency 64 --quant fp4 --config throughput --tp 8 --ep 8 --dp false --trace-dir ./$RESULT_DIR --skip-export'"
 
       - name: Show profiling results
         if: always()
@@ -41,10 +39,10 @@ jobs:
         if: always()
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
-          ssh $NODE "cd $REPO && git add -f $RESULT_DIR/*.log $RESULT_DIR/*.yml $RESULT_DIR/*.jsonl $RESULT_DIR/*.json $RESULT_DIR/*.md $RESULT_DIR/*.csv $RESULT_DIR/*.xlsx 2>/dev/null && git diff --cached --name-only"
-          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=8 TP=8 DP=false profiling (chat c=64, post2)
+          ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; for ext in log yml jsonl json md csv xlsx; do git add -f $RESULT_DIR/*.\$ext 2>/dev/null; done; git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=8 TP=8 profiling serve mode (chat c=64, post2)
 
-          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push; else echo 'Nothing to commit'; fi"
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
 
       - name: Show final state
         if: always()
