@@ -1,5 +1,6 @@
 name: B200 SGLang FP4 Bench
 on:
+  workflow_dispatch:
   push:
     paths:
       - '.github/workflows/b200_sglang_fp4_bench.yml'
