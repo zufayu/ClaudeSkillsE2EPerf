@@ -30,7 +30,7 @@ jobs:
         run: echo "IMAGE=$(ssh $NODE "docker inspect $CONTAINER --format '{{.Config.Image}}'" 2>/dev/null || echo unknown)" >> $GITHUB_ENV
 
       - name: Clean old results
-        run: ssh $NODE "rm -rf $REPO/$RESULT_DIR/*"
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true' && rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true"
 
       - name: Run SGLang FP4 TP4 EP4 bench (chat c=64)
         run: |
@@ -75,7 +75,7 @@ jobs:
         run: echo "IMAGE=$(ssh $NODE "docker inspect $CONTAINER --format '{{.Config.Image}}'" 2>/dev/null || echo unknown)" >> $GITHUB_ENV
 
       - name: Clean old results
-        run: ssh $NODE "rm -rf $REPO/$RESULT_DIR/*"
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true' && rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true"
 
       - name: Run SGLang FP4 TP8 EP8 bench (chat c=64)
         run: |
