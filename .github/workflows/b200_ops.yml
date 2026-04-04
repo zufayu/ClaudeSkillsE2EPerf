@@ -48,7 +48,7 @@ jobs:
         if: inputs.task == 'fix-git-and-push-profiling'
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
-          ssh $NODE "cd $REPO && git add -f $RESULT_DIR/*.log $RESULT_DIR/*.yml $RESULT_DIR/*.jsonl $RESULT_DIR/*.json $RESULT_DIR/*.md $RESULT_DIR/*.csv $RESULT_DIR/*.xlsx 2>/dev/null && git diff --cached --name-only"
+          ssh $NODE "cd $REPO && for ext in log yml jsonl json md csv xlsx; do git add -f $RESULT_DIR/*.\$ext 2>/dev/null; done; git diff --cached --name-only"
           ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=8 TP=8 DP=false profiling (chat c=64, post2)
 
           Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push; else echo 'Nothing new to commit'; fi"
