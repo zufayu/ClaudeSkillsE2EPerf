@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Sync repo
         run: |
-          ssh $NODE "cd $REPO && git checkout main 2>/dev/null || true && git stash 2>/dev/null || true && git pull --rebase origin main && git stash pop 2>/dev/null || true"
+          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null || true && git checkout main 2>/dev/null || true && git stash 2>/dev/null || true && git pull --rebase origin main && git stash pop 2>/dev/null || true"
           ssh $NODE "cd $REPO && git log --oneline -3"
 
       - name: Verify container and GPU
@@ -68,7 +68,7 @@ jobs:
     steps:
       - name: Sync repo
         run: |
-          ssh $NODE "cd $REPO && git checkout main 2>/dev/null || true && git stash 2>/dev/null || true && git pull --rebase origin main && git stash pop 2>/dev/null || true"
+          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null || true && git checkout main 2>/dev/null || true && git stash 2>/dev/null || true && git pull --rebase origin main && git stash pop 2>/dev/null || true"
 
       - name: Get container image name
         run: echo "IMAGE=$(ssh $NODE "docker inspect $CONTAINER --format '{{.Config.Image}}'" 2>/dev/null || echo unknown)" >> $GITHUB_ENV
