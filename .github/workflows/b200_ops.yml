@@ -32,9 +32,9 @@ jobs:
       - name: Fix git state — clear rebase, fix permissions, reset to origin
         if: inputs.task == 'fix-git-and-push-profiling'
         run: |
-          ssh $NODE "cd $REPO && rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git rebase --abort 2>/dev/null; true"
+          ssh $NODE "cd $REPO && rm -rf .git/rebase-merge .git/rebase-apply .git/MERGE_HEAD .git/REBASE_HEAD 2>/dev/null; true"
           ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
-          ssh $NODE "cd $REPO && git checkout main 2>/dev/null; git reset --hard origin/main && git pull --rebase origin main"
+          ssh $NODE "cd $REPO && git fetch origin main && git checkout -B main origin/main"
           echo "=== After fix ==="
           ssh $NODE "cd $REPO && git log --oneline -5"
           ssh $NODE "cd $REPO && git status"
