@@ -1,0 +1,40 @@
+name: MI355X Profiling AB Test
+on:
+  workflow_dispatch:
+jobs:
+  profiling-ab-test:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 180
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
+
+      - name: "A: Baseline benchmark (no profiler)"
+        run: |
+          podman exec $CONTAINER bash -c "cd $REPO && python3 scripts/run_profiling_ab_test.py --model $MODEL --phase baseline --tp 8 --ep --concurrency 64 --scenario chat --result-dir ./results/mi355x_dsr_mxfp4/mi355x_profiling_ab_test"
+
+      - name: "B1: Profiling with_stack=True (current default)"
+        run: |
+          podman exec $CONTAINER bash -c "cd $REPO && python3 scripts/run_profiling_ab_test.py --model $MODEL --phase with-stack-true --tp 8 --ep --concurrency 64 --scenario chat --result-dir ./results/mi355x_dsr_mxfp4/mi355x_profiling_ab_test"
+
+      - name: "B2: Profiling with_stack=False"
+        run: |
+          podman exec $CONTAINER bash -c "cd $REPO && python3 scripts/run_profiling_ab_test.py --model $MODEL --phase with-stack-false --tp 8 --ep --concurrency 64 --scenario chat --result-dir ./results/mi355x_dsr_mxfp4/mi355x_profiling_ab_test"
+
+      - name: Show comparison
+        if: always()
+        run: cat $REPO/results/mi355x_dsr_mxfp4/mi355x_profiling_ab_test/ab_comparison.md 2>/dev/null || echo "No comparison"
+
+      - name: Show all results
+        if: always()
+        run: |
+          echo "=== Result files ==="
+          ls -la $REPO/results/mi355x_dsr_mxfp4/mi355x_profiling_ab_test/ 2>/dev/null || echo "No results"
+          for f in $REPO/results/mi355x_dsr_mxfp4/mi355x_profiling_ab_test/result_*.json; do
+            echo "=== $(basename $f) ==="
+            python3 -c "import json; d=json.load(open('$f')); print(f'Output Tput: {d.get(\"output_throughput\",0):.1f}, TPOT p50: {d.get(\"tpot_p50\", d.get(\"median_tpot_ms\",0)):.1f}ms, TTFT p50: {d.get(\"ttft_p50\", d.get(\"median_ttft_ms\",0)):.1f}ms')" 2>/dev/null || echo "parse failed"
+          done
