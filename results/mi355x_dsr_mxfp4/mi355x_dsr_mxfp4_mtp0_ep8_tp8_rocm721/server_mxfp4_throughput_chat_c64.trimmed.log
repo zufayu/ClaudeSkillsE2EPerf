@@ -1,4 +1,4 @@
-=== Trimmed: 23841 -> 5 lines ===
+=== Trimmed: 25295 -> 5 lines ===
 === Source: server_mxfp4_throughput_chat_c64.log ===
 
 ======================================================================
@@ -13,9 +13,9 @@ Key Config:
   max_concurrency: 64
   num_prompts: 640
 
-RESULT: OK - 640/640 completed, output_throughput=3278.2 tok/s
-  median_ttft_ms: 96.84903605375439
-  median_tpot_ms: 19.009374494962767
+RESULT: OK - 640/640 completed, output_throughput=3308.6 tok/s
+  median_ttft_ms: 97.85054542589933
+  median_tpot_ms: 18.813968884880993
 ======================================================================
 
 [STATUS]

@@ -1,4 +1,4 @@
-=== Trimmed: 24482 -> 39 lines ===
+=== Trimmed: 24490 -> 39 lines ===
 === Source: server_mxfp4_throughput_chat_c64.log ===
 
 ======================================================================
@@ -14,43 +14,43 @@ Key Config:
   num_prompts: 640
 
 RESULT: OK - 640/640 completed, output_throughput=3234.5 tok/s
-  median_ttft_ms: 90.60808946378529
-  median_tpot_ms: 19.21123781467491
+  median_ttft_ms: 90.33236443065107
+  median_tpot_ms: 19.202445470672497
 ======================================================================
 
 [ERRORS]
-  [rank0]:E0404 02:10:12.013000 1011170 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank0]:E0404 02:10:12.013000 1011170 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank0]:E0404 02:10:12.013000 1011170 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank0]:E0404 02:10:12.013000 1011170 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank6]:E0404 02:10:12.421000 1011176 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank6]:E0404 02:10:12.421000 1011176 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank6]:E0404 02:10:12.421000 1011176 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank6]:E0404 02:10:12.421000 1011176 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank5]:E0404 02:10:12.448000 1011175 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank5]:E0404 02:10:12.448000 1011175 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank5]:E0404 02:10:12.448000 1011175 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank5]:E0404 02:10:12.448000 1011175 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank4]:E0404 02:10:12.573000 1011174 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank4]:E0404 02:10:12.573000 1011174 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank4]:E0404 02:10:12.573000 1011174 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank4]:E0404 02:10:12.573000 1011174 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank3]:E0404 02:10:12.610000 1011173 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank3]:E0404 02:10:12.610000 1011173 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank3]:E0404 02:10:12.610000 1011173 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank3]:E0404 02:10:12.610000 1011173 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank2]:E0404 02:10:12.838000 1011172 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank2]:E0404 02:10:12.838000 1011172 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank2]:E0404 02:10:12.838000 1011172 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank2]:E0404 02:10:12.838000 1011172 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank7]:E0404 02:10:12.878000 1011177 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank7]:E0404 02:10:12.878000 1011177 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank7]:E0404 02:10:12.878000 1011177 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank7]:E0404 02:10:12.878000 1011177 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank1]:E0404 02:10:12.966000 1011171 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank1]:E0404 02:10:12.966000 1011171 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank1]:E0404 02:10:12.966000 1011171 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank1]:E0404 02:10:12.966000 1011171 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
+  [rank7]:E0404 08:40:20.669000 1106313 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
+  [rank7]:E0404 08:40:20.669000 1106313 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
+  [rank7]:E0404 08:40:20.669000 1106313 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
+  [rank7]:E0404 08:40:20.669000 1106313 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
+  [rank1]:E0404 08:40:21.110000 1106307 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
+  [rank1]:E0404 08:40:21.110000 1106307 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
+  [rank1]:E0404 08:40:21.110000 1106307 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
+  [rank1]:E0404 08:40:21.110000 1106307 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
+  [rank5]:E0404 08:40:22.034000 1106311 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
+  [rank5]:E0404 08:40:22.034000 1106311 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
+  [rank5]:E0404 08:40:22.034000 1106311 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
+  [rank5]:E0404 08:40:22.034000 1106311 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
+  [rank3]:E0404 08:40:22.089000 1106309 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
+  [rank3]:E0404 08:40:22.089000 1106309 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
+  [rank3]:E0404 08:40:22.089000 1106309 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
+  [rank3]:E0404 08:40:22.089000 1106309 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
+  [rank4]:E0404 08:40:22.120000 1106310 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
+  [rank4]:E0404 08:40:22.120000 1106310 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
+  [rank4]:E0404 08:40:22.120000 1106310 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
+  [rank4]:E0404 08:40:22.120000 1106310 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
+  [rank0]:E0404 08:40:22.174000 1106306 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
+  [rank0]:E0404 08:40:22.174000 1106306 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
+  [rank0]:E0404 08:40:22.174000 1106306 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
+  [rank0]:E0404 08:40:22.174000 1106306 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
+  [rank6]:E0404 08:40:22.193000 1106312 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
+  [rank6]:E0404 08:40:22.193000 1106312 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
+  [rank6]:E0404 08:40:22.193000 1106312 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
+  [rank6]:E0404 08:40:22.193000 1106312 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
+  [rank2]:E0404 08:40:22.345000 1106308 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
+  [rank2]:E0404 08:40:22.345000 1106308 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
+  [rank2]:E0404 08:40:22.345000 1106308 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
+  [rank2]:E0404 08:40:22.345000 1106308 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
 
 [STATUS]
   Server startup: OK
