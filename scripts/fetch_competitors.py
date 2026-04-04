@@ -48,7 +48,14 @@ def fetch_atom_data(url=ATOM_DATA_URL):
 
 
 def parse_atom_bench_name(name):
-    """Parse ATOM bench name like 'DeepSeek-R1-0528 1024/1024 c=128 throughput (tok/s)'."""
+    """Parse ATOM bench name like 'DeepSeek-R1-0528 1024/1024 c=128 throughput (tok/s)'.
+
+    Also handles 'ATOM::' prefix added in newer data.js versions.
+    """
+    # Strip 'ATOM::' prefix if present
+    if name.startswith("ATOM::"):
+        name = name[len("ATOM::"):]
+
     m = re.match(r"^(\S+)\s+(\d+)/(\d+)\s+c=(\d+)\s+(.+?)\s*\((.+)\)$", name)
     if m:
         return {
@@ -323,7 +330,10 @@ def fetch_atom_ci_details(commit_sha, token=None):
 
 
 def convert_atom_to_runs(atom_data):
-    """Convert ATOM's latest benchmark entry to unified run format.
+    """Convert ATOM benchmark entries to unified run format.
+
+    For each model, finds the most recent entry that has perf data
+    (throughput/TPOT/TTFT), since the latest entry may only have accuracy.
 
     Returns a dict of {model_key: run_dict}.
     """
@@ -332,46 +342,68 @@ def convert_atom_to_runs(atom_data):
         print("ERROR: No benchmark entries found in ATOM data", file=sys.stderr)
         sys.exit(1)
 
-    latest = entries[-1]
-    commit = latest.get("commit", {})
-    date_ts = latest.get("date", 0)
-    date_str = datetime.fromtimestamp(date_ts / 1000).strftime("%Y-%m-%d") if date_ts else "unknown"
+    # Collect all models from all entries, find latest perf entry per model
+    model_best_entry = {}  # model -> (entry_index, entry)
+    for i, entry in enumerate(entries):
+        for bench in entry.get("benches", []):
+            parsed = parse_atom_bench_name(bench["name"])
+            if not parsed:
+                continue
+            metric_key = METRIC_MAP.get(parsed["metric"])
+            if metric_key and metric_key not in ("_gpu_count",):
+                model = parsed["model"]
+                # Always prefer later entries (higher index)
+                if model not in model_best_entry or i > model_best_entry[model][0]:
+                    model_best_entry[model] = (i, entry)
 
-    # Group benches by model
+    # Group benches by model using each model's best entry
     model_benches = {}
-    for bench in latest.get("benches", []):
-        parsed = parse_atom_bench_name(bench["name"])
-        if not parsed:
-            continue
+    model_commits = {}
+    model_dates = {}
+    for model, (idx, entry) in model_best_entry.items():
+        commit = entry.get("commit", {})
+        date_ts = entry.get("date", 0)
+        date_str = datetime.fromtimestamp(date_ts / 1000).strftime("%Y-%m-%d") if date_ts else "unknown"
 
-        model = parsed["model"]
-        if model not in model_benches:
-            model_benches[model] = {}
+        model_benches[model] = {}
+        model_commits[model] = commit
+        model_dates[model] = date_str
 
-        key = (parsed["isl"], parsed["osl"], parsed["conc"])
-        if key not in model_benches[model]:
-            model_benches[model][key] = {}
+        for bench in entry.get("benches", []):
+            parsed = parse_atom_bench_name(bench["name"])
+            if not parsed or parsed["model"] != model:
+                continue
 
-        metric_key = METRIC_MAP.get(parsed["metric"])
-        if metric_key:
-            model_benches[model][key][metric_key] = bench["value"]
+            key = (parsed["isl"], parsed["osl"], parsed["conc"])
+            if key not in model_benches[model]:
+                model_benches[model][key] = {}
+
+            metric_key = METRIC_MAP.get(parsed["metric"])
+            if metric_key:
+                model_benches[model][key][metric_key] = bench["value"]
+
+        print(f"  Model {model}: entry #{idx} ({date_str}), "
+              f"{len(model_benches[model])} data points")
 
     # Build run objects
     runs = {}
     for model, bench_points in model_benches.items():
+        commit = model_commits[model]
+        date_str = model_dates[model]
+
         # Determine if MTP variant
         is_mtp = "-mtp" in model.lower()
         mtp_tag = ""
+        m = None
         if is_mtp:
             m = re.search(r"-mtp(\d+)", model.lower())
             mtp_tag = f"-mtp{m.group(1)}" if m else "-mtp"
 
         model_clean = re.sub(r"-mtp\d*", "", model)
-        # ATOM CI uses FP8 block-scale quantization for all DeepSeek-R1 runs
-        # (model config.json contains quantization_config with quant_method=fp8)
-        # Only the model name "GLM-5-FP8" explicitly has FP8 suffix;
-        # DeepSeek-R1-0528 is also FP8 but without the suffix.
-        if "FP8" in model:
+        if "MXFP4" in model or "FP4" in model:
+            quant = "MXFP4"
+            model_clean = re.sub(r"-(?:MXFP4|FP4)(?:-MTP-MoEFP4)?", "", model_clean)
+        elif "FP8" in model:
             quant = "FP8"
             model_clean = model_clean.replace("-FP8", "")
         elif "DeepSeek-R1" in model:
@@ -439,9 +471,8 @@ def main():
         atom_data = fetch_atom_data(args.url or ATOM_DATA_URL)
         runs = convert_atom_to_runs(atom_data)
 
-        # Only keep DeepSeek-R1-0528 base model (skip GLM-5, gpt-oss, MXFP4 variants)
-        KEEP_MODELS = {"DeepSeek-R1-0528"}
-        runs = {k: v for k, v in runs.items() if v["model"] in KEEP_MODELS}
+        # Only keep DeepSeek-R1-0528 variants (skip GLM-5, gpt-oss, Kimi, Llama, Qwen)
+        runs = {k: v for k, v in runs.items() if "DeepSeek-R1-0528" in v["model"]}
 
         # Fetch AR + launch config from CI logs
         commit_sha = next(iter(runs.values())).get("commit", "")
@@ -517,7 +548,7 @@ def main():
                     exact_ar = {}     # (isl, osl, conc) -> ar
                     scenario_ar = {}  # (isl, osl) -> ar
                     for (model_name, isl, osl, conc), ar in ar_map.items():
-                        if run_model in model_name and "MXFP4" not in model_name:
+                        if run_model in model_name:
                             exact_ar[(isl, osl, conc)] = ar
                             scenario_ar[(isl, osl)] = ar
 
