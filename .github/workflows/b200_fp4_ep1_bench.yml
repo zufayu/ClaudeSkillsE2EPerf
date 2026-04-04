@@ -1,0 +1,48 @@
+name: B200 FP4 EP1 Bench
+on:
+  push:
+    paths:
+      - '.github/workflows/b200_fp4_ep1_bench.yml'
+jobs:
+  fp4-ep1-bench:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 120
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_trt
+      SFS: /SFS-aGqda6ct
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep1_tp8
+    steps:
+      - name: Sync repo
+        run: |
+          ssh $NODE "cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true"
+          ssh $NODE "cd $REPO && git log --oneline -3"
+
+      - name: Verify container and GPU
+        run: |
+          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader"
+          ssh $NODE "docker exec $CONTAINER ls $MODEL_FP4/ | head -5"
+
+      - name: Run FP4 throughput benchmark (chat c=64 EP=1)
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_b200.sh --model-fp4 $MODEL_FP4 --configs fp4-throughput --scenario chat --concurrency 64 --ep-sizes 1 --result-dir ./$RESULT_DIR'"
+
+      - name: Show results
+        if: always()
+        run: |
+          ssh $NODE "ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'"
+          ssh $NODE "cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'"
+
+      - name: Git commit and push results
+        run: |
+          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && git add -f $RESULT_DIR/ && git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=1 TP=8 bench (chat c=64, post2)
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push; else echo 'Nothing to commit'; fi"
+
+      - name: Show final state
+        if: always()
+        run: ssh $NODE "cd $REPO && git log --oneline -3"
