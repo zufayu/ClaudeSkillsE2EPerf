@@ -375,6 +375,7 @@ if [[ -n "$MAX_MODEL_LEN" ]]; then
     MAX_MODEL_LEN_ARGS+=(--max-model-len "$MAX_MODEL_LEN")
 fi
 
+PYTORCH_PROFILER_WITH_STACK=0 \
 python3 -m atom.entrypoints.openai_server \
     --model "$MODEL" \
     --server-port "$SERVER_PORT" \
