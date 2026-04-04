@@ -3,4 +3,4 @@
 
 | Config | Quant | Scenario | TP | EP | CONC | Total Tput | Output Tput | Interac. | TPOT (ms) | TTFT (ms) |
 |--------|-------|----------|----|----|------|------------|-------------|----------|-----------|-----------|
-| throughput | fp4 | chat | 4 | 4 | 64 | 6637.6 | 3318.8 | 54.95 | 18.2 | 1210 |
+| throughput | fp4 | chat | 4 | 4 | 64 | 6736.4 | 3368.2 | 55.72 | 17.9 | 1204 |
