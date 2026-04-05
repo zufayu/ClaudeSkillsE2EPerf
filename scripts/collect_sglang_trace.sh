@@ -191,6 +191,7 @@ SERVER_LOG="$RESULT_DIR/server_${TAG}.log"
 log "Starting SGLang server with profiler enabled..."
 
 SGLANG_TORCH_PROFILER_DIR="$TRACE_DIR" \
+PYTORCH_PROFILER_WITH_STACK=0 \
 PYTHONNOUSERSITE=1 \
 python3 -m sglang.launch_server \
     --model-path "$MODEL" \
