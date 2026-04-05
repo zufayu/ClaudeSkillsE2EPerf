@@ -231,7 +231,7 @@ run_benchmark_serving \
     --backend vllm \
     --input-len "$ISL" \
     --output-len "$OSL" \
-    --random-range-ratio 1.0 \
+    --random-range-ratio 0.8 \
     --num-prompts "$WARMUP_NUM_PROMPTS" \
     --max-concurrency "$CONCURRENCY" \
     --num-warmups 0 \
@@ -258,7 +258,7 @@ run_benchmark_serving \
     --backend vllm \
     --input-len "$ISL" \
     --output-len "$OSL" \
-    --random-range-ratio 1.0 \
+    --random-range-ratio 0.8 \
     --num-prompts "$PROFILE_NUM_PROMPTS" \
     --max-concurrency "$CONCURRENCY" \
     --num-warmups 0 \
