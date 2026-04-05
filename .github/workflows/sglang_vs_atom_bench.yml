@@ -41,6 +41,7 @@ jobs:
             ssh $NODE "python3 -c \"import json; d=json.load(open('$f')); print(f'Output Tput: {d.get(\\\"output_throughput\\\",0):.1f}, TPOT p50: {d.get(\\\"tpot_p50\\\", d.get(\\\"median_tpot_ms\\\",0)):.1f}ms, TTFT p50: {d.get(\\\"ttft_p50\\\", d.get(\\\"median_ttft_ms\\\",0)):.1f}ms')\"" 2>/dev/null || echo "parse failed"
           done
 
+  # MI355X: 3 configs sequential (EP8-TP8 core + EP1-TP4/EP1-TP8 reference)
   mi355x-atom-ep8-tp8:
     runs-on: [self-hosted, mi355x]
     timeout-minutes: 60
@@ -66,4 +67,82 @@ jobs:
           for f in $REPO/$RESULT_DIR/result_*.json; do
             echo "=== $(basename $f) ==="
             python3 -c "import json; d=json.load(open('$f')); print(f'Output Tput: {d.get(\"output_throughput\",0):.1f}, TPOT p50: {d.get(\"tpot_p50\", d.get(\"median_tpot_ms\",0)):.1f}ms, TTFT p50: {d.get(\"ttft_p50\", d.get(\"median_ttft_ms\",0)):.1f}ms')" 2>/dev/null || echo "parse failed"
+          done
+
+  mi355x-atom-ep1-tp4:
+    runs-on: [self-hosted, mi355x]
+    needs: mi355x-atom-ep8-tp8
+    timeout-minutes: 60
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
+      RESULT_DIR: results/sglang_vs_atom/mi355x_atom_mxfp4_ep1_tp4
+    steps:
+      - name: Get container image name
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: Run ATOM MXFP4 EP1 TP4 bench (chat c=64)
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 4 --container-image '${{ env.IMAGE }}' --result-dir ./$RESULT_DIR"
+
+      - name: Show results
+        if: always()
+        run: |
+          cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo "No summary"
+          for f in $REPO/$RESULT_DIR/result_*.json; do
+            echo "=== $(basename $f) ==="
+            python3 -c "import json; d=json.load(open('$f')); print(f'Output Tput: {d.get(\"output_throughput\",0):.1f}, TPOT p50: {d.get(\"tpot_p50\", d.get(\"median_tpot_ms\",0)):.1f}ms, TTFT p50: {d.get(\"ttft_p50\", d.get(\"median_ttft_ms\",0)):.1f}ms')" 2>/dev/null || echo "parse failed"
+          done
+
+  mi355x-atom-ep1-tp8:
+    runs-on: [self-hosted, mi355x]
+    needs: mi355x-atom-ep1-tp4
+    timeout-minutes: 60
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
+      RESULT_DIR: results/sglang_vs_atom/mi355x_atom_mxfp4_ep1_tp8
+    steps:
+      - name: Get container image name
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: Run ATOM MXFP4 EP1 TP8 bench (chat c=64)
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --container-image '${{ env.IMAGE }}' --result-dir ./$RESULT_DIR"
+
+      - name: Show results
+        if: always()
+        run: |
+          cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo "No summary"
+          for f in $REPO/$RESULT_DIR/result_*.json; do
+            echo "=== $(basename $f) ==="
+            python3 -c "import json; d=json.load(open('$f')); print(f'Output Tput: {d.get(\"output_throughput\",0):.1f}, TPOT p50: {d.get(\"tpot_p50\", d.get(\"median_tpot_ms\",0)):.1f}ms, TTFT p50: {d.get(\"ttft_p50\", d.get(\"median_ttft_ms\",0)):.1f}ms')" 2>/dev/null || echo "parse failed"
+          done
+
+  # Summary comparison
+  summary:
+    runs-on: [self-hosted, mi355x]
+    needs: [b200-sglang-tp4-ep4, mi355x-atom-ep8-tp8, mi355x-atom-ep1-tp4, mi355x-atom-ep1-tp8]
+    if: always()
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+    steps:
+      - name: Show all results
+        run: |
+          echo "=== SGLang vs ATOM Comparison ==="
+          echo ""
+          for d in $REPO/results/sglang_vs_atom/*/; do
+            echo "--- $(basename $d) ---"
+            for f in "$d"/result_*.json; do
+              [ -f "$f" ] || continue
+              python3 -c "
+import json, os
+d = json.load(open('$f'))
+name = os.path.basename(os.path.dirname('$f'))
+out = d.get('output_throughput', 0)
+tpot = d.get('tpot_p50', d.get('median_tpot_ms', 0))
+ttft = d.get('ttft_p50', d.get('median_ttft_ms', 0))
+print(f'  {name}: Output={out:.1f}, TPOT_p50={tpot:.1f}ms, TTFT_p50={ttft:.1f}ms')
+" 2>/dev/null || echo "  parse failed: $(basename $f)"
+            done
           done
