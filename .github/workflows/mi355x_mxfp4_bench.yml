@@ -5,7 +5,7 @@ on:
       - '.github/workflows/mi355x_mxfp4_bench.yml'
 jobs:
   # ============================================================
-  # zufa_atom2 (ROCm 7.2.1) — 3 configs
+  # zufa_atom2 (ROCm 7.2.1) — 4 configs
   # ============================================================
   rocm721-ep1-tp8:
     runs-on: [self-hosted, mi355x]
@@ -66,12 +66,31 @@ jobs:
         if: always()
         run: cat $REPO/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp4_rocm721/summary.md 2>/dev/null || echo "No summary"
 
+  rocm721-ep4-tp4:
+    runs-on: [self-hosted, mi355x]
+    needs: rocm721-ep1-tp4
+    timeout-minutes: 60
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom2
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
+    steps:
+      - name: Get container image name
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: Run MXFP4 EP4 TP4 bench (chat c=64)
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 4 --ep --container-image '${{ env.IMAGE }}' --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm721"
+
+      - name: Show results
+        if: always()
+        run: cat $REPO/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm721/summary.md 2>/dev/null || echo "No summary"
+
   # ============================================================
-  # zufa_atom (ROCm 7.1.1) — 3 configs
+  # zufa_atom (ROCm 7.1.1) — 4 configs
   # ============================================================
   rocm711-ep1-tp8:
     runs-on: [self-hosted, mi355x]
-    needs: rocm721-ep1-tp4
+    needs: rocm721-ep4-tp4
     timeout-minutes: 60
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
@@ -129,12 +148,31 @@ jobs:
         if: always()
         run: cat $REPO/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp4_rocm711/summary.md 2>/dev/null || echo "No summary"
 
+  rocm711-ep4-tp4:
+    runs-on: [self-hosted, mi355x]
+    needs: rocm711-ep1-tp4
+    timeout-minutes: 60
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
+    steps:
+      - name: Get container image name
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: Run MXFP4 EP4 TP4 bench (chat c=64)
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 4 --ep --container-image '${{ env.IMAGE }}' --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm711"
+
+      - name: Show results
+        if: always()
+        run: cat $REPO/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm711/summary.md 2>/dev/null || echo "No summary"
+
   # ============================================================
   # Commit all results
   # ============================================================
   commit-results:
     runs-on: [self-hosted, mi355x]
-    needs: rocm711-ep1-tp4
+    needs: rocm711-ep4-tp4
     if: always()
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
@@ -151,7 +189,7 @@ jobs:
           echo "=== Staged files ==="
           git diff --cached --name-only
           if ! git diff --cached --quiet; then
-            git commit -m "data: MI355X MXFP4 bench — EP1/EP8/TP4/TP8 × ROCm 7.1.1/7.2.1 (chat c=64)
+            git commit -m "data: MI355X MXFP4 bench — EP1/EP4/EP8 × TP4/TP8 × ROCm 7.1.1/7.2.1 (chat c=64)
 
           Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
             git push
