@@ -1,0 +1,42 @@
+name: B200 SGLang FP4 Profiling
+on:
+  workflow_dispatch:
+jobs:
+  sglang-fp4-profiling:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 120
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_sglang
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      RESULT_DIR: results/sglang_profiling/b200_sglang_fp4_tp4_ep4
+    steps:
+      - name: Sync repo
+        run: |
+          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+
+      - name: Verify container
+        run: |
+          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2"
+          ssh $NODE "docker exec $CONTAINER python3 -c 'import sglang; print(f\"SGLang {sglang.__version__}\")'"
+
+      - name: Get container image name
+        run: echo "IMAGE=$(ssh $NODE "docker inspect $CONTAINER --format '{{.Config.Image}}'" 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: Clean old results
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true' && rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true"
+
+      - name: Run SGLang FP4 profiling (TP4 EP4 chat c=64)
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_trace.sh --model $MODEL_FP4 --tp 4 --ep 4 --scenario chat --concurrency 64 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'"
+
+      - name: Show results
+        if: always()
+        run: |
+          ssh $NODE "ls -lh $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'"
+          ssh $NODE "ls -lh $REPO/$RESULT_DIR/*.json.gz 2>/dev/null || echo 'No trace files'"
+          for f in $(ssh $NODE "ls $REPO/$RESULT_DIR/result_profiled_*.json 2>/dev/null"); do
+            echo "=== $(basename $f) ==="
+            ssh $NODE "python3 -c \"import json; d=json.load(open('$f')); print(f'Output Tput: {d.get(\\\"output_throughput\\\",0):.1f}, TPOT p50: {d.get(\\\"tpot_p50\\\", d.get(\\\"median_tpot_ms\\\",0)):.1f}ms, TTFT p50: {d.get(\\\"ttft_p50\\\", d.get(\\\"median_ttft_ms\\\",0)):.1f}ms')\"" 2>/dev/null || echo "parse failed"
+          done
