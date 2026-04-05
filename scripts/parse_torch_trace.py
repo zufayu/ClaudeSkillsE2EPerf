@@ -41,26 +41,34 @@ def load_trace(filepath):
 def classify_kernel(name):
     """Classify a GPU kernel name into a high-level operator category."""
     n = name.lower()
-    # Attention
-    if any(k in n for k in ["flash_fwd", "flash_bwd", "fmha", "flash_attn", "mha_", "attention", "softmax"]):
+    # Attention (check before GEMM since fmha kernels may contain "gemm")
+    if any(k in n for k in ["fmha", "flash_fwd", "flash_bwd", "flash_attn", "mha_", "merge_attn", "concat_and_cast_mha", "set_mla_kv"]):
         return "Attention"
-    # MoE / Expert routing
-    if any(k in n for k in ["moe", "expert", "topk", "gate"]):
+    # MoE / Expert routing and compute
+    # bmm_E2m1 with swiGlu = MoE expert GEMM with fused activation
+    # nvjet_sm100_tst = NVIDIA Blackwell MoE tensor kernels
+    if any(k in n for k in ["moe::", "expert", "routing"]):
         return "MoE/Expert"
-    # GEMM / MatMul
-    if any(k in n for k in ["gemm", "gemv", "cutlass", "cublas", "matmul", "dot_product", "cijk_", "bf16gemm", "fp8gemm"]):
-        return "GEMM/MatMul"
-    # AllReduce / Communication
+    if "swiglu" in n or "swig" in n:
+        return "MoE/Expert (fused GEMM+SwiGLU)"
+    if "nvjet_sm100" in n:
+        return "MoE/Expert (nvjet)"
+    if "bmm_" in n and ("e2m1" in n or "bfloat16_e2m1" in n):
+        return "MoE/Expert (BMM)"
+    # AllReduce / Communication (check before GEMM)
     if any(k in n for k in ["allreduce", "reduce_scatter", "all_gather", "allgather", "nccl", "rccl", "ncclkernel", "device_load", "device_store"]):
         return "Communication"
+    # GEMM / MatMul
+    if any(k in n for k in ["gemm", "gemv", "cutlass", "cublas", "matmul", "dot_product", "cijk_", "bf16gemm", "fp8gemm", "splitkreduce"]):
+        return "GEMM/MatMul"
     # Normalization
     if any(k in n for k in ["layernorm", "rmsnorm", "batchnorm", "groupnorm"]):
         return "Normalization"
     # Elementwise / Activation
-    if any(k in n for k in ["silu", "gelu", "relu", "swiglu", "elementwise", "add_kernel", "mul_kernel"]):
+    if any(k in n for k in ["silu", "gelu", "relu", "elementwise", "add_kernel", "mul_kernel", "act_and_mul"]):
         return "Activation/Elementwise"
     # Quantization
-    if any(k in n for k in ["quant", "dequant", "scale", "fp4", "fp8", "mxfp"]):
+    if any(k in n for k in ["quant", "dequant", "cvt_fp16_to_fp4", "cvt_fp4", "fp4", "fp8", "mxfp"]):
         return "Quantization"
     # Copy / Memory
     if any(k in n for k in ["memcpy", "memset", "copy", "transpose"]):
