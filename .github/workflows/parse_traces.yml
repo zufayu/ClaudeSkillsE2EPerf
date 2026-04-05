@@ -1,0 +1,112 @@
+name: Parse Profiling Traces
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Platform to parse traces on'
+        type: choice
+        options:
+          - b200-sglang
+          - b200-trt
+          - mi355x-atom
+        default: b200-sglang
+
+jobs:
+  parse-b200-sglang:
+    if: inputs.platform == 'b200-sglang'
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 60
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_sglang
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      TRACE_DIR: results/sglang_profiling/b200_sglang_fp4_tp4_ep4
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+
+      - name: List trace files
+        run: ssh $NODE "ls -lh $REPO/$TRACE_DIR/*.json.gz $REPO/$TRACE_DIR/*.json 2>/dev/null || echo 'No trace files'"
+
+      - name: Parse SGLang trace (rank 0)
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && TRACE_FILE=\$(ls $TRACE_DIR/*TP-0*.trace.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE_FILE\" ]; then python3 scripts/parse_torch_trace.py \"\$TRACE_FILE\" --csv $TRACE_DIR/kernel_breakdown_rank0.csv --top 40 2>&1; else echo \"No TP-0 trace found\"; fi'"
+
+      - name: Parse SGLang trace by category
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && TRACE_FILE=\$(ls $TRACE_DIR/*TP-0*.trace.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE_FILE\" ]; then python3 scripts/parse_torch_trace.py \"\$TRACE_FILE\" --by-category --csv $TRACE_DIR/category_breakdown_rank0.csv 2>&1; else echo \"No TP-0 trace found\"; fi'"
+
+      - name: Show CSV results
+        if: always()
+        run: |
+          ssh $NODE "cat $REPO/$TRACE_DIR/kernel_breakdown_rank0.csv 2>/dev/null | head -30 || echo 'No kernel CSV'"
+          echo "=== Category ==="
+          ssh $NODE "cat $REPO/$TRACE_DIR/category_breakdown_rank0.csv 2>/dev/null || echo 'No category CSV'"
+
+      - name: Commit results
+        if: always()
+        run: |
+          ssh $NODE "cd $REPO && git add $TRACE_DIR/kernel_breakdown_rank0.csv $TRACE_DIR/category_breakdown_rank0.csv 2>/dev/null && git commit -m 'Add SGLang B200 FP4 kernel breakdown (TP4 EP4 chat c=64)' 2>/dev/null && git push origin main 2>/dev/null || echo 'No new files to commit'"
+
+  parse-b200-trt:
+    if: inputs.platform == 'b200-trt'
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 60
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_trt
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      TRACE_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_post2_profiling
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+
+      - name: List trace files
+        run: ssh $NODE "ls -lh $REPO/$TRACE_DIR/*.json* 2>/dev/null || echo 'No trace files'"
+
+      - name: Parse TRT-LLM nsys JSON
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && TRACE_FILE=\$(ls $TRACE_DIR/nsys_serving_*.json 2>/dev/null | head -1) && if [ -n \"\$TRACE_FILE\" ]; then python3 scripts/parse_torch_trace.py \"\$TRACE_FILE\" --csv $TRACE_DIR/kernel_breakdown.csv --top 40 2>&1; else echo \"No nsys JSON found\"; fi'"
+
+      - name: Show results
+        if: always()
+        run: ssh $NODE "cat $REPO/$TRACE_DIR/kernel_breakdown.csv 2>/dev/null | head -30 || echo 'No CSV'"
+
+  parse-mi355x-atom:
+    if: inputs.platform == 'mi355x-atom'
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 60
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+      TRACE_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711_profiling
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
+
+      - name: List trace files
+        run: ls -lh $REPO/$TRACE_DIR/*.json* $REPO/$TRACE_DIR/*.xlsx 2>/dev/null || echo "No trace files"
+
+      - name: Parse ATOM trace by category
+        run: |
+          podman exec $CONTAINER bash -c "cd $REPO && TRACE_FILE=\$(ls $TRACE_DIR/*.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE_FILE\" ]; then python3 scripts/parse_torch_trace.py \"\$TRACE_FILE\" --by-category --csv $TRACE_DIR/category_breakdown.csv 2>&1; else echo 'No trace.json.gz found — using existing xlsx breakdowns'; fi"
+
+      - name: Show existing breakdowns
+        if: always()
+        run: |
+          echo "=== Decode Breakdown ==="
+          python3 -c "
+          import openpyxl
+          wb = openpyxl.load_workbook('$REPO/$TRACE_DIR/decode_breakdown.xlsx')
+          ws = wb.active
+          for row in ws.iter_rows(values_only=True):
+              print(row)
+          " 2>/dev/null || echo "No decode breakdown"
+          echo "=== Prefill Breakdown ==="
+          python3 -c "
+          import openpyxl
+          wb = openpyxl.load_workbook('$REPO/$TRACE_DIR/prefill_breakdown.xlsx')
+          ws = wb.active
+          for row in ws.iter_rows(values_only=True):
+              print(row)
+          " 2>/dev/null || echo "No prefill breakdown"
