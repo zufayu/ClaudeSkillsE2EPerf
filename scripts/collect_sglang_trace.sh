@@ -39,6 +39,8 @@ CONCURRENCY=64
 RESULT_DIR=""
 TRACE_DIR="/tmp/sglang_trace"
 PROFILE_NUM_PROMPTS=""
+PROFILE_STEPS=200
+PROFILE_START_STEP=30
 FLUSH_TIMEOUT=300
 CONTAINER_IMAGE=""
 
@@ -69,16 +71,19 @@ Options:
   --concurrency N       Max concurrency (default: 64)
   --port N              Server port (default: 8888)
   --profile-prompts N   Prompts during profiling (default: CONC*10, full load)
+  --profile-steps N     Forward steps to profile (default: 200)
+  --profile-start-step N Skip first N steps to capture steady-state (default: 30)
   --flush-timeout N     Max seconds to wait for trace flush (default: 300)
   --container-image IMG Container image name for metadata
   -h, --help            Show this help
 
-Profiling methodology (aligned with collect_atom_trace.sh):
+Profiling methodology:
   1. Start server with SGLANG_TORCH_PROFILER_DIR
-  2. Warmup: CONC*2 prompts (steady state)
-  3. HTTP POST /start_profile
-  4. Benchmark: CONC*10 prompts (full load, same as SA benchmark)
-  5. HTTP POST /stop_profile
+  2. Warmup: CONC*2 prompts (reach steady state)
+  3. HTTP POST /start_profile with num_steps + start_step
+     (skip initial prefill ramp-up, capture steady-state decode)
+  4. Benchmark: CONC*10 prompts (full load)
+  5. Profiler auto-stops after num_steps, or /stop_profile as fallback
   6. Wait for trace flush, collect traces
 EOF
     exit 0
@@ -94,6 +99,8 @@ while [[ $# -gt 0 ]]; do
         --result-dir)      RESULT_DIR="$2"; shift 2 ;;
         --port)            PORT="$2"; shift 2 ;;
         --profile-prompts) PROFILE_NUM_PROMPTS="$2"; shift 2 ;;
+        --profile-steps)   PROFILE_STEPS="$2"; shift 2 ;;
+        --profile-start-step) PROFILE_START_STEP="$2"; shift 2 ;;
         --flush-timeout)   FLUSH_TIMEOUT="$2"; shift 2 ;;
         --container-image) CONTAINER_IMAGE="$2"; shift 2 ;;
         -h|--help)         usage ;;
@@ -135,7 +142,7 @@ log "  Scenario:    $SCENARIO (ISL=$ISL, OSL=$OSL)"
 log "  TP=$TP  EP=$EP  GPU_COUNT=$GPU_COUNT"
 log "  Concurrency: $CONCURRENCY"
 log "  Warmup:      $WARMUP_NUM_PROMPTS prompts"
-log "  Profile:     $PROFILE_NUM_PROMPTS prompts"
+log "  Profile:     $PROFILE_NUM_PROMPTS prompts (steps=$PROFILE_STEPS, start_step=$PROFILE_START_STEP)"
 log "  Trace Dir:   $TRACE_DIR"
 log "  Result Dir:  $RESULT_DIR"
 log "  Tag:         $TAG"
@@ -243,11 +250,12 @@ log "Warmup done."
 
 # ======================== Step 4: Profile =====================================
 
-log "Starting profiler via HTTP..."
-curl -s -X POST "http://0.0.0.0:${PORT}/start_profile" || {
+log "Starting profiler via HTTP (num_steps=$PROFILE_STEPS, start_step=$PROFILE_START_STEP)..."
+log "  start_step=$PROFILE_START_STEP skips initial prefill ramp-up to capture steady-state decode"
+PROFILE_RESP=$(curl -s -X POST "http://0.0.0.0:${PORT}/start_profile" -H "Content-Type: application/json" -d "{\"num_steps\": $PROFILE_STEPS, \"start_step\": $PROFILE_START_STEP}") || {
     log "ERROR: Failed to start profiler"; exit 1
 }
-log "Profiler started."
+log "Profiler started. Response: $PROFILE_RESP"
 
 log "Running profiled benchmark ($PROFILE_NUM_PROMPTS prompts, concurrency $CONCURRENCY)..."
 
@@ -269,9 +277,9 @@ run_benchmark_serving \
 
 log "Profiled benchmark done."
 
-log "Stopping profiler via HTTP..."
+log "Stopping profiler via HTTP (fallback, should have auto-stopped after $PROFILE_STEPS steps)..."
 curl -s -X POST "http://0.0.0.0:${PORT}/stop_profile" || true
-log "Profiler stopped."
+log "Profiler stop sent."
 
 # ======================== Step 5: Wait for Trace Flush ========================
 
