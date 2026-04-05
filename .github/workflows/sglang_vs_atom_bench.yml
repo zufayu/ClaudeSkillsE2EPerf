@@ -1,6 +1,9 @@
 name: SGLang vs ATOM Bench
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/sglang_vs_atom_bench.yml'
 
 jobs:
   b200-sglang-tp4-ep4:
