@@ -1,10 +1,10 @@
-=== Trimmed: 14514 -> 22 lines ===
+=== Trimmed: 14248 -> 22 lines ===
 === Source: server_fp4_throughput_chat_ep4_c64.log ===
 
 ======================================================================
 REPRODUCE INFO (from result JSON)
 ======================================================================
-Docker Image: nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc10
+Docker Image: nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post3
 
 Server Command:
   PYTHONNOUSERSITE=1 mpirun -n 1 --oversubscribe --allow-run-as-root trtllm-serve /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2 --port=8888 --trust_remote_code --backend=pytorch --max_seq_len=8192 --max_num_tokens=8192 --tp_size=4 --ep_size=4 --extra_llm_api_options=./results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_unknown/config_fp4_throughput_chat_ep4_c64.yml
@@ -24,11 +24,8 @@ Extra LLM API Config (YAML):
       backend: TRTLLM
 
 Benchmark Command:
-  benchmark_serving.py --model /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2 --port 8888 --backend openai --input-len 1024 --output-len 1024 --random-range-ratio 0.8 --num-prompts 640 --max-concurrency 64 --num-warmups 128 --result-filename result_fp4_throughput_chat_ep4_c64 --result-dir ./results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_unknown --metadata max_model_len=8192 kv_cache_dtype=fp8 kv_cache_free_mem_fraction=0.8 tensor_parallel_size=4 gpu_count=4 ep_size=4 dp_attention=false moe_backend=TRTLLM mtp_layers=0 piecewise_cuda_graphs=false random_range_ratio=0.8 trtllm_version=🚨 Config not found for parakeet. You can manually add it to HARDCODED_CONFIG_FOR_MODELS in utils/auto_docstring.py
-🚨 Config not found for parakeet. You can manually add it to HARDCODED_CONFIG_FOR_MODELS in utils/auto_docstring.py
-🚨 Config not found for parakeet. You can manually add it to HARDCODED_CONFIG_FOR_MODELS in utils/auto_docstring.py
-[TensorRT-LLM] TensorRT LLM version: 1.3.0rc10
-1.3.0rc10 container_image=nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc10
+  benchmark_serving.py --model /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2 --port 8888 --backend openai --input-len 1024 --output-len 1024 --random-range-ratio 0.8 --num-prompts 640 --max-concurrency 64 --num-warmups 128 --result-filename result_fp4_throughput_chat_ep4_c64 --result-dir ./results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_unknown --metadata max_model_len=8192 kv_cache_dtype=fp8 kv_cache_free_mem_fraction=0.8 tensor_parallel_size=4 gpu_count=4 ep_size=4 dp_attention=false moe_backend=TRTLLM mtp_layers=0 piecewise_cuda_graphs=false random_range_ratio=0.8 trtllm_version=[TensorRT-LLM] TensorRT LLM version: 1.2.0rc6.post3
+1.2.0rc6.post3 container_image=nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post3
 
 Key Config:
   model_id: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
@@ -43,9 +40,9 @@ Key Config:
   max_concurrency: 64
   num_prompts: 640
 
-RESULT: OK - 640/640 completed, output_throughput=3275.3 tok/s
-  median_ttft_ms: 94.09406549821142
-  median_tpot_ms: 19.021380303724644
+RESULT: OK - 640/640 completed, output_throughput=3275.7 tok/s
+  median_ttft_ms: 82.58788648527116
+  median_tpot_ms: 19.08071931232864
 ======================================================================
 
 [SERVER RUNTIME]
@@ -53,14 +50,12 @@ RESULT: OK - 640/640 completed, output_throughput=3275.3 tok/s
     model='/SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2'
     tokenizer=None
     tokenizer_mode='auto'
-    custom_tokenizer=None
     skip_tokenizer_init=False
     trust_remote_code=True
     tensor_parallel_size=4
     dtype='auto'
     revision=None
     tokenizer_revision=None
-    model_kwargs=None
     pipeline_parallel_size=1
     context_parallel_size=1
     gpus_per_node=4
@@ -70,18 +65,19 @@ RESULT: OK - 640/640 completed, output_throughput=3275.3 tok/s
     enable_attention_dp=False
     enable_lm_head_tp_in_adp=False
     pp_partition=None
-    cp_config=None
+    cp_config={}
     load_format=<LoadFormat.AUTO: 0>
+    fail_fast_on_attention_window_too_large=False
     enable_lora=False
     lora_config=None
-    kv_cache_config=KvCacheConfig(enable_block_reuse=False, max_tokens=1805335, max_attention_window=None, sink_token_length=None, free_gpu_memory_fraction=0.8, host_cache_size=None, onboard_blocks=True, cross_kv_cache_fraction=None, secondary_offload_min_priority=None, event_buffer_max_size=0, attention_dp_events_gather_period_ms=5, enable_partial_reuse=True, copy_on_partial_reuse=True, use_uvm=False, max_gpu_total_bytes=63432250982, dtype='fp8', mamba_ssm_cache_dtype='auto', mamba_ssm_stochastic_rounding=False, mamba_ssm_philox_rounds=10, tokens_per_block=32, use_kv_cache_manager_v2=False, max_util_for_resume=0.95)
+    kv_cache_config=KvCacheConfig(enable_block_reuse=False, max_tokens=1829197, max_attention_window=None, sink_token_length=None, free_gpu_memory_fraction=0.8, host_cache_size=None, onboard_blocks=True, cross_kv_cache_fraction=None, secondary_offload_min_priority=None, event_buffer_max_size=0, attention_dp_events_gather_period_ms=5, enable_partial_reuse=True, copy_on_partial_reuse=True, use_uvm=False, max_gpu_total_bytes=64270682521, dtype='fp8', mamba_ssm_cache_dtype='auto', tokens_per_block=32)
     enable_chunked_prefill=False
     guided_decoding_backend=None
     batched_logits_processor=None
     iter_stats_max_iterations=None
     request_stats_max_iterations=None
     peft_cache_config=None
-    scheduler_config=SchedulerConfig(capacity_scheduler_policy=<CapacitySchedulerPolicy.GUARANTEED_NO_EVICT: 'GUARANTEED_NO_EVICT'>, context_chunking_policy=None, dynamic_batch_config=None, waiting_queue_policy=<WaitingQueuePolicy.FCFS: 'fcfs'>, use_python_scheduler=False)
+    scheduler_config=SchedulerConfig(capacity_scheduler_policy=<CapacitySchedulerPolicy.GUARANTEED_NO_EVICT: 'GUARANTEED_NO_EVICT'>, context_chunking_policy=None, dynamic_batch_config=DynamicBatchConfig(enable_batch_size_tuning=True, enable_max_num_tokens_tuning=False, dynamic_batch_moving_average_window=128))
     cache_transceiver_config=None
     sparse_attention_config=None
     speculative_config=None
@@ -99,8 +95,6 @@ RESULT: OK - 640/640 completed, output_throughput=3275.3 tok/s
     otlp_traces_endpoint=None
     backend='pytorch'
     return_perf_metrics=False
-    perf_metrics_max_requests=0
-    enable_energy_metrics=False
     orchestrator_type=None
     env_overrides=None
     garbage_collection_gen0_threshold=20000
@@ -115,6 +109,7 @@ RESULT: OK - 640/640 completed, output_throughput=3275.3 tok/s
     enable_iter_perf_stats=False
     enable_iter_req_stats=False
     print_iter_log=True
+    perf_metrics_max_requests=0
     batch_wait_timeout_ms=0
     batch_wait_timeout_iters=0
     batch_wait_max_tokens_ratio=0
@@ -131,28 +126,22 @@ RESULT: OK - 640/640 completed, output_throughput=3275.3 tok/s
     mm_encoder_only=False
     ray_worker_extension_cls=None
     ray_placement_config=None
-    ray_worker_nsight_options=None
-    sleep_config=None
-    use_cute_dsl_blockscaling_mm=False
-    use_cute_dsl_blockscaling_bmm=False
+    enable_sleep=False
     disable_flashinfer_sampling=False
-    max_stats_len=1000
-    layer_wise_benchmarks_config=LayerwiseBenchmarksConfig(calibration_mode='NONE', calibration_file_path=None, calibration_layer_indices=None)
-    video_pruning_rate=None
   Attention: AttentionRuntimeFeatures(chunked_prefill=False, cache_reuse=False, has_speculative_draft_tokens=False, chunk_size=8192, chunked_prefill_buffer_batch_size=4)
-  Runtime: max_seq_len=8192, max_num_requests=2048, max_num_tokens=8192, max_batch_size=2048
-  Runtime: max_seq_len=8192, max_num_requests=2048, max_num_tokens=8192, max_batch_size=2048
+  Runtime: max_seq_len=8193, max_num_requests=2048, max_num_tokens=8192, max_batch_size=2048
+  Runtime: max_seq_len=8193, max_num_requests=2048, max_num_tokens=8192, max_batch_size=2048
 
 [MEMORY]
   Model weights (torch): 93.90 GiB
-  Model weights (non-torch): 9.93 GiB
-  Peak memory: 106.65 GiB, KV cache: 59.08 GiB (fraction=0.8)
-  Estimated KV cache: 59.08 GiB
-  PyTorch memory fraction: 0.6350581635698114 (113.2633056640625 GiB)
+  Model weights (non-torch): 7.08 GiB
+  Peak memory: 103.80 GiB, KV cache: 59.86 GiB (fraction=0.8)
+  Estimated KV cache: 59.86 GiB
+  PyTorch memory fraction: 0.6332840994023484 (112.9468994140625 GiB)
 
 [ERRORS]
   You are using a model of type deepseek_v3 to instantiate a model of type . This is not supported for all configurations of models and can yield errors.
-  [04/05/2026-02:40:38] [TRT-LLM] [E] Failed to send object: None
+  [04/05/2026-02:50:36] [TRT-LLM] [E] Failed to send object: None
 
 [STATUS]
   Server startup: OK
