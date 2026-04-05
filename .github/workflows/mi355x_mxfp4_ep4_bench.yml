@@ -15,7 +15,7 @@ jobs:
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
     steps:
       - name: Sync repo
-        run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
 
       - name: Get container image name
         run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
@@ -54,7 +54,7 @@ jobs:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
     steps:
       - name: Sync repo
-        run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
 
       - name: Commit and push results
         run: |

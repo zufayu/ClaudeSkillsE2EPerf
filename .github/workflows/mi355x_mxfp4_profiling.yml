@@ -21,8 +21,8 @@ jobs:
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
       RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm711_profiling
     steps:
-      - name: Sync repo
-        run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
+      - name: Sync repo (hard reset to drop any stuck local commits)
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
 
       - name: Clean old results
         run: podman exec $CONTAINER bash -c "rm -rf $REPO/$RESULT_DIR/result_profiled_*.json $REPO/$RESULT_DIR/decode_walltime_*.csv $REPO/$RESULT_DIR/summary.md $REPO/$RESULT_DIR/*.log 2>/dev/null; true"
@@ -36,14 +36,15 @@ jobs:
           ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'
           cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'
 
-      - name: Git commit and push results
+      - name: Git commit and push results (exclude large .json.gz traces)
         if: always()
         run: |
           cd $REPO
           git config user.email "ci@github.com"
           git config user.name "MI355X CI"
-          git stash 2>/dev/null || true && git pull --rebase origin main && git stash pop 2>/dev/null || true
-          for ext in log json csv md xlsx; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done
+          git fetch origin && git reset --hard origin/main
+          for ext in log csv md xlsx; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done
+          git add -f $RESULT_DIR/result_profiled_*.json 2>/dev/null || true
           git diff --cached --name-only
           if ! git diff --cached --quiet; then
             git commit -m "data: MI355X MXFP4 EP=4 TP=4 profiling (chat c=64)
@@ -64,8 +65,8 @@ jobs:
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
       RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711_profiling
     steps:
-      - name: Sync repo
-        run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
+      - name: Sync repo (hard reset to drop any stuck local commits)
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
 
       - name: Clean old results (keep trace .json.gz separate)
         run: |
@@ -81,20 +82,20 @@ jobs:
           ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'
           cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'
 
-      - name: Git commit and push results
+      - name: Git commit and push results (exclude large .json.gz traces)
         if: always()
         run: |
           cd $REPO
           git config user.email "ci@github.com"
           git config user.name "MI355X CI"
-          git reset HEAD 2>/dev/null || true
-          for ext in log json csv md xlsx; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done
+          git fetch origin && git reset --hard origin/main
+          for ext in log csv md xlsx; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done
+          git add -f $RESULT_DIR/result_profiled_*.json 2>/dev/null || true
           git diff --cached --name-only
           if ! git diff --cached --quiet; then
-            git commit -m "data: MI355X MXFP4 EP=8 TP=8 profiling (chat c=64, with_stack=False)
+            git commit -m "data: MI355X MXFP4 EP=8 TP=8 profiling (chat c=64)
 
           Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
-            git pull --rebase origin main
             git push
           else
             echo "Nothing to commit"
