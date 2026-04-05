@@ -1,0 +1,38 @@
+name: Setup B200 TRT2 (rc6.post3)
+
+on:
+  workflow_dispatch:
+    inputs:
+      node:
+        description: 'GPU node to setup'
+        type: choice
+        options:
+          - hungry-hippo-fin-03-2
+          - hungry-hippo-fin-03-7
+          - hungry-hippo-fin-03-1
+          - hungry-hippo-fin-03-3
+        default: hungry-hippo-fin-03-2
+
+jobs:
+  setup:
+    runs-on: [self-hosted, b200]
+    env:
+      NODE: ${{ inputs.node }}
+      CONTAINER: zufa_trt2
+      IMAGE: nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post3
+      SFS: /SFS-aGqda6ct
+    steps:
+      - name: Start zufa_trt2 container
+        run: |
+          ssh $NODE "docker rm -f $CONTAINER 2>/dev/null || true"
+          ssh $NODE "docker run -d --name $CONTAINER --gpus all --ipc host --ulimit memlock=-1 --ulimit stack=67108864 -v /home:/home -v /mnt:/mnt -v /data:/data -v $SFS:$SFS --shm-size=64g -p 8001:8000 --cap-add=SYS_PTRACE $IMAGE sleep infinity"
+          echo "Container $CONTAINER started on $NODE"
+
+      - name: Verify GPU + model paths
+        run: |
+          echo "=== GPU ==="
+          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader"
+          echo "=== TRT-LLM version ==="
+          ssh $NODE "docker exec $CONTAINER python3 -c 'import tensorrt_llm; print(tensorrt_llm.__version__)'"
+          echo "=== FP4 Model ==="
+          ssh $NODE "docker exec $CONTAINER ls $SFS/models/DeepSeek-R1-0528-NVFP4-v2/ | head -5"
