@@ -42,7 +42,7 @@ jobs:
           cd $REPO
           git config user.email "ci@github.com"
           git config user.name "MI355X CI"
-          git fetch origin && git reset --hard origin/main
+          git pull --rebase origin main || true
           for ext in log csv md xlsx; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done
           git add -f $RESULT_DIR/result_profiled_*.json 2>/dev/null || true
           git diff --cached --name-only
@@ -88,7 +88,7 @@ jobs:
           cd $REPO
           git config user.email "ci@github.com"
           git config user.name "MI355X CI"
-          git fetch origin && git reset --hard origin/main
+          git pull --rebase origin main || true
           for ext in log csv md xlsx; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done
           git add -f $RESULT_DIR/result_profiled_*.json 2>/dev/null || true
           git diff --cached --name-only
