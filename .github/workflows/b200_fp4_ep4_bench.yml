@@ -29,7 +29,7 @@ jobs:
         run: |
           IMAGE=$(ssh $NODE "docker inspect $CONTAINER --format '{{.Config.Image}}'" 2>/dev/null || echo unknown)
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
-          VERSION=$(ssh $NODE "docker exec $CONTAINER bash -c 'python3 -c \"import tensorrt_llm; print(tensorrt_llm.__version__)\" 2>/dev/null || pip show tensorrt-llm 2>/dev/null | grep Version | awk \"{print \\\\\\$2}\" || echo unknown'" 2>/dev/null)
+          VERSION=$(ssh $NODE "docker exec $CONTAINER bash -c 'pip show tensorrt-llm 2>/dev/null | grep ^Version | awk \"{print \\\\\\$2}\" || echo unknown'")
           echo "TRTLLM_VERSION=$VERSION" >> $GITHUB_ENV
           # Map version to env tag
           case "$VERSION" in
