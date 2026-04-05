@@ -1,6 +1,6 @@
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
-> **Last updated:** 2026-04-04 v22
+> **Last updated:** 2026-04-05 v23
 > **Model:** DeepSeek-R1-0528-NVFP4-v2, FP4
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
 > **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅；**MI355X TP=8+EP 公平对标完成 ✅**
@@ -22,6 +22,30 @@
 | MI355X | MXFP4 | 1 | 4 | rocm711 | bench | 4906.9 | 2452.9 | 39.28 | 25.5 | 104.4 |
 | MI355X | MXFP4 | 1 | 8 | rocm711 | profiling | 6302.5 | 3150.6 | 50.5 | 19.8 | 117.3 |
 | MI355X | MXFP4 | 8 | 8 | rocm711 | profiling | 6014.6 | 3006.6 | 48.3 | 20.7 | 114.6 |
+
+## 4GPU (TP=4) FP4 跨框架对比
+
+> MTP=0, chat 1K/1K, c=64, DP=false, ratio=0.8
+>
+> B200: SGLang v0.5.9 (SA InferenceX 同版) vs TRT-LLM rc6.post2
+> MI355X: ATOM rocm7.1.1 (EP=4 vs EP=1)
+
+| Platform | Framework | Config | Source | Total Tput | Per-GPU | Output Tput | TPOT p50 (ms) | TTFT p50 (ms) | Interactivity |
+|----------|-----------|--------|--------|------------|---------|-------------|---------------|---------------|---------------|
+| B200 | SGLang | EP4 TP4 | SA InferenceX | 6000.8 | 1500.2 | 2999.7 | 20.05 | 471.1 | 49.87 |
+| B200 | SGLang | EP4 TP4 | Ours-bench | 6397.3 | 1599.3 | 3197.9 | 19.04 | 403.5 | 52.52 |
+| B200 | SGLang | EP4 TP4 | Ours-profiling | 6311.8 | 1577.9 | 3155.2 | 19.26 | 411.5 | 51.92 |
+| B200 | TRT-LLM post2 | EP4 TP4 | Ours-bench | 6426.9 | 1606.7 | 3212.7 | 19.4 | 86.1 | 51.61 |
+| MI355X | ATOM | EP4 TP4 | Ours-bench | 4753.6 | 1188.4 | 2376.3 | 26.2 | 100.9 | 38.17 |
+| MI355X | ATOM | EP4 TP4 | Ours-profiling | 4435.6 | 1108.9 | 2217.3 | 28.0 | 111.5 | 35.77 |
+| MI355X | ATOM | EP1 TP4 | SA CI | 4806.8 | 1201.7 | 2402.9 | 25.94 | — | 38.55 |
+| MI355X | ATOM | EP1 TP4 | Ours-bench | 4906.9 | 1226.7 | 2452.9 | 25.5 | 104.4 | 39.28 |
+
+> **Key findings:**
+> - **B200 SGLang ≈ TRT-LLM post2**（吞吐量差 <0.5%），但 TRT-LLM TTFT 4.7x 更低（86 vs 404ms）
+> - **B200 vs MI355X（EP4 TP4 bench）:** B200 SGLang 1.34x（6397 vs 4754）
+> - **MI355X EP4 vs EP1:** EP4 略慢（4754 vs 4907, -3.1%），4GPU 下 EP All-to-All 通信开销超过收益
+> - **Profiling overhead:** SGLang ~1.3%, ATOM ~6.7%
 
 ## 问题背景
 
@@ -333,11 +357,13 @@ bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
 - [x] MI355X TPOT 25ms 来源分析（三层时间栈 + prefill interleaving 证明 + kernel breakdown）
 - [x] MI355X bs=64 kernel breakdown 修正（v18 的 165.7μs 系 bs=1 数据，修正为 344.0μs，overhead 从 53% 降至 2.7%）
 - [x] MI355X TP=8+EP 公平对标（v21：TP/EP 与 B200 对齐，kernel sum 267.6μs 反超 B200 276.9μs，MoE 差距从 2x→1.1x）
+- [x] 4GPU 跨框架对比表（v23：B200 SGLang/TRT-LLM + MI355X ATOM，ratio=0.8 对齐，含 SA InferenceX 基线）
 
 ## 迭代日志
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-05 v23 | **4GPU 跨框架对比表。** 新增 4GPU (TP=4) FP4 跨框架对比表：B200 SGLang vs TRT-LLM post2 vs MI355X ATOM，含 SA InferenceX 基线。ratio=0.8 对齐。SGLang ≈ TRT-LLM 吞吐（<0.5%），TRT-LLM TTFT 4.7x 更低。B200 vs MI355X 1.34x。MI355X EP4 vs EP1: EP4 略慢 -3.1%|
 | 2026-04-04 v22 | **端到端性能总表。** 新增 5-metric 数据总表（B200 bench/profiling + MI355X bench/profiling × rocm711/721），统一 EP/TP/Env/Mode 维度。B200 profiling 数据待补。删除 fp4-b200-vs-mi355x-comparison.md（重复内容）|
 | 2026-04-03 v21 | **MI355X TP=8+EP 公平对标。** MI355X 从 TP=4 EP=1 (4GPU) 改为 TP=8+EP (8GPU)，与 B200 完全对齐。核心发现：(1) MI355X kernel sum 267.6μs **反超** B200 276.9μs（快 3.4%）；(2) MoE GEMM 差距从 2.07x→1.12x (gate_up) / 1.88x→1.04x (down)，证明 v20 的 98% 差距来自 GPU 数差异；(3) 但 decode walltime MI355X 仍慢 10%（17.22 vs 15.6ms），因 B200 moefinalize_lamport 并行遮盖和 NVLink 通信优势；(4) Per-GPU throughput B200 领先 21%（490 vs 406 tok/s/GPU）|
 | 2026-04-03 v20 | **跨平台对齐算子表。** 新增 37 行按逻辑功能对齐的 B200 vs MI355X kernel 对比表。关键修正：(1) moefinalize_lamport 融合 EP_AR+residual+pre-attn_RMSNorm（跨层融合）；(2) gemm_a16w16=router GEMM 非 shared_expert；(3) MI355X shared_expert 融入 MoeMxGemm grouped GEMM。总差距 94.35μs 中 MoE GEMM 贡献 98%（GPU 数 4vs8 差异）|
