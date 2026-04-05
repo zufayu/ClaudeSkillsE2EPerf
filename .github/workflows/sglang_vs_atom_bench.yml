@@ -133,19 +133,8 @@ jobs:
       - name: Show all results
         run: |
           echo "=== SGLang vs ATOM Comparison ==="
-          echo ""
-          for d in $REPO/results/sglang_vs_atom/*/; do
-            echo "--- $(basename $d) ---"
-            for f in "$d"/result_*.json; do
-              [ -f "$f" ] || continue
-              python3 -c "
-import json, os
-d = json.load(open('$f'))
-name = os.path.basename(os.path.dirname('$f'))
-out = d.get('output_throughput', 0)
-tpot = d.get('tpot_p50', d.get('median_tpot_ms', 0))
-ttft = d.get('ttft_p50', d.get('median_ttft_ms', 0))
-print(f'  {name}: Output={out:.1f}, TPOT_p50={tpot:.1f}ms, TTFT_p50={ttft:.1f}ms')
-" 2>/dev/null || echo "  parse failed: $(basename $f)"
-            done
+          for f in $REPO/results/sglang_vs_atom/*/result_*.json; do
+            [ -f "$f" ] || continue
+            echo "=== $(basename $(dirname $f))/$(basename $f) ==="
+            python3 -c "import json; d=json.load(open('$f')); print(f'Output Tput: {d.get(\"output_throughput\",0):.1f}, TPOT p50: {d.get(\"tpot_p50\", d.get(\"median_tpot_ms\",0)):.1f}ms, TTFT p50: {d.get(\"ttft_p50\", d.get(\"median_ttft_ms\",0)):.1f}ms')" 2>/dev/null || echo "parse failed"
           done
