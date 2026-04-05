@@ -53,45 +53,6 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 **ATOM 不支持 DP Attention**，原始 SA 对标配置（EP=4, DP=true）无法公平对比。选择 **EP=8, DP=false, c=64** 作为公平对标基准：DP=false 消除 DP Attention 差异；EP=8 是 B200 8GPU 的自然 EP 配置；c=64 是 SA 原始测试点。
 
-## 对标配置
-
-| 项目 | B200 (SA InferenceX) | B200 (复现) | MI355X (ATOM CI) | MI355X (复现) | 差异 |
-|------|---------------------|------------|------------------|--------------|------|
-| **Image** | rc6.post2 | rc6.post2 | rocm/atom:rocm7.1.1-ubuntu24.04-pytorch2.9-atom0.1.1-MI350x | 同机器（见下方环境对比） | TRT-LLM vs ATOM |
-| **GPU / TP / EP** | 8 / 8 / 8 | 8 / 8 / 8 | 8 / 8 / EP | 8 / 8 / EP | **相同**（v21 更新） |
-| **DP Attention** | **False** | **False** | False | False | **相同** |
-| **Concurrency** | 64 | 64 | 64 | 64 | **相同** |
-| **Scenario** | chat 1K/1K | chat 1K/1K | chat 1K/1K | chat 1K/1K | **相同** |
-
-| Metric | B200 (SA) | B200 (复现) | MI355X TP4 EP1 (旧) | MI355X TP8+EP (v21) | B200 vs MI355X (v21) |
-|--------|-----------|------------|---------------------|---------------------|---------------------|
-| **Output TPS** | 3787 | 3921 | 2500* (4GPU) | **3247** (8GPU) | B200 1.21x |
-| **Output TPS /GPU** | 473.4 | 490.1 | 625* | **405.8** | B200 1.21x |
-| **TPOT (mean)** | — | 17.8 | 24.9 (c=64) | **18.9** | B200 0.94x |
-| **Interactivity** | 60.93 | 63.12 | 40.09 | **52.8** | B200 1.20x |
-
-> \* MI355X TP4 EP1 使用 4 张 GPU，与 B200 8 张 GPU 不可直接对比。v21 改为 **TP=8+EP（8 张 GPU）** 实现公平对标。
->
-> **v21 MI355X TP8+EP 结果：** chat c=64, 640/640 completed。Output throughput 3246.8 tok/s (405.8/GPU)，TPOT 18.9ms。EP 验证：metadata `expert_parallel=true, tensor_parallel_size=8`；TP=8+EP TPOT 比 CI TP=8 EP=1 (21.0ms) 快 10%，确认 EP 生效。
->
-> **Per-GPU throughput 下降说明：** MI355X 从 4GPU→8GPU，per-GPU throughput 从 625→406 tok/s 下降 35%。这是 MoE EP 的特性：EP=1 时每 GPU 持有全部 256 experts（TP=4 按列切 1/4 宽度），EP=8 时每 GPU 仅 32 experts（全宽度）但需 All-to-All 通信。8GPU 总 throughput 3247 > 4GPU 2500，但 EP 通信开销导致 per-GPU 效率下降。
-
-### MI355X 复现环境对比
-
-| 组件 | ATOM CI (2026-02-25) | 复现机器 (v17) | 差异 |
-|------|---------------------|---------------|------|
-| **Ubuntu** | 24.04 | 24.04.3 LTS | 一致 |
-| **ROCm** | 7.1.1 | 7.1.1 | **一致** |
-| **PyTorch** | 2.9 | 2.11.0+rocm7.1 | 不同（pip 重装） |
-| **aiter** | `a498c8b62` (v0.1.9.post1+20, 2026-01-09) | `2bca98ced` (v0.1.12, 2026-03-30) | **不同：最新 main** |
-| **ATOM** | 0.1.1 (release) | **0.1.3.dev1** (`df6ab2c`, 最新 main) | **不同：最新 main** |
-| **max-model-len** | 2248 | 2248 | **一致** |
-| **enforce-eager** | false（默认） | false | **一致** |
-| **gpu-memory-utilization** | 0.90（默认） | 0.90 | **一致** |
-| **模型** | amd/DeepSeek-R1-0528-MXFP4-Preview | DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 | 不同 checkpoint |
-
-> **复现结果：** Output TPS/GPU=624.9 vs CI 600.7 (+4.0%)，Interactivity=40.09 vs 38.55 (+4.0%)。配置对齐后偏差在正常范围内。ATOM 和 aiter 均使用最新 main，PyTorch 从原装 2.9 升级到 2.11+rocm7.1，模型 checkpoint 不同但量化方式相同（MXFP4）。+4% 的提升可能来自 ATOM/aiter 的累积优化。
-
 ## Per-Module Kernel 级分析（10 层平均）
 
 ### 跨平台对齐算子表（35 行，按逻辑功能对齐）
