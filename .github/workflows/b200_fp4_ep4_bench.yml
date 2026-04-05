@@ -1,0 +1,75 @@
+name: B200 FP4 EP4 TP4 Bench (TRT)
+on:
+  workflow_dispatch:
+    inputs:
+      container:
+        description: 'TRT-LLM container'
+        type: choice
+        options:
+          - zufa_trt
+          - zufa_trt2
+          - zufa_trt3
+        default: zufa_trt3
+
+jobs:
+  fp4-ep4-tp4-bench:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 120
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: ${{ inputs.container }}
+      SFS: /SFS-aGqda6ct
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+
+      - name: Detect TRT-LLM version and set result dir
+        run: |
+          IMAGE=$(ssh $NODE "docker inspect $CONTAINER --format '{{.Config.Image}}'" 2>/dev/null || echo unknown)
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          VERSION=$(ssh $NODE "docker exec $CONTAINER python3 -c 'import tensorrt_llm; print(tensorrt_llm.__version__)'" 2>/dev/null || echo unknown)
+          echo "TRTLLM_VERSION=$VERSION" >> $GITHUB_ENV
+          # Map version to env tag
+          case "$VERSION" in
+            *post2*) ENV_TAG=post2 ;;
+            *post3*) ENV_TAG=post3 ;;
+            *rc10*)  ENV_TAG=rc10 ;;
+            *rc9*)   ENV_TAG=rc9 ;;
+            *)       ENV_TAG=$(echo "$VERSION" | sed 's/[^a-zA-Z0-9]/_/g') ;;
+          esac
+          echo "ENV_TAG=$ENV_TAG" >> $GITHUB_ENV
+          RESULT_DIR="results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_${ENV_TAG}"
+          echo "RESULT_DIR=$RESULT_DIR" >> $GITHUB_ENV
+          echo "Container=$CONTAINER Version=$VERSION EnvTag=$ENV_TAG ResultDir=$RESULT_DIR"
+
+      - name: Verify container and GPU
+        run: |
+          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -4"
+          echo "TRT-LLM version: ${{ env.TRTLLM_VERSION }}"
+          ssh $NODE "docker exec $CONTAINER ls $MODEL_FP4/ | head -5"
+
+      - name: Clean old results
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/${{ env.RESULT_DIR }}/* 2>/dev/null; true' && rm -rf $REPO/${{ env.RESULT_DIR }}/* 2>/dev/null; true"
+
+      - name: Run FP4 throughput benchmark (chat c=64 EP=4 TP=4)
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_b200.sh --model-fp4 $MODEL_FP4 --configs fp4-throughput --scenario chat --concurrency 64 --tp 4 --ep-sizes 4 --gpus 0,1,2,3 --dp false --container-image ${{ env.IMAGE }} --result-dir ./${{ env.RESULT_DIR }}'"
+
+      - name: Show results
+        if: always()
+        run: |
+          ssh $NODE "cat $REPO/${{ env.RESULT_DIR }}/summary.md 2>/dev/null || echo 'No summary'"
+          for f in $(ssh $NODE "ls $REPO/${{ env.RESULT_DIR }}/result_*.json 2>/dev/null"); do
+            echo "=== $(basename $f) ==="
+            ssh $NODE "python3 -c \"import json; d=json.load(open('$f')); print(f'Output Tput: {d.get(\\\"output_throughput\\\",0):.1f}, TPOT p50: {d.get(\\\"tpot_p50\\\", d.get(\\\"median_tpot_ms\\\",0)):.1f}ms, TTFT p50: {d.get(\\\"ttft_p50\\\", d.get(\\\"median_ttft_ms\\\",0)):.1f}ms')\"" 2>/dev/null || echo "parse failed"
+          done
+
+      - name: Git commit and push results
+        run: |
+          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && git add -f ${{ env.RESULT_DIR }}/ && git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=4 TP=4 bench (chat c=64, ${{ env.ENV_TAG }})
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push; else echo 'Nothing to commit'; fi"

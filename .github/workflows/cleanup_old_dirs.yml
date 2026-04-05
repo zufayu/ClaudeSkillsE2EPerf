@@ -1,0 +1,33 @@
+name: Cleanup Old Result Directories
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup-b200:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 10
+    env:
+      NODE: hungry-hippo-fin-03-2
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+    steps:
+      - name: Remove old non-standard directories
+        run: |
+          echo "=== Before ==="
+          ssh $NODE "ls -d $REPO/results/sglang_* $REPO/results/mi355x_profiling* 2>/dev/null || echo 'None found'"
+          ssh $NODE "rm -rf $REPO/results/sglang_profiling $REPO/results/sglang_vs_atom 2>/dev/null; true"
+          echo "=== After ==="
+          ssh $NODE "ls -d $REPO/results/*/ | sort"
+
+  cleanup-mi355x:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 10
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+    steps:
+      - name: Remove old non-standard directories
+        run: |
+          echo "=== Before ==="
+          ls -d $REPO/results/sglang_* $REPO/results/mi355x_profiling* 2>/dev/null || echo "None found"
+          rm -rf $REPO/results/sglang_vs_atom 2>/dev/null; true
+          echo "=== After ==="
+          ls -d $REPO/results/*/ | sort
