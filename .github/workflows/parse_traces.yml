@@ -20,7 +20,7 @@ jobs:
       NODE: hungry-hippo-fin-03-2
       CONTAINER: zufa_sglang
       REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
-      TRACE_DIR: results/sglang_profiling/b200_sglang_fp4_tp4_ep4
+      TRACE_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling
     steps:
       - name: Sync repo
         run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"

@@ -14,7 +14,7 @@ jobs:
       CONTAINER: zufa_sglang
       REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
-      RESULT_DIR: results/sglang_vs_atom/b200_sglang_fp4_tp4_ep4
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059
     steps:
       - name: Sync repo
         run: |
@@ -52,7 +52,7 @@ jobs:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
       CONTAINER: zufa_atom
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
-      RESULT_DIR: results/sglang_vs_atom/mi355x_atom_mxfp4_ep8_tp8
+      RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711
     steps:
       - name: Sync repo
         run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
@@ -80,7 +80,7 @@ jobs:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
       CONTAINER: zufa_atom
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
-      RESULT_DIR: results/sglang_vs_atom/mi355x_atom_mxfp4_ep1_tp4
+      RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp4_rocm711
     steps:
       - name: Get container image name
         run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
@@ -105,7 +105,7 @@ jobs:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
       CONTAINER: zufa_atom
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
-      RESULT_DIR: results/sglang_vs_atom/mi355x_atom_mxfp4_ep1_tp8
+      RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp8_rocm711
     steps:
       - name: Get container image name
         run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
@@ -133,7 +133,7 @@ jobs:
       - name: Show all results
         run: |
           echo "=== SGLang vs ATOM Comparison ==="
-          for f in $REPO/results/sglang_vs_atom/*/result_*.json; do
+          for f in $REPO/results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059/result_*.json $REPO/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep*_rocm711/result_*.json; do
             [ -f "$f" ] || continue
             echo "=== $(basename $(dirname $f))/$(basename $f) ==="
             python3 -c "import json; d=json.load(open('$f')); print(f'Output Tput: {d.get(\"output_throughput\",0):.1f}, TPOT p50: {d.get(\"tpot_p50\", d.get(\"median_tpot_ms\",0)):.1f}ms, TTFT p50: {d.get(\"ttft_p50\", d.get(\"median_ttft_ms\",0)):.1f}ms')" 2>/dev/null || echo "parse failed"

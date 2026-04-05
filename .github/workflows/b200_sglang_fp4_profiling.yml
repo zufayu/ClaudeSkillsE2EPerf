@@ -10,7 +10,7 @@ jobs:
       CONTAINER: zufa_sglang
       REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
-      RESULT_DIR: results/sglang_profiling/b200_sglang_fp4_tp4_ep4
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling
     steps:
       - name: Sync repo
         run: |
