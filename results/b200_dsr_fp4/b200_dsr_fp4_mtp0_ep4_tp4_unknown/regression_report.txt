@@ -1,4 +1,4 @@
-Regression Report - 2026-04-05 02:09:56
+Regression Report - 2026-04-05 02:19:08
 Compared against: HEAD
 Directories: ./results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_unknown
 
@@ -8,7 +8,7 @@ Directories: ./results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_unknown
 Config                                         Old      New    Diff       Old      New    Diff       Old      New    Diff       Old      New    Diff       Old      New    Diff
                                           Total Tput Total Tput          Output Tpu Output Tpu          TPOT p50 TPOT p50          TTFT p50 TTFT p50          Interactiv Interactiv        
 ------------------------------------------------------------------------------------------------------------------------
-fp4_throughput_chat_ep4_c64                    NEW   6432.9               NEW   3215.7               NEW     19.3               NEW    101.8               NEW     51.7        
+fp4_throughput_chat_ep4_c64                    NEW   6503.9               NEW   3251.2               NEW     19.2               NEW     85.5               NEW     52.0        
 
 ========================================================================================================================
 Total: 0 points compared, 0 flagged (>5.0% diff on any metric)
