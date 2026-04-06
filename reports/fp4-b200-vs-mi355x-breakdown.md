@@ -1,9 +1,9 @@
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
-> **Last updated:** 2026-04-05 v23
+> **Last updated:** 2026-04-06 v24
 > **Model:** DeepSeek-R1-0528-NVFP4-v2, FP4
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
-> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅；**MI355X TP=8+EP 公平对标完成 ✅**
+> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅；**MI355X TP=8+EP 公平对标完成 ✅**；**B200 4GPU torch trace per-layer 分析完成 ✅**
 
 ## 端到端性能总表
 
@@ -109,6 +109,57 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 - **通信+Norm 仍是短板：** input_layernorm 21.12μs + post_attn_layernorm 24.92μs = 46.04μs，vs B200 moefinalize_lamport 33.11μs + userbuffers_rmsnorm 15.15μs + allgather 9.74μs = 58.00μs。MI355X 通信反而更快（46 vs 58μs），因为 B200 EP 有额外 allgather。
 - **B200 shared_expert 仍是独立开销：** Row 30-34 合计 21.40μs（B200 独有），MI355X 融入 grouped GEMM 无额外开销，这是 MI355X 的架构优势。
 - **Row 1 moefinalize_lamport (33.11μs)** 仍与 qkv_a 并行，关键路径被遮盖。
+
+### B200 4GPU Per-Layer Kernel 分析（SGLang Torch Trace）
+
+> **数据来源：** SGLang v0.5.9 torch profiler trace，4GPU TP=4 EP=4，chat 1K/1K c=64
+> **方法：** FMHA 作为层锚点切分 decode step（~1769 kernels → ~61 layers），position-based module 分配（FMHA 前=attention path，FMHA 后=MoE/output path）。同一 kernel（如 splitK_TNT, FP4_GEMM）出现在不同位置时，按执行位置分配到不同 module。
+> **选取范围：** 第 10-40 层平均（跳过前 3 密集层和边界层），147 个 decode step × 30 层 = 4410 层样本
+> **拟合验证：** 356.4μs/layer × 61 layers = 21.74ms ≈ kernel sum 21.69ms（拟合误差 0.2%）；wall-clock 17.65ms（overlap ratio 1.23x）
+
+| Module | # | Operator | μs/layer | Pct% | Cnt/layer | GPU Kernel |
+|--------|---|----------|----------|------|-----------|------------|
+| **comm_norm** | 1 | lamport_AR+RMSNorm | 34.6 | 9.7 | 2.0 | allreduce_fusion_kernel_lamport |
+| | | **小计** | **34.6** | **9.7** | | |
+| **qkv_proj** | 2 | qkv_a_proj_GEMM | 28.7 | 8.1 | 1.0 | nvjet_splitK_TNT |
+| | 3 | q_b_proj_GEMM | 6.3 | 1.8 | 1.0 | nvjet_tst_TNN |
+| | 4 | q/k_norm_RMSNorm | 5.6 | 1.6 | 2.0 | RMSNormKernel |
+| | 5 | uk_gemm (K expansion) | 4.3 | 1.2 | 1.0 | nvjet_tst_TNT |
+| | 6 | qkv_a_splitK_reduce | 3.7 | 1.1 | 1.0 | splitKreduce_bf16 |
+| | | **小计** | **48.7** | **13.7** | | |
+| **rope_attn** | 7 | Attention_FMHA (MLA) | 20.4 | 5.7 | 1.0 | fmhaSm100f_E4M3 |
+| | 8 | RoPE+FP8_quant+KV_write | 2.7 | 0.8 | 1.0 | RopeQuantizeKernel |
+| | 9 | set_mla_kv | 1.7 | 0.5 | 1.0 | set_mla_kv_buffer_kernel |
+| | | **小计** | **24.8** | **7.0** | | |
+| **out_proj** | 10 | o_proj_GEMM (FP4) | 9.2 | 2.6 | 1.0 | DeviceGemmFp4_128x128 |
+| | 11 | uv_gemm (V expansion) | 4.0 | 1.1 | 1.0 | nvjet_tst_TNT |
+| | 12 | o_proj_quant (BF16→FP4) | 2.2 | 0.6 | 1.0 | cvt_fp16_to_fp4 |
+| | | **小计** | **15.4** | **4.3** | | |
+| **shared_expert** | 13 | shared_gate_up + down GEMM (FP4) | 20.5 | 5.7 | 2.0 | DeviceGemmFp4 |
+| | 14 | shared_quant (BF16→FP4) | 4.3 | 1.2 | 2.0 | cvt_fp16_to_fp4 |
+| | 15 | SiLU×Mul | 3.1 | 0.9 | 1.0 | act_and_mul_kernel |
+| | | **小计** | **27.8** | **7.8** | | |
+| **router** | 16 | router_GEMM | 14.4 | 4.0 | 1.0 | nvjet_splitK_TNT |
+| | 17 | expert_sort | 5.4 | 1.5 | 1.0 | routingIndicesCluster |
+| | 18 | TopK_select | 4.5 | 1.3 | 1.0 | routingMainKernel |
+| | 19 | router_splitK_reduce | 3.3 | 0.9 | 1.0 | splitKreduce_fp32 |
+| | | **小计** | **27.6** | **7.7** | | |
+| **moe_expert** | 20 | gate_up_GEMM (+SwiGLU融合) | 102.0 | 28.6 | 1.0 | bmm_E2m1_FP4_swiGlu |
+| | 21 | down_GEMM | 58.8 | 16.5 | 1.0 | bmm_Bfloat16_E2m1_FP4 |
+| | 22 | MoE_finalize+residual | 7.5 | 2.1 | 1.0 | finalizeKernelVecLoad |
+| | 23 | MoE_input_quant (BF16→FP4) | 3.6 | 1.0 | 1.0 | quantize_with_block_size |
+| | | **小计** | **171.9** | **48.2** | | |
+| **residual_mem** | 24 | tensor_copy | 3.5 | 1.0 | 1.0 | direct_copy_kernel |
+| | 25 | residual_add | 2.1 | 0.6 | 1.0 | CUDAFunctor_add |
+| | | **小计** | **5.6** | **1.6** | | |
+| | | **合计** | **356.4** | **100%** | | |
+
+**4GPU vs 8GPU 数据对比：**
+- **MoE GEMM 与 GPU 数量成反比：** gate_up 102.0μs (4GPU) vs 59.6μs (8GPU) = 1.71x（理论 2x，EP 通信抵消部分收益）。down 58.8μs vs 32.8μs = 1.79x。
+- **Attention 基本不变：** FMHA 20.4μs (4GPU) vs 20.7μs (8GPU)，TP=4 时 heads/GPU=16 vs TP=8 的 8，但 FMHA 时间几乎不变（说明 head 数不是瓶颈）。
+- **comm_norm 增大：** 34.6μs (4GPU) vs 33.1+15.2=48.3μs (8GPU)。4GPU 只有 1 次 lamport AR（EP 内部），8GPU 有 2 次（pre-attn + post-attn）。但 8GPU 的 post-attn 还包括 allgather 9.7μs。
+- **router GEMM 增大：** 14.4μs (4GPU) vs 5.4μs (8GPU) = 2.7x。4GPU 的 router 输出维度更大（256 experts 全量 vs 8GPU EP 只需 32 local experts routing）。
+- **总层时间：** 356.4μs (4GPU) vs 276.9μs (8GPU) = 1.29x。低于理论 2x，因为只有 MoE GEMM 受 EP 影响，attention/norm/router 开销基本固定。
 
 ## MI355X TPOT 来源分析
 
@@ -319,11 +370,13 @@ bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
 - [x] MI355X bs=64 kernel breakdown 修正（v18 的 165.7μs 系 bs=1 数据，修正为 344.0μs，overhead 从 53% 降至 2.7%）
 - [x] MI355X TP=8+EP 公平对标（v21：TP/EP 与 B200 对齐，kernel sum 267.6μs 反超 B200 276.9μs，MoE 差距从 2x→1.1x）
 - [x] 4GPU 跨框架对比表（v23：B200 SGLang/TRT-LLM + MI355X ATOM，ratio=0.8 对齐，含 SA InferenceX 基线）
+- [x] B200 4GPU per-layer torch trace 分析（v24：SGLang 4GPU TP=4 EP=4，torch profiler，FMHA 层切分+position module 分配，25 算子 × 8 module）
 
 ## 迭代日志
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-06 v24 | **B200 4GPU per-layer torch trace 分析。** 新增 4GPU TP=4 EP=4 SGLang torch trace per-layer kernel 分析（layers 10-40, 4410 样本）。25 算子 × 8 module。per-layer 356.4μs × 61 = 21.74ms ≈ kernel sum 21.69ms（拟合 0.2%）。MoE 48.2% 主导，gate_up 102.0μs + down 58.8μs。4GPU vs 8GPU 对比：MoE GEMM ~1.75x（理论 2x），总层时间 1.29x |
 | 2026-04-05 v23 | **4GPU 跨框架对比表。** 新增 4GPU (TP=4) FP4 跨框架对比表：B200 SGLang vs TRT-LLM post2 vs MI355X ATOM，含 SA InferenceX 基线。ratio=0.8 对齐。SGLang ≈ TRT-LLM 吞吐（<0.5%），TRT-LLM TTFT 4.7x 更低。B200 vs MI355X 1.34x。MI355X EP4 vs EP1: EP4 略慢 -3.1%|
 | 2026-04-04 v22 | **端到端性能总表。** 新增 5-metric 数据总表（B200 bench/profiling + MI355X bench/profiling × rocm711/721），统一 EP/TP/Env/Mode 维度。B200 profiling 数据待补。删除 fp4-b200-vs-mi355x-comparison.md（重复内容）|
 | 2026-04-03 v21 | **MI355X TP=8+EP 公平对标。** MI355X 从 TP=4 EP=1 (4GPU) 改为 TP=8+EP (8GPU)，与 B200 完全对齐。核心发现：(1) MI355X kernel sum 267.6μs **反超** B200 276.9μs（快 3.4%）；(2) MoE GEMM 差距从 2.07x→1.12x (gate_up) / 1.88x→1.04x (down)，证明 v20 的 98% 差距来自 GPU 数差异；(3) 但 decode walltime MI355X 仍慢 10%（17.22 vs 15.6ms），因 B200 moefinalize_lamport 并行遮盖和 NVLink 通信优势；(4) Per-GPU throughput B200 领先 21%（490 vs 406 tok/s/GPU）|
