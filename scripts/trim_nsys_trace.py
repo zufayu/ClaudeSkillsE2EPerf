@@ -34,6 +34,47 @@ from collections import defaultdict
 from pathlib import Path
 
 
+NSYS_BIN = None
+
+
+def find_nsys():
+    """Find nsys binary, checking Windows default install paths."""
+    global NSYS_BIN
+    if NSYS_BIN is not None:
+        return NSYS_BIN
+
+    # Try PATH first
+    if shutil.which("nsys"):
+        NSYS_BIN = "nsys"
+        return NSYS_BIN
+
+    # Windows default install locations
+    if sys.platform == "win32":
+        import glob
+        search = glob.glob(
+            r"C:\Program Files\NVIDIA Corporation\Nsight Systems *\target-windows-x64\nsys.exe"
+        )
+        if not search:
+            search = glob.glob(
+                r"C:\Program Files\NVIDIA Corporation\Nsight Systems *\host-windows-x64\nsys-ui.exe"
+            )
+        if not search:
+            # Try bin directory
+            search = glob.glob(
+                r"C:\Program Files\NVIDIA Corporation\Nsight Systems *\**\nsys.exe",
+                recursive=True,
+            )
+        if search:
+            # Pick newest version
+            search.sort(reverse=True)
+            NSYS_BIN = f'"{search[0]}"'
+            return NSYS_BIN
+
+    print("ERROR: nsys not found. Add it to PATH or install Nsight Systems.")
+    print("  Windows: typically at C:\\Program Files\\NVIDIA Corporation\\Nsight Systems <version>\\target-windows-x64\\nsys.exe")
+    sys.exit(1)
+
+
 def run_cmd(cmd, check=True):
     """Run a shell command and return output."""
     print(f"  $ {cmd}")
@@ -47,7 +88,8 @@ def run_cmd(cmd, check=True):
 
 def get_nsys_version():
     """Get nsys version string."""
-    r = run_cmd("nsys --version", check=False)
+    nsys = find_nsys()
+    r = run_cmd(f"{nsys} --version", check=False)
     return r.stdout.strip() or r.stderr.strip()
 
 
@@ -68,9 +110,11 @@ def trim_nsys_rep(input_path, output_path, start_s, end_s):
     print(f"\nTrimming {input_path}")
     print(f"  Window: {start_s}s - {end_s}s ({end_s - start_s}s)")
 
+    nsys = find_nsys()
+
     # Try nsys filter (newer versions)
     r = run_cmd(
-        f'nsys filter -i "{input_path}" -o "{output_path}" '
+        f'{nsys} filter -i "{input_path}" -o "{output_path}" '
         f"--time-range={start_s},{end_s} --timeunit sec",
         check=False,
     )
@@ -81,7 +125,7 @@ def trim_nsys_rep(input_path, output_path, start_s, end_s):
 
     # Try alternative syntax
     r = run_cmd(
-        f'nsys filter --input "{input_path}" --output "{output_path}" '
+        f'{nsys} filter --input "{input_path}" --output "{output_path}" '
         f"--time-range {start_s},{end_s} --time-unit seconds",
         check=False,
     )
@@ -99,6 +143,8 @@ def export_sqlite(input_path, output_path, start_s=None, end_s=None):
     print(f"\nExporting to SQLite: {output_path}")
 
     timerange_args = ""
+    nsys = find_nsys()
+
     if start_s is not None and end_s is not None:
         # Try different flag combinations for different nsys versions
         for flags in [
@@ -106,7 +152,7 @@ def export_sqlite(input_path, output_path, start_s=None, end_s=None):
             f"--time-unit seconds --time-range {start_s},{end_s}",
         ]:
             r = run_cmd(
-                f'nsys export --type sqlite {flags} -o "{output_path}" "{input_path}"',
+                f'{nsys} export --type sqlite {flags} -o "{output_path}" "{input_path}"',
                 check=False,
             )
             if r.returncode == 0 and os.path.exists(output_path):
@@ -116,7 +162,7 @@ def export_sqlite(input_path, output_path, start_s=None, end_s=None):
         print("  timerange export failed, doing full export...")
 
     r = run_cmd(
-        f'nsys export --type sqlite -o "{output_path}" "{input_path}"', check=False
+        f'{nsys} export --type sqlite -o "{output_path}" "{input_path}"', check=False
     )
     if r.returncode == 0 and os.path.exists(output_path):
         size_mb = os.path.getsize(output_path) / 1e6
