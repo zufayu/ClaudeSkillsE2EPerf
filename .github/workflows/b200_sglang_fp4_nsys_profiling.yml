@@ -40,6 +40,16 @@ jobs:
           ssh $NODE "ls -lh $REPO/$RESULT_DIR/*.nsys-rep 2>/dev/null || echo 'No nsys-rep file'"
           ssh $NODE "cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'"
 
+      - name: Deep kernel analysis via SQLite
+        if: always()
+        run: |
+          SQLITE=$(ssh $NODE "ls -t $REPO/$RESULT_DIR/*.sqlite 2>/dev/null | head -1")
+          if [ -n "$SQLITE" ]; then
+            ssh $NODE "docker exec $CONTAINER python3 $REPO/scripts/analyze_nsys_sqlite.py $SQLITE --gpu 0 --skip-first 10 --max-steps 20 --top-kernels 30 --per-layer --csv $REPO/$RESULT_DIR/nsys_kernel_breakdown.csv 2>&1" | tee /tmp/nsys_analysis.log
+          else
+            echo "No SQLite file found, skipping deep analysis"
+          fi
+
       - name: Git commit and push results (no .nsys-rep)
         if: always()
         run: |
