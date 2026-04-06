@@ -1,0 +1,17 @@
+name: B200 Find Nsys Files
+on:
+  workflow_dispatch:
+jobs:
+  find:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 5
+    env:
+      NODE: hungry-hippo-fin-03-2
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+    steps:
+      - name: Find all nsys-rep files
+        run: |
+          echo "=== In ClaudeSkillsE2EPerf ==="
+          ssh $NODE "find $REPO -name '*.nsys-rep' -exec ls -lh {} \; 2>/dev/null || echo 'None'"
+          echo "=== In /SFS-aGqda6ct (wider search, top 20) ==="
+          ssh $NODE "find /SFS-aGqda6ct/ubuntu/zufa -name '*.nsys-rep' -exec ls -lh {} \; 2>/dev/null | head -20 || echo 'None'"
