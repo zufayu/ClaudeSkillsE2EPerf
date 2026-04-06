@@ -417,6 +417,124 @@ def write_csv(breakdown, n_steps, filepath):
 # Main
 # =============================================================================
 
+def print_trace_info(events):
+    """Print trace metadata: time span, phases, decode steps, layers, kernel counts."""
+    # Time span
+    all_ts = [e.get("ts", 0) for e in events if e.get("ts")]
+    all_dur = [e.get("dur", 0) for e in events if e.get("dur")]
+    if not all_ts:
+        print("  No timestamped events found.")
+        return
+
+    min_ts = min(all_ts)
+    max_ts = max(all_ts)
+    # Account for duration of last events
+    max_end = max(e.get("ts", 0) + e.get("dur", 0) for e in events if e.get("ts"))
+    span_us = max_end - min_ts
+    span_s = span_us / 1e6
+
+    print(f"\n{'='*80}")
+    print(f"TRACE INFO")
+    print(f"{'='*80}")
+    print(f"  Total events:    {len(events)}")
+    print(f"  Time span:       {span_s:.2f}s ({span_us/1e6:.2f}s)")
+    print(f"  Time range:      [{min_ts/1e6:.3f}s, {max_end/1e6:.3f}s]")
+
+    # Categorize events
+    cats = defaultdict(int)
+    phs = defaultdict(int)
+    for e in events:
+        cats[e.get("cat", "")] += 1
+        phs[e.get("ph", "")] += 1
+
+    print(f"\n  Event categories:")
+    for cat, cnt in sorted(cats.items(), key=lambda x: -x[1])[:15]:
+        print(f"    {cat or '(none)':<35s} {cnt:>8d}")
+
+    # PIDs (processes/GPUs)
+    pids = defaultdict(set)
+    for e in events:
+        pid = e.get("pid")
+        cat = e.get("cat", "")
+        if pid is not None:
+            pids[pid].add(cat)
+    print(f"\n  PIDs ({len(pids)}):")
+    for pid in sorted(pids):
+        cats_str = ", ".join(sorted(c for c in pids[pid] if c)[:5])
+        print(f"    PID {pid}: {cats_str}")
+
+    # cudaGraphLaunch events
+    launches = [e for e in events if "cudaGraphLaunch" in e.get("name", "") and e.get("ph") == "X"]
+    launches.sort(key=lambda x: x.get("ts", 0))
+    print(f"\n  cudaGraphLaunch events: {len(launches)}")
+    if launches:
+        first_ts = (launches[0]["ts"] - min_ts) / 1e6
+        last_ts = (launches[-1]["ts"] - min_ts) / 1e6
+        print(f"    First at: {first_ts:.3f}s, Last at: {last_ts:.3f}s")
+        durs = [l.get("dur", 0) for l in launches]
+        print(f"    Duration: avg={sum(durs)/len(durs)/1e3:.2f}ms, min={min(durs)/1e3:.2f}ms, max={max(durs)/1e3:.2f}ms")
+
+        # Detect decode step kernel counts by sampling a few launches
+        sample_indices = [0, len(launches)//4, len(launches)//2, 3*len(launches)//4, len(launches)-1]
+        print(f"\n    Sampled launches (kernel count via time-window):")
+        gpu_kernels = sorted(
+            [e for e in events if e.get("ph") == "X" and e.get("cat") in ("kernel", "gpu_memcpy", "gpu_memset")],
+            key=lambda x: x.get("ts", 0)
+        )
+        for idx in sample_indices:
+            if idx >= len(launches):
+                continue
+            l = launches[idx]
+            l_ts = l["ts"]
+            l_end = l_ts + l.get("dur", 0)
+            matched = sum(1 for k in gpu_kernels if k["ts"] >= l_ts - 100 and k["ts"] <= l_end + 100)
+            rel_s = (l_ts - min_ts) / 1e6
+            print(f"      Launch[{idx:>4d}] at {rel_s:>8.3f}s  dur={l.get('dur',0)/1e3:>7.2f}ms  ~{matched} kernels")
+
+    # GPU kernel events
+    gpu_kernels_all = [e for e in events if e.get("ph") == "X" and e.get("cat") in ("kernel", "gpu_memcpy", "gpu_memset")]
+    print(f"\n  GPU kernel events: {len(gpu_kernels_all)}")
+
+    # Unique kernel names
+    kernel_names = defaultdict(int)
+    for e in gpu_kernels_all:
+        kernel_names[e.get("name", "")[:80]] += 1
+    print(f"  Unique kernel names: {len(kernel_names)}")
+    print(f"\n  Top 20 kernels by frequency:")
+    for name, cnt in sorted(kernel_names.items(), key=lambda x: -x[1])[:20]:
+        print(f"    {cnt:>8d}x  {name}")
+
+    # NVTX / user annotations (layer markers, decode/prefill markers)
+    annotations = [e for e in events if e.get("cat") in ("gpu_user_annotation", "user_annotation", "python_function") or (e.get("cat", "").startswith("nvtx"))]
+    if annotations:
+        ann_names = defaultdict(int)
+        for e in annotations:
+            ann_names[e.get("name", "")[:60]] += 1
+        print(f"\n  Annotations/NVTX: {len(annotations)} events, {len(ann_names)} unique")
+        print(f"  Top 20 annotations:")
+        for name, cnt in sorted(ann_names.items(), key=lambda x: -x[1])[:20]:
+            print(f"    {cnt:>8d}x  {name}")
+
+    # Flow events
+    flow_s = sum(1 for e in events if e.get("ph") == "s")
+    flow_f = sum(1 for e in events if e.get("ph") == "f")
+    print(f"\n  Flow events: {flow_s} starts, {flow_f} ends")
+
+    # Profiler step markers
+    steps = [e for e in events if "ProfilerStep" in e.get("name", "") and e.get("ph") == "X"]
+    if steps:
+        steps.sort(key=lambda x: x.get("ts", 0))
+        print(f"\n  ProfilerStep markers: {len(steps)}")
+        for s in steps[:5]:
+            rel_s = (s["ts"] - min_ts) / 1e6
+            dur_s = s.get("dur", 0) / 1e6
+            print(f"    {s['name']}: at {rel_s:.3f}s, dur={dur_s:.3f}s")
+        if len(steps) > 5:
+            print(f"    ... and {len(steps)-5} more")
+
+    print(f"{'='*80}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Extract per-decode-step kernel breakdown from CUDA Graph traces"
@@ -424,6 +542,8 @@ def main():
     parser.add_argument("filepath", help="Path to trace JSON or JSON.GZ file")
     parser.add_argument("--platform", choices=["b200", "mi355x", "auto"], default="auto",
                         help="Platform for kernel name mapping (default: auto-detect)")
+    parser.add_argument("--info", action="store_true",
+                        help="Print trace metadata only (time span, phases, decode steps, layers)")
     parser.add_argument("--raw", action="store_true",
                         help="Print raw kernel lists instead of logical operator breakdown")
     parser.add_argument("--csv", default=None, help="Output CSV path")
@@ -438,6 +558,10 @@ def main():
     args = parser.parse_args()
 
     events = load_trace(args.filepath)
+
+    if args.info:
+        print_trace_info(events)
+        return
 
     # Auto-detect platform from kernel names
     if args.platform == "auto":
