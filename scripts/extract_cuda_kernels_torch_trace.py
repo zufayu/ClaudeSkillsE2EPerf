@@ -119,6 +119,413 @@ def classify_kernel(name, kernel_map):
 
 
 # =============================================================================
+# Per-layer analysis: split decode step into transformer layers
+# =============================================================================
+
+# Module definitions for per-layer analysis.
+# Each layer's kernels are assigned to modules based on execution position
+# relative to FMHA (attention) anchor kernel.
+# Module order within one transformer layer (DeepSeek-R1 MLA decode):
+#   1. comm_norm: AllReduce+RMSNorm (pre-attention)
+#   2. qkv_proj: q_a_proj, splitK_reduce, RMSNorm, q_b_proj, uk_gemm
+#   3. rope_attn: RoPE+KV_write, set_mla_kv, FMHA (anchor)
+#   4. out_proj: uv_gemm, FP4_GEMM(out), FP4_convert(out)
+#   5. comm_norm: AllReduce+RMSNorm (post-attention) + residual
+#   6. router: router_GEMM(splitK), TopK, expert_sort
+#   7. moe_expert: FP4_blockwise_quant, gate_up_GEMM(fused SwiGlu), down_GEMM, finalize
+#   8. shared_expert: FP4_GEMM(shared), FP4_convert(shared), SiLU_mul
+
+# Kernel classifiers for layer splitting (regex → short tag)
+LAYER_KERNEL_TAGS = OrderedDict([
+    (r"fmhaSm100|fmhaKernel", "FMHA"),
+    (r"allreduce_fusion_kernel.*lamport", "LAMPORT"),
+    (r"splitK_TNT", "SPLITK_TNT"),
+    (r"splitKreduce.*bf16|splitKreduce.*bfloat|splitKreduce.*Bfloat16", "SPLITK_REDUCE"),
+    (r"RMSNormKernel|FusedAddRMSNorm", "RMSNORM"),
+    (r"_v_bz_TNN|nvjet_tst_TNN", "Q_B_PROJ"),
+    (r"_v_bz_TNT|nvjet_sm100_tst_128x64.*TNT|nvjet_sm100_tst_256x64.*TNT", "UK_GEMM"),
+    (r"RopeQuantizeKernel", "ROPE"),
+    (r"set_mla_kv_buffer", "SET_MLA_KV"),
+    (r"_h_bz_TNT(?!.*splitK)", "UV_GEMM"),
+    (r"DeviceGemmFp4GemmSm100", "FP4_GEMM"),
+    (r"cvt_fp16_to_fp4", "FP4_CONVERT"),
+    (r"vectorized_elementwise_kernel.*CUDAFunctor_add|CUDAFunctorOnSelf_add", "RESIDUAL_ADD"),
+    (r"routingMainKernel", "TOPK"),
+    (r"routingIndicesCluster", "EXPERT_SORT"),
+    (r"quantize_with_block_size", "FP4_BLOCK_QUANT"),
+    (r"bmm_E2m1.*E2m1E2m1", "MOE_GATE_UP"),
+    (r"bmm_Bfloat16.*E2m1|bmm_.*E2m1.*Bfloat", "MOE_DOWN"),
+    (r"finalizeKernelVecLoad", "MOE_FINALIZE"),
+    (r"act_and_mul_kernel|silu_and_mul_kernel", "SILU_MUL"),
+    (r"allreduce|nccl", "NCCL"),
+    (r"memcpy|memset", "MEMOP"),
+    (r"elementwise_kernel.*direct_copy|unrolled_elementwise.*direct_copy", "TENSOR_COPY"),
+])
+
+
+def tag_kernel(name):
+    """Assign a short tag to a kernel based on its name."""
+    for pattern, tag in LAYER_KERNEL_TAGS.items():
+        if re.search(pattern, name, re.IGNORECASE):
+            return tag
+    return "OTHER"
+
+
+def split_step_into_layers(kernels):
+    """Split a decode step's kernels into per-layer groups using FMHA as anchor.
+
+    FMHA appears exactly once per transformer layer, so we use it as the
+    layer boundary marker. Kernels between consecutive FMHAs belong to
+    the same layer (with the FMHA itself marking the attention point).
+
+    Returns list of layer dicts, each with:
+      - layer_idx: 0-based layer number
+      - kernels: list of kernel dicts with added 'tag' field
+      - fmha_pos: index of FMHA within the layer's kernel list
+    """
+    # Tag all kernels
+    tagged = []
+    for k in kernels:
+        t = dict(k)
+        t["tag"] = tag_kernel(k["name"])
+        tagged.append(t)
+
+    # Find FMHA positions
+    fmha_indices = [i for i, k in enumerate(tagged) if k["tag"] == "FMHA"]
+
+    if not fmha_indices:
+        return []
+
+    # Build layers: each layer spans from one "pre-FMHA boundary" to the next.
+    # Strategy: FMHA is in the middle of each layer. The layer boundary is
+    # roughly halfway between consecutive FMHAs' surrounding LAMPORT kernels.
+    # Simpler approach: find the LAMPORT (pre-attn) kernel before each FMHA
+    # and use that as the layer start.
+    layers = []
+    for li, fmha_idx in enumerate(fmha_indices):
+        # Find the pre-attention LAMPORT before this FMHA
+        # Scan backwards from FMHA to find the nearest LAMPORT
+        layer_start = 0
+        for j in range(fmha_idx - 1, -1, -1):
+            if tagged[j]["tag"] == "LAMPORT":
+                layer_start = j
+                break
+            # Stop if we hit a previous FMHA (shouldn't happen)
+            if tagged[j]["tag"] == "FMHA":
+                layer_start = j + 1
+                break
+
+        # If this isn't the first layer, don't overlap with previous layer
+        if li > 0:
+            prev_fmha = fmha_indices[li - 1]
+            # Layer boundary is after the previous layer's MOE_FINALIZE
+            # Find it by scanning forward from prev FMHA
+            boundary = prev_fmha + 1
+            for j in range(prev_fmha + 1, fmha_idx):
+                if tagged[j]["tag"] == "MOE_FINALIZE":
+                    boundary = j + 1
+                    break
+                if tagged[j]["tag"] == "LAMPORT":
+                    boundary = j
+                    break
+            layer_start = max(layer_start, boundary)
+
+        # Layer end: just before next layer's start, or end of kernels
+        if li + 1 < len(fmha_indices):
+            next_fmha = fmha_indices[li + 1]
+            # Find the LAMPORT before next FMHA
+            layer_end = next_fmha
+            for j in range(next_fmha - 1, fmha_idx, -1):
+                if tagged[j]["tag"] == "LAMPORT":
+                    layer_end = j
+                    break
+            # Also check for MOE_FINALIZE as boundary
+            for j in range(fmha_idx + 1, next_fmha):
+                if tagged[j]["tag"] == "MOE_FINALIZE":
+                    layer_end = j + 1
+                    # Include kernels after MOE_FINALIZE until next LAMPORT
+                    for jj in range(j + 1, next_fmha):
+                        if tagged[jj]["tag"] == "LAMPORT":
+                            layer_end = jj
+                            break
+                        layer_end = jj + 1
+                    break
+        else:
+            layer_end = len(tagged)
+
+        layer_kernels = tagged[layer_start:layer_end]
+        fmha_pos = fmha_idx - layer_start
+
+        layers.append({
+            "layer_idx": li,
+            "kernels": layer_kernels,
+            "fmha_pos": fmha_pos,
+            "n_kernels": len(layer_kernels),
+        })
+
+    return layers
+
+
+# Module assignment based on position within layer
+# Position phases relative to FMHA:
+#   BEFORE FMHA: comm_norm(pre) → qkv_proj → rope → [FMHA]
+#   AFTER FMHA:  out_proj → comm_norm(post) → router → moe_expert/shared_expert
+
+B200_MODULE_MAP = {
+    # Before FMHA
+    "LAMPORT":        lambda before: "comm_norm" if before else "comm_norm",
+    "SPLITK_TNT":     lambda before: "qkv_proj" if before else "router",
+    "SPLITK_REDUCE":  lambda before: "qkv_proj" if before else "router",
+    "RMSNORM":        lambda before: "qkv_proj" if before else "residual_norm",
+    "Q_B_PROJ":       lambda before: "qkv_proj",
+    "UK_GEMM":        lambda before: "qkv_proj",
+    "ROPE":           lambda before: "rope_attn",
+    "SET_MLA_KV":     lambda before: "rope_attn",
+    "FMHA":           lambda before: "rope_attn",
+    # After FMHA
+    "UV_GEMM":        lambda before: "out_proj",
+    "FP4_GEMM":       lambda before: "out_proj" if before else None,  # resolved by position
+    "FP4_CONVERT":    lambda before: "out_proj" if before else None,  # resolved by position
+    "RESIDUAL_ADD":   lambda before: "residual_mem",
+    "TOPK":           lambda before: "router",
+    "EXPERT_SORT":    lambda before: "router",
+    "FP4_BLOCK_QUANT": lambda before: "moe_expert",
+    "MOE_GATE_UP":    lambda before: "moe_expert",
+    "MOE_DOWN":       lambda before: "moe_expert",
+    "MOE_FINALIZE":   lambda before: "moe_expert",
+    "SILU_MUL":       lambda before: "shared_expert",
+    "NCCL":           lambda before: "comm_norm",
+    "MEMOP":          lambda before: "residual_mem",
+    "TENSOR_COPY":    lambda before: "residual_mem",
+    "OTHER":          lambda before: "other",
+}
+
+
+def assign_modules_to_layer(layer):
+    """Assign each kernel in a layer to a module based on position.
+
+    Uses FMHA position as the dividing point. Kernels before FMHA are
+    in the attention path; kernels after are in the MoE/output path.
+
+    For FP4_GEMM and FP4_CONVERT which appear in both out_proj and shared_expert:
+    - First occurrence(s) after FMHA → out_proj
+    - Later occurrences (after MoE kernels start) → shared_expert
+    """
+    kernels = layer["kernels"]
+    fmha_pos = layer["fmha_pos"]
+
+    # Track phases after FMHA for FP4_GEMM/FP4_CONVERT assignment
+    moe_started = False  # True after we see TOPK/EXPERT_SORT
+    first_fp4_gemm_after_fmha = True
+
+    for i, k in enumerate(kernels):
+        before_fmha = (i < fmha_pos)
+        tag = k["tag"]
+
+        # Detect MoE phase start
+        if tag in ("TOPK", "EXPERT_SORT", "FP4_BLOCK_QUANT", "MOE_GATE_UP"):
+            moe_started = True
+
+        # Special handling for FP4_GEMM/FP4_CONVERT after FMHA
+        if tag in ("FP4_GEMM", "FP4_CONVERT") and not before_fmha:
+            if not moe_started and first_fp4_gemm_after_fmha:
+                k["module"] = "out_proj"
+                if tag == "FP4_GEMM":
+                    first_fp4_gemm_after_fmha = False
+            else:
+                k["module"] = "shared_expert"
+            continue
+
+        # Special handling for SPLITK_TNT after FMHA (router GEMM)
+        if tag == "SPLITK_TNT" and not before_fmha:
+            k["module"] = "router"
+            continue
+        if tag == "SPLITK_REDUCE" and not before_fmha:
+            k["module"] = "router"
+            continue
+
+        # Default assignment
+        mapper = B200_MODULE_MAP.get(tag)
+        if mapper:
+            k["module"] = mapper(before_fmha)
+        else:
+            k["module"] = "other"
+
+    return kernels
+
+
+def analyze_per_layer(decode_steps, layer_start=10, layer_end=40, kernel_map=None):
+    """Per-layer analysis across multiple decode steps.
+
+    For each decode step:
+      1. Split into layers using FMHA anchor
+      2. Assign modules based on position
+      3. Select layers [layer_start, layer_end)
+
+    Returns per-module breakdown averaged over selected layers.
+    """
+    # Module order for display
+    MODULE_ORDER = [
+        "comm_norm", "qkv_proj", "rope_attn", "out_proj",
+        "shared_expert", "router", "moe_expert",
+        "residual_mem", "residual_norm", "other"
+    ]
+
+    # Collect per-layer per-module stats across all steps
+    # module → operator → {count, total_us, kernel_names}
+    all_module_stats = defaultdict(lambda: defaultdict(lambda: {
+        "count": 0, "total_us": 0.0, "kernel_names": set()
+    }))
+    n_layers_total = 0
+    layer_counts_per_step = []
+    layer_totals_per_step = []  # per-layer total μs for validation
+
+    for step_idx, (launch, kernels) in enumerate(decode_steps):
+        layers = split_step_into_layers(kernels)
+        layer_counts_per_step.append(len(layers))
+
+        if len(layers) < layer_end:
+            # Not enough layers; use what we have
+            selected = layers[layer_start:] if len(layers) > layer_start else layers
+        else:
+            selected = layers[layer_start:layer_end]
+
+        for layer in selected:
+            assign_modules_to_layer(layer)
+            layer_total = 0.0
+            for k in layer["kernels"]:
+                module = k.get("module", "other")
+                op_label = classify_kernel(k["name"], kernel_map) if kernel_map else k["tag"]
+                stats = all_module_stats[module][op_label]
+                stats["count"] += 1
+                stats["total_us"] += k["dur"]
+                stats["kernel_names"].add(k["name"])
+                layer_total += k["dur"]
+            layer_totals_per_step.append(layer_total)
+            n_layers_total += 1
+
+    if n_layers_total == 0:
+        print("ERROR: No layers found in selected range")
+        return [], 0
+
+    # Build result table
+    result = []
+    for module in MODULE_ORDER:
+        if module not in all_module_stats:
+            continue
+        ops = all_module_stats[module]
+        for op_label, stats in sorted(ops.items(), key=lambda x: -x[1]["total_us"]):
+            avg_us = stats["total_us"] / n_layers_total
+            avg_count = stats["count"] / n_layers_total
+            result.append({
+                "module": module,
+                "operator": op_label,
+                "avg_us": avg_us,
+                "avg_count": avg_count,
+                "total_us": stats["total_us"],
+                "n_layers": n_layers_total,
+                "kernel_names": sorted(stats["kernel_names"]),
+            })
+
+    # Add modules not in MODULE_ORDER
+    for module in all_module_stats:
+        if module not in MODULE_ORDER:
+            ops = all_module_stats[module]
+            for op_label, stats in sorted(ops.items(), key=lambda x: -x[1]["total_us"]):
+                avg_us = stats["total_us"] / n_layers_total
+                avg_count = stats["count"] / n_layers_total
+                result.append({
+                    "module": module,
+                    "operator": op_label,
+                    "avg_us": avg_us,
+                    "avg_count": avg_count,
+                    "total_us": stats["total_us"],
+                    "n_layers": n_layers_total,
+                    "kernel_names": sorted(stats["kernel_names"]),
+                })
+
+    # Print summary
+    avg_layer_count = sum(layer_counts_per_step) / len(layer_counts_per_step)
+    avg_layer_us = sum(layer_totals_per_step) / len(layer_totals_per_step)
+    print(f"\n  Layers detected per step: avg={avg_layer_count:.1f} (range: {min(layer_counts_per_step)}-{max(layer_counts_per_step)})")
+    print(f"  Selected layers: {layer_start}-{layer_end} ({n_layers_total} total across {len(decode_steps)} steps)")
+    print(f"  Per-layer kernel sum avg: {avg_layer_us:.1f}μs ({avg_layer_us/1000:.3f}ms)")
+    print(f"  Estimated full model: {avg_layer_us:.1f} × {int(avg_layer_count)} = {avg_layer_us * avg_layer_count / 1000:.2f}ms")
+
+    return result, n_layers_total
+
+
+def print_per_layer_table(result, n_layers):
+    """Print per-module per-layer breakdown table."""
+    total_us = sum(r["avg_us"] for r in result)
+
+    print(f"\n{'='*120}")
+    print(f"Per-Module Kernel Breakdown (per-layer avg, {n_layers} layers, layer total={total_us:.1f}μs)")
+    print(f"{'='*120}")
+    print(f"{'Module':<16} | {'#':>2} | {'Operator':<42} | {'Avg(μs)':>8} | {'Pct%':>5} | {'Cnt':>4} | {'Kernel(s)':<30}")
+    print("-" * 120)
+
+    current_module = None
+    op_idx = 0
+    module_subtotals = defaultdict(float)
+
+    for r in result:
+        module_subtotals[r["module"]] += r["avg_us"]
+
+    for r in result:
+        op_idx += 1
+        pct = 100 * r["avg_us"] / total_us if total_us > 0 else 0
+        knames = ", ".join(r["kernel_names"][:1])
+        if len(knames) > 30:
+            knames = knames[:27] + "..."
+
+        # Module header
+        if r["module"] != current_module:
+            if current_module is not None:
+                sub = module_subtotals[current_module]
+                sub_pct = 100 * sub / total_us if total_us > 0 else 0
+                print(f"{'':>16}   {'':>2}   {'Subtotal':<42}   {sub:>8.1f}   {sub_pct:>5.1f}")
+                print("-" * 120)
+            current_module = r["module"]
+
+        print(f"{r['module'] if r['module'] != current_module or op_idx == 1 or result[op_idx-2]['module'] != current_module else '':.<16} | {op_idx:>2} | {r['operator']:<42} | {r['avg_us']:>8.1f} | {pct:>5.1f} | {r['avg_count']:>4.1f} | {knames:<30}")
+
+    # Last module subtotal
+    if current_module is not None:
+        sub = module_subtotals[current_module]
+        sub_pct = 100 * sub / total_us if total_us > 0 else 0
+        print(f"{'':>16}   {'':>2}   {'Subtotal':<42}   {sub:>8.1f}   {sub_pct:>5.1f}")
+
+    print(f"{'='*120}")
+    print(f"{'TOTAL':<16}   {'':>2}   {'':42}   {total_us:>8.1f}   100.0")
+    print(f"{'='*120}")
+
+
+def write_per_layer_csv(result, n_layers, filepath):
+    """Write per-layer breakdown to CSV."""
+    with open(filepath, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=[
+            "module", "operator", "avg_us", "pct", "avg_count",
+            "total_us", "n_layers", "kernel_names"
+        ])
+        writer.writeheader()
+        total_us = sum(r["avg_us"] for r in result)
+        for r in result:
+            pct = 100 * r["avg_us"] / total_us if total_us > 0 else 0
+            writer.writerow({
+                "module": r["module"],
+                "operator": r["operator"],
+                "avg_us": f"{r['avg_us']:.2f}",
+                "pct": f"{pct:.1f}",
+                "avg_count": f"{r['avg_count']:.2f}",
+                "total_us": f"{r['total_us']:.1f}",
+                "n_layers": n_layers,
+                "kernel_names": "; ".join(r["kernel_names"]),
+            })
+    print(f"\nPer-layer CSV written to: {filepath}")
+
+
+# =============================================================================
 # Trace parsing
 # =============================================================================
 
@@ -600,6 +1007,12 @@ def main():
                         help="Show raw kernels for first N steps (default: 2)")
     parser.add_argument("--gpu-pid", type=int, default=None,
                         help="Filter to specific GPU PID")
+    parser.add_argument("--per-layer", action="store_true",
+                        help="Per-layer analysis: split decode steps into layers using FMHA anchor")
+    parser.add_argument("--layer-range", default="10-40",
+                        help="Layer range for per-layer analysis (default: 10-40)")
+    parser.add_argument("--per-layer-csv", default=None,
+                        help="Output per-layer CSV path")
     args = parser.parse_args()
 
     events = load_trace(args.filepath)
@@ -651,6 +1064,21 @@ def main():
 
         if args.csv:
             write_csv(breakdown, len(decode_steps), args.csv)
+
+    # Per-layer analysis
+    if args.per_layer:
+        layer_range = args.layer_range.split("-")
+        layer_start = int(layer_range[0])
+        layer_end = int(layer_range[1]) if len(layer_range) > 1 else layer_start + 30
+
+        per_layer_result, n_layers = analyze_per_layer(
+            decode_steps, layer_start=layer_start, layer_end=layer_end,
+            kernel_map=kernel_map
+        )
+        if per_layer_result:
+            print_per_layer_table(per_layer_result, n_layers)
+            if args.per_layer_csv:
+                write_per_layer_csv(per_layer_result, n_layers, args.per_layer_csv)
 
     # Summary stats
     step_durations_sum = []  # sum of kernel durations (overcounts overlapping streams)

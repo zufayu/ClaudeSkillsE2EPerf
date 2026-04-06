@@ -373,6 +373,10 @@ if [[ -f "$EXTRACT_SCRIPT" ]] && [[ -n "$FIRST_TRACE" ]]; then
     log "Running CUDA Graph kernel breakdown on $(basename "$FIRST_TRACE")..."
     BREAKDOWN_CSV="$RESULT_DIR/kernel_breakdown_${TAG}.csv"
     python3 "$EXTRACT_SCRIPT" "$FIRST_TRACE" --platform b200 --csv "$BREAKDOWN_CSV" --max-steps 0 --skip-first 5 --show-steps 0 2>&1 | tee "$RESULT_DIR/kernel_breakdown_${TAG}.log" || log "WARNING: kernel breakdown extraction failed"
+
+    log "Running per-layer analysis (layers 10-40)..."
+    PER_LAYER_CSV="$RESULT_DIR/per_layer_breakdown_${TAG}.csv"
+    python3 "$EXTRACT_SCRIPT" "$FIRST_TRACE" --platform b200 --max-steps 0 --skip-first 5 --show-steps 0 --per-layer --layer-range 10-40 --per-layer-csv "$PER_LAYER_CSV" 2>&1 | tee "$RESULT_DIR/per_layer_breakdown_${TAG}.log" || log "WARNING: per-layer analysis failed"
 else
     if [[ ! -f "$EXTRACT_SCRIPT" ]]; then
         log "WARNING: extract_cuda_kernels_torch_trace.py not found at $EXTRACT_SCRIPT"
