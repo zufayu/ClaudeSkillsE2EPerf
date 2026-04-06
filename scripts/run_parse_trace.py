@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-Wrapper around ATOM's parse_trace.py with --target-bs support.
+Wrapper around ATOM's parse_trace.py with --target-bs and multi-EP support.
 
-ATOM's parse_trace.py always uses the first decode event (often bs=1 after
-prefill ramp-up, or an early bs=64 before steady state). This wrapper calls
-parse_trace for prefill unchanged, then for decode it selects a mid-run
-decode event at the target batch size (default: most frequent bs) so the
-kernel timings reflect steady-state behavior with warm caches and graphs.
+ATOM's parse_trace.py assumes all transformer layer modules are direct children
+of a single CompiledFxGraph block inside capture_graph. With EP>1, torch.compile
+splits the model into multiple CompiledFxGraph blocks (one per few layers), and
+parse_trace only sees modules from the first block → incomplete breakdown.
+
+This wrapper fixes both issues:
+  1. Target-BS: selects a steady-state decode event instead of the first one
+  2. Multi-EP: flattens the capture_graph hierarchy so all modules from all
+     CompiledFxGraph blocks appear as direct children of capture_graph
 
 Usage:
     python3 scripts/run_parse_trace.py <trace.json.gz> [--layer N] [--target-bs N]
@@ -25,6 +29,7 @@ Requires ATOM's tools/ on sys.path. Set ATOM_TOOLS env var if not at default.
 """
 
 import argparse
+import copy
 import re
 import sys
 import os
@@ -100,9 +105,94 @@ def select_decode_bs(events, target_bs=None, skip_ratio=0.5):
     return selected, target_bs
 
 
+def detect_multi_compiled_graph(capture_events, cg_event):
+    """Detect if capture_graph contains multiple CompiledFxGraph blocks.
+
+    Returns list of CompiledFxGraph events if multi-EP, empty list if standard.
+    """
+    cg_start = cg_event["ts"]
+    cg_end = cg_start + cg_event.get("dur", 0)
+
+    compiled_graphs = []
+    for e in capture_events:
+        if e.get("ph") != "X":
+            continue
+        name = e.get("name", "")
+        if "CompiledFxGraph" not in name:
+            continue
+        e_start = e.get("ts", 0)
+        e_end = e_start + e.get("dur", 0)
+        if e_start >= cg_start and e_end <= cg_end:
+            compiled_graphs.append(e)
+
+    return compiled_graphs
+
+
+def flatten_capture_events_for_multi_ep(capture_events, cg_event, compiled_graphs):
+    """Flatten multi-CompiledFxGraph hierarchy for parse_trace compatibility.
+
+    parse_trace expects: capture_graph → module → kernel_launch (2 levels)
+    Multi-EP has:       capture_graph → CompiledFxGraph → module → kernel_launch (3 levels)
+
+    Fix: remove CompiledFxGraph wrapper events from capture_events, so their
+    children become direct children of capture_graph. We do this by shrinking
+    each CompiledFxGraph event's duration to 0 (making it invisible to
+    EventIndex.get_direct_children which checks time containment).
+    """
+    # Build set of CompiledFxGraph event IDs for fast lookup
+    cg_ids = set(id(e) for e in compiled_graphs)
+
+    flattened = []
+    for e in capture_events:
+        if id(e) in cg_ids:
+            # Shrink CompiledFxGraph to 0 duration so its children
+            # "escape" and become direct children of capture_graph
+            e_copy = dict(e)
+            e_copy["dur"] = 0
+            flattened.append(e_copy)
+        else:
+            flattened.append(e)
+
+    return flattened
+
+
+def find_capture_graph_event(capture_events, target_bs):
+    """Find the capture_graph_bs_N event matching target_bs."""
+    target_name = f"capture_graph_bs_{target_bs}"
+
+    # Exact match
+    matches = [
+        e for e in capture_events
+        if e.get("name") == target_name and e.get("ph") == "X"
+        and e.get("dur", 0) > 100  # filter out the tiny duplicate events
+    ]
+    if matches:
+        return matches[0]
+
+    # Fallback: largest bs smaller than target
+    bs_events = []
+    for e in capture_events:
+        if e.get("ph") != "X":
+            continue
+        m = re.match(r"^capture_graph_bs_(\d+)$", e.get("name", ""))
+        if m and e.get("dur", 0) > 100:
+            bs_events.append((int(m.group(1)), e))
+
+    if bs_events:
+        # Try closest smaller
+        smaller = [(b, e) for b, e in bs_events if b <= target_bs]
+        if smaller:
+            best = max(smaller, key=lambda x: x[0])
+            return best[1]
+        # Any
+        return bs_events[0][1]
+
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="parse_trace.py wrapper with --target-bs for decode analysis."
+        description="parse_trace.py wrapper with --target-bs and multi-EP support."
     )
     parser.add_argument("filepath", help="Path to trace JSON or JSON.GZ file")
     parser.add_argument("--layer", type=int, default=3, help="Target layer index")
@@ -142,7 +232,7 @@ def main():
 
     # --- Decode: select target bs ---
     print("\n" + "=" * 60)
-    print("DECODE ANALYSIS (with --target-bs)")
+    print("DECODE ANALYSIS (with --target-bs and multi-EP support)")
     print("=" * 60)
 
     target_decode, actual_bs = select_decode_bs(events, args.target_bs, args.skip_ratio)
@@ -153,9 +243,30 @@ def main():
     dur_ms = target_decode.get("dur", 0) / 1000
     print(f"Selected: {target_decode.get('name')} (ts={target_decode['ts']:.0f}, dur={dur_ms:.2f}ms)")
 
+    # --- Multi-EP detection and flattening ---
+    cg_event = find_capture_graph_event(capture_events, actual_bs)
+    if cg_event is None:
+        print("WARNING: No capture_graph event found, proceeding without multi-EP fix")
+        final_capture_events = capture_events
+    else:
+        print(f"Using capture_graph: {cg_event.get('name')} (dur={cg_event.get('dur',0)}µs)")
+        compiled_graphs = detect_multi_compiled_graph(capture_events, cg_event)
+
+        if len(compiled_graphs) > 1:
+            print(f"\n*** MULTI-EP DETECTED: {len(compiled_graphs)} CompiledFxGraph blocks ***")
+            for i, cg in enumerate(compiled_graphs):
+                print(f"  [{i}] {cg.get('name', '')[:60]}... (dur={cg.get('dur',0)}µs)")
+            print("Flattening hierarchy for parse_trace compatibility...")
+            final_capture_events = flatten_capture_events_for_multi_ep(
+                capture_events, cg_event, compiled_graphs
+            )
+            print(f"Flattened: {len(capture_events)} → {len(final_capture_events)} events")
+        else:
+            print("Standard single-graph hierarchy (EP=1 or single CompiledFxGraph)")
+            final_capture_events = capture_events
+
     # Remove all OTHER decode gpu_user_annotation events from the event list
     # so parse_trace.parse_decode sees only our selected one as "first".
-    # Keep the selected event's real timestamp intact for correct kernel matching.
     filtered_events = [
         e for e in events
         if not (
@@ -168,7 +279,7 @@ def main():
     print(f"Filtered events: {len(events)} -> {len(filtered_events)} (removed {len(events) - len(filtered_events)} other decode events)")
 
     parse_trace.parse_decode(
-        filtered_events, capture_events, "decode_breakdown.xlsx", target_layer=args.layer
+        filtered_events, final_capture_events, "decode_breakdown.xlsx", target_layer=args.layer
     )
 
 
