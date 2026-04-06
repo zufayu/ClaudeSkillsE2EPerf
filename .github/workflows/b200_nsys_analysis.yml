@@ -83,9 +83,31 @@ jobs:
           for r in cur.execute(\\\"SELECT COUNT(*), SUBSTR(s.value,1,120) FROM NVTX_EVENTS n JOIN StringIds s ON n.textId=s.id WHERE s.value LIKE '%model%' OR s.value LIKE '%Module%' GROUP BY SUBSTR(s.value,1,120) LIMIT 20\\\"):
               print(f'  {r[0]}x {r[1]}')
           print()
-          print('=== NVTX_EVENTS with JSON payload (check jsonTextId) ===')
-          cols = [d[0] for d in cur.execute('PRAGMA table_info(NVTX_EVENTS)').fetchall()]
-          print(f'  Columns: {[c[1] for c in cur.execute(\\\"PRAGMA table_info(NVTX_EVENTS)\\\")]}')
+          print('=== NVTX_EVENTS columns ===')
+          print(f'  {[c[1] for c in cur.execute(\\\"PRAGMA table_info(NVTX_EVENTS)\\\")]}')
+          print()
+          print('=== NVTX_PAYLOAD_SCHEMAS ===')
+          try:
+              for r in cur.execute('SELECT * FROM NVTX_PAYLOAD_SCHEMAS LIMIT 5'):
+                  print(f'  {r}')
+          except: print('  (not found)')
+          print()
+          print('=== NVTX_PAYLOAD_SCHEMA_ENTRIES ===')
+          try:
+              for r in cur.execute('SELECT * FROM NVTX_PAYLOAD_SCHEMA_ENTRIES LIMIT 10'):
+                  print(f'  {r}')
+          except: print('  (not found)')
+          print()
+          print('=== Sample NVTX jsonText values ===')
+          for r in cur.execute('SELECT DISTINCT SUBSTR(COALESCE(jsonText,\\'\\'),1,150) FROM NVTX_EVENTS WHERE jsonText IS NOT NULL AND jsonText != \\'\\'  LIMIT 10'):
+              print(f'  {r[0]}')
+          print()
+          print('=== NVTX with binaryData ===')
+          cnt = cur.execute('SELECT COUNT(*) FROM NVTX_EVENTS WHERE binaryData IS NOT NULL').fetchone()
+          print(f'  {cnt[0]} events with binaryData')
+          if cnt[0] > 0:
+              for r in cur.execute('SELECT textId, SUBSTR(COALESCE(jsonText,\\'\\'),1,80), LENGTH(binaryData), start, end FROM NVTX_EVENTS WHERE binaryData IS NOT NULL LIMIT 5'):
+                  print(f'  textId={r[0]}, json={r[1]}, binLen={r[2]}, start={r[3]/1e9:.1f}s')
           conn.close()
           \" 2>&1"
 
