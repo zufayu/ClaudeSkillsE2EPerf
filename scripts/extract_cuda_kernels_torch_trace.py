@@ -270,8 +270,48 @@ def match_kernels_by_time(launch, gpu_kernels):
     return matched
 
 
+def match_kernels_by_interval(launches, gpu_kernels, idx):
+    """Match GPU kernels in the interval [launch[idx].ts, launch[idx+1].ts).
+
+    Each cudaGraphLaunch is one decode iteration. GPU kernels execute
+    asynchronously well past the CPU launch duration, so we use the
+    inter-launch interval (not launch.dur) as the kernel ownership window.
+    """
+    start_ts = launches[idx].get("ts", 0)
+    if idx + 1 < len(launches):
+        end_ts = launches[idx + 1].get("ts", 0)
+    else:
+        # Last launch: use start + 2 * median gap as window
+        if idx > 0:
+            gaps = [launches[j+1]["ts"] - launches[j]["ts"] for j in range(max(0, idx-5), idx)]
+            median_gap = sorted(gaps)[len(gaps)//2] if gaps else 20000
+            end_ts = start_ts + 2 * median_gap
+        else:
+            end_ts = start_ts + 20000  # 20ms default
+
+    matched = []
+    for k in gpu_kernels:
+        k_ts = k.get("ts", 0)
+        if k_ts >= start_ts and k_ts < end_ts:
+            matched.append({
+                "name": k.get("name", ""),
+                "ts": k_ts,
+                "dur": k.get("dur", 0),
+                "tid": k.get("tid"),
+                "pid": k.get("pid"),
+                "cat": k.get("cat", ""),
+            })
+
+    matched.sort(key=lambda x: x["ts"])
+    return matched
+
+
 def extract_decode_steps(events, max_steps=None, skip_first=5):
     """Extract kernel lists for each decode step (cudaGraphLaunch).
+
+    Each cudaGraphLaunch = one full decode iteration. GPU kernels are
+    matched using inter-launch intervals (not flow events or launch dur),
+    because GPU execution extends well past the CPU launch call.
 
     Args:
         events: raw trace events
@@ -283,7 +323,6 @@ def extract_decode_steps(events, max_steps=None, skip_first=5):
     """
     launches = find_cuda_graph_launches(events)
     gpu_kernels = find_gpu_kernels(events)
-    flow_starts, flow_ends = build_flow_map(events)
 
     # Skip first few launches (often prefill or ramp-up)
     if skip_first and len(launches) > skip_first:
@@ -293,27 +332,21 @@ def extract_decode_steps(events, max_steps=None, skip_first=5):
     if max_steps:
         launches = launches[:max_steps]
 
-    has_flows = len(flow_starts) > 0
     decode_steps = []
 
     for i, launch in enumerate(launches):
-        if has_flows:
-            kernels = match_kernels_by_flow(launch, events, flow_starts, flow_ends)
-        else:
-            kernels = []
-
-        # Fallback to time-window if flow matching found nothing
-        if not kernels:
-            kernels = match_kernels_by_time(launch, gpu_kernels)
+        kernels = match_kernels_by_interval(launches, gpu_kernels, i)
 
         if kernels:
             decode_steps.append((launch, kernels))
 
         if i == 0:
-            method = "flow" if has_flows and kernels else "time-window"
-            print(f"  Kernel matching method: {method}")
-            print(f"  First decode step: {len(kernels)} kernels, "
-                  f"span={kernels[-1]['ts'] - kernels[0]['ts']:.0f}μs" if kernels else "  First decode step: 0 kernels")
+            print(f"  Kernel matching method: inter-launch interval")
+            if kernels:
+                span = kernels[-1]['ts'] - kernels[0]['ts']
+                print(f"  First decode step: {len(kernels)} kernels, span={span:.0f}μs ({span/1000:.2f}ms)")
+            else:
+                print(f"  First decode step: 0 kernels")
 
     print(f"  Total decode steps extracted: {len(decode_steps)}")
     return decode_steps
