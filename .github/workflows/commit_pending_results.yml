@@ -1,0 +1,78 @@
+name: Commit Pending Results
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which node to commit from'
+        type: choice
+        options:
+          - b200
+          - mi355x
+          - both
+        default: both
+
+jobs:
+  b200:
+    if: inputs.target == 'b200' || inputs.target == 'both'
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 10
+    env:
+      NODE: hungry-hippo-fin-03-2
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+    steps:
+      - name: Reset and sync
+        run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard origin/main 2>/dev/null; git fetch origin && git reset --hard origin/main"
+
+      - name: Show pending result files
+        run: |
+          echo "=== Nsys results ==="
+          ssh $NODE "ls -lh $REPO/results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_nsys/ 2>/dev/null | grep -v '.nsys-rep\|.sqlite'" || echo "none"
+          echo "=== Torch profiling results ==="
+          ssh $NODE "ls -lh $REPO/results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling/ 2>/dev/null | grep -v '.json.gz'" || echo "none"
+
+      - name: Git add and push (exclude large traces)
+        run: |
+          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && for dir in results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_nsys results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling; do for ext in log json md csv yml; do git add -f \$dir/*.\$ext 2>/dev/null; done; done"
+          ssh $NODE "cd $REPO && git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 SGLang FP4 pending results (nsys + torch profiling, EP4 TP4)
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push origin main; else echo 'Nothing to commit'; fi"
+
+      - name: Verify
+        run: ssh $NODE "cd $REPO && git log --oneline -3"
+
+  mi355x:
+    if: inputs.target == 'mi355x' || inputs.target == 'both'
+    runs-on: [self-hosted, mi355x]
+    needs: [b200]
+    timeout-minutes: 10
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+    steps:
+      - name: Reset and sync
+        run: cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git fetch origin && git reset --hard origin/main
+
+      - name: Show pending result files
+        run: |
+          echo "=== EP4 TP4 profiling ==="
+          ls -lh $REPO/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm711_profiling/ 2>/dev/null | grep -v '.json.gz' || echo "none"
+
+      - name: Git add and push (exclude large traces)
+        run: |
+          cd $REPO
+          git config user.email "ci@github.com"
+          git config user.name "MI355X CI"
+          for ext in log csv md xlsx json; do git add -f results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm711_profiling/*.$ext 2>/dev/null; done
+          git diff --cached --name-only
+          if ! git diff --cached --quiet; then
+            git commit -m "data: MI355X MXFP4 EP4 TP4 pending profiling results
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+            git push origin main
+          else
+            echo "Nothing to commit"
+          fi
+
+      - name: Verify
+        run: cd $REPO && git log --oneline -3
