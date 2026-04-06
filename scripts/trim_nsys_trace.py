@@ -271,7 +271,7 @@ Examples:
     parser.add_argument("--top", type=int, default=30, help="Top N kernels (default: 30)")
     parser.add_argument("--sqlite-only", action="store_true", help="Only export SQLite, skip trim")
     parser.add_argument("--analyze-only", action="store_true", help="Only analyze existing SQLite")
-    parser.add_argument("--no-analyze", action="store_true", help="Skip analysis")
+    parser.add_argument("--analyze", action="store_true", help="Also run kernel analysis after trim/export")
     parser.add_argument("--outdir", default=None, help="Output directory (default: same as input)")
     args = parser.parse_args()
 
@@ -297,19 +297,19 @@ Examples:
     end_s = args.end
 
     if start_s is None or end_s is None:
-        # Need to figure out trace duration - try quick SQLite export first
-        print("\nAuto-detecting trace duration...")
-        tmp_sqlite = os.path.join(outdir, f"{basename}_tmp.sqlite")
-        if export_sqlite(input_path, tmp_sqlite):
-            t0, t1, dur = get_trace_duration_from_sqlite(tmp_sqlite)
+        # Need to figure out trace duration - do full SQLite export
+        print("\nNo --start/--end specified, doing full SQLite export to detect duration...")
+        full_sqlite = os.path.join(outdir, f"{basename}.sqlite")
+        if not os.path.exists(full_sqlite):
+            export_sqlite(input_path, full_sqlite)
+        if os.path.exists(full_sqlite):
+            t0, t1, dur = get_trace_duration_from_sqlite(full_sqlite)
             print(f"  Trace duration: {dur:.1f}s")
             mid = dur / 2
             half_win = args.window / 2
             start_s = mid - half_win
             end_s = mid + half_win
             print(f"  Auto-selected window: {start_s:.0f}s - {end_s:.0f}s (middle {args.window:.0f}s)")
-            # Remove tmp sqlite, we'll make a proper one
-            os.remove(tmp_sqlite)
         else:
             print("  Cannot determine duration, using 270-330s default")
             start_s = 270
@@ -318,37 +318,47 @@ Examples:
     tag = f"t{int(start_s)}-{int(end_s)}"
 
     # Step 1: Trim nsys-rep
+    trimmed_path = None
     if not args.sqlite_only:
         trimmed_path = os.path.join(outdir, f"{basename}_trimmed_{tag}.nsys-rep")
         if trim_nsys_rep(input_path, trimmed_path, start_s, end_s):
             print(f"\n>>> Open in Nsight Systems GUI: {trimmed_path}")
         else:
-            print("\n>>> nsys filter failed — try updating nsys or use --sqlite-only")
+            trimmed_path = None
+            print("\n>>> nsys filter/timerange not supported by this nsys version.")
+            print(">>> Try opening the full 2.5GB file directly in Nsight Systems GUI —")
+            print(">>> version 2026.1.1 should handle it. It may take a few minutes to load.")
 
-    # Step 2: Export SQLite
+    # Step 2: Export trimmed SQLite (for time-windowed analysis)
     sqlite_path = os.path.join(outdir, f"{basename}_{tag}.sqlite")
     if not os.path.exists(sqlite_path):
-        export_sqlite(input_path, sqlite_path, start_s, end_s)
-
-    # Step 3: Analyze
-    if not args.no_analyze:
-        if os.path.exists(sqlite_path):
-            analyze_sqlite(sqlite_path, args.gpu, args.top)
+        # nsys export with timerange likely also failed, so just copy full sqlite
+        full_sqlite = os.path.join(outdir, f"{basename}.sqlite")
+        if os.path.exists(full_sqlite):
+            print(f"\nFull SQLite available: {full_sqlite} ({os.path.getsize(full_sqlite)/1e6:.1f} MB)")
+            print("  (use --analyze to query kernels within time window)")
         else:
-            # Fall back to full SQLite if it exists
-            full_sqlite = os.path.join(outdir, f"{basename}.sqlite")
-            if os.path.exists(full_sqlite):
-                analyze_sqlite(full_sqlite, args.gpu, args.top)
+            export_sqlite(input_path, sqlite_path)
+
+    # Step 3: Analyze (only if --analyze flag)
+    if args.analyze:
+        target_sqlite = sqlite_path if os.path.exists(sqlite_path) else os.path.join(outdir, f"{basename}.sqlite")
+        if os.path.exists(target_sqlite):
+            analyze_sqlite(target_sqlite, args.gpu, args.top)
 
     print(f"\n{'='*60}")
     print("DONE")
     print(f"{'='*60}")
-    trimmed = os.path.join(outdir, f"{basename}_trimmed_{tag}.nsys-rep")
-    if os.path.exists(trimmed):
-        print(f"  Trimmed nsys-rep: {trimmed} ({os.path.getsize(trimmed)/1e6:.1f} MB)")
-    if os.path.exists(sqlite_path):
-        print(f"  SQLite:           {sqlite_path} ({os.path.getsize(sqlite_path)/1e6:.1f} MB)")
+    if trimmed_path and os.path.exists(trimmed_path):
+        print(f"  Trimmed nsys-rep: {trimmed_path} ({os.path.getsize(trimmed_path)/1e6:.1f} MB)")
+    full_sqlite = os.path.join(outdir, f"{basename}.sqlite")
+    if os.path.exists(full_sqlite):
+        print(f"  Full SQLite:      {full_sqlite} ({os.path.getsize(full_sqlite)/1e6:.1f} MB)")
     print(f"  Time window:      {start_s:.0f}s - {end_s:.0f}s ({end_s-start_s:.0f}s)")
+    if not trimmed_path or not os.path.exists(trimmed_path):
+        print(f"\n  TIP: Your nsys version doesn't support trim.")
+        print(f"       Try opening the full .nsys-rep directly in Nsight Systems GUI.")
+        print(f"       2026.1.1 should handle 2.5GB files (may take a few minutes).")
 
 
 if __name__ == "__main__":
