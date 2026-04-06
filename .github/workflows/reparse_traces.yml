@@ -111,7 +111,7 @@ jobs:
     timeout-minutes: 30
     env:
       NODE: hungry-hippo-fin-03-2
-      CONTAINER: zufa_sglang
+      CONTAINER: zufa_trt
       REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
       TRACE_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling
     steps:
