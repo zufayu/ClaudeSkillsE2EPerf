@@ -10,21 +10,32 @@ jobs:
       NODE: hungry-hippo-fin-03-2
       CONTAINER: zufa_sglang
       REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
-      TRACE: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling/1775449594.3104873-TP-0-EP-0.trace.json.gz
       RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling
     steps:
       - name: Sync repo
         run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
 
-      - name: Check trace file
-        run: ssh $NODE "ls -lh $REPO/$TRACE"
+      - name: Find latest TP-0 trace file
+        run: |
+          TRACE=$(ssh $NODE "ls -t $REPO/$RESULT_DIR/*TP-0-EP-0*.trace.json.gz 2>/dev/null | head -1")
+          if [ -z "$TRACE" ]; then
+            TRACE=$(ssh $NODE "ls -t $REPO/$RESULT_DIR/*TP-0*.trace.json.gz 2>/dev/null | head -1")
+          fi
+          if [ -z "$TRACE" ]; then
+            echo "ERROR: No TP-0 trace file found in $RESULT_DIR"
+            ssh $NODE "ls -lh $REPO/$RESULT_DIR/*.json.gz 2>/dev/null || echo 'No .json.gz files'"
+            exit 1
+          fi
+          echo "TRACE=$TRACE" >> $GITHUB_ENV
+          echo "Using trace: $TRACE"
+          ssh $NODE "ls -lh $TRACE"
 
       - name: Run --info (trace metadata)
-        run: ssh $NODE "docker exec zufa_sglang python3 $REPO/scripts/extract_cuda_kernels_torch_trace.py $REPO/$TRACE --info"
+        run: ssh $NODE "docker exec zufa_sglang python3 $REPO/scripts/extract_cuda_kernels_torch_trace.py $TRACE --info"
 
       - name: Run kernel breakdown (inter-launch interval, skip 5, max 20)
         if: always()
-        run: ssh $NODE "docker exec zufa_sglang python3 $REPO/scripts/extract_cuda_kernels_torch_trace.py $REPO/$TRACE --platform b200 --max-steps 20 --skip-first 5 --show-steps 1 --csv $REPO/$RESULT_DIR/kernel_breakdown.csv"
+        run: ssh $NODE "docker exec zufa_sglang python3 $REPO/scripts/extract_cuda_kernels_torch_trace.py $TRACE --platform b200 --max-steps 20 --skip-first 5 --show-steps 1 --csv $REPO/$RESULT_DIR/kernel_breakdown.csv"
 
       - name: Show CSV
         if: always()

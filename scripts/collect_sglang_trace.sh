@@ -345,10 +345,14 @@ sleep 3
 log "Trace files:"
 find "$TRACE_DIR" -type f -name "*.json*" -ls 2>/dev/null | head -20
 
-# Copy all trace files to result dir
+# Copy all trace files to result dir, rename with TAG for traceability
 TRACE_COUNT=0
 while IFS= read -r -d '' trace_file; do
-    cp -v "$trace_file" "$RESULT_DIR/"
+    orig_name=$(basename "$trace_file")
+    # Extract rank info (e.g. TP-0-EP-0) from original filename
+    rank_info=$(echo "$orig_name" | grep -oP 'TP-\d+-EP-\d+' || echo "rank${TRACE_COUNT}")
+    new_name="${TAG}_${rank_info}.trace.json.gz"
+    cp -v "$trace_file" "$RESULT_DIR/$new_name"
     TRACE_COUNT=$((TRACE_COUNT + 1))
 done < <(find "$TRACE_DIR" -type f \( -name "*.json.gz" -o -name "*.trace.json.gz" \) -print0 2>/dev/null)
 
@@ -357,7 +361,7 @@ if [[ $TRACE_COUNT -eq 0 ]]; then
     # Check for uncompressed traces
     find "$TRACE_DIR" -type f -ls 2>/dev/null | head -20
 else
-    log "Copied $TRACE_COUNT trace file(s) to $RESULT_DIR/"
+    log "Copied $TRACE_COUNT trace file(s) to $RESULT_DIR/ (renamed with TAG)"
 fi
 
 # ======================== Step 8: Kernel Breakdown ============================
