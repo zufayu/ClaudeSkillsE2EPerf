@@ -43,6 +43,7 @@ SCENARIO="chat"
 CONCURRENCY=64
 RESULT_DIR=""
 SKIP_EXPORT=false
+BENCH_NUM_PROMPTS_OVERRIDE=""
 CONTAINER_IMAGE=""
 MODEL_NAME="dsr1"
 QUANT="fp4"
@@ -74,6 +75,7 @@ Options:
   --concurrency N       Max concurrency (default: 64)
   --port N              Server port (default: 8888)
   --skip-export         Skip post-processing (just capture .nsys-rep)
+  --bench-prompts N     Override benchmark prompts (default: CONC*10)
   --container-image IMG Container image name for metadata
   --model-name NAME     Model short name for trace tag (default: dsr1)
   --quant QUANT         Quantization for trace tag (default: fp4)
@@ -101,6 +103,7 @@ while [[ $# -gt 0 ]]; do
         --result-dir)      RESULT_DIR="$2"; shift 2 ;;
         --port)            PORT="$2"; shift 2 ;;
         --skip-export)     SKIP_EXPORT=true; shift ;;
+        --bench-prompts)   BENCH_NUM_PROMPTS_OVERRIDE="$2"; shift 2 ;;
         --container-image) CONTAINER_IMAGE="$2"; shift 2 ;;
         --model-name)      MODEL_NAME="$2"; shift 2 ;;
         --quant)           QUANT="$2"; shift 2 ;;
@@ -123,7 +126,11 @@ case "$SCENARIO" in
 esac
 
 WARMUP_NUM_PROMPTS=$((CONCURRENCY * 2))
-BENCH_NUM_PROMPTS=$((CONCURRENCY * 10))
+if [[ -n "$BENCH_NUM_PROMPTS_OVERRIDE" ]]; then
+    BENCH_NUM_PROMPTS=$BENCH_NUM_PROMPTS_OVERRIDE
+else
+    BENCH_NUM_PROMPTS=$((CONCURRENCY * 10))
+fi
 GPU_COUNT=$((TP > EP ? TP : EP))
 
 SCHEDULER_RECV_INTERVAL=10
