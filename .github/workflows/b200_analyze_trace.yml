@@ -1,0 +1,29 @@
+name: B200 Analyze Torch Trace
+on:
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 30
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_sglang
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      TRACE: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling/1775399881.3412564-TP-0-EP-0.trace.json.gz
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+
+      - name: Check trace file
+        run: ssh $NODE "ls -lh $REPO/$TRACE"
+
+      - name: Run --info (trace metadata)
+        run: ssh $NODE "docker exec zufa_sglang python3 $REPO/scripts/extract_cuda_kernels_torch_trace.py $REPO/$TRACE --info"
+
+      - name: Run kernel breakdown (skip-first=5, max-steps=20)
+        run: ssh $NODE "docker exec zufa_sglang python3 $REPO/scripts/extract_cuda_kernels_torch_trace.py $REPO/$TRACE --platform b200 --max-steps 20 --skip-first 5 --show-steps 2 --csv $REPO/results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling/kernel_breakdown.csv"
+
+      - name: Show CSV
+        if: always()
+        run: ssh $NODE "cat $REPO/results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling/kernel_breakdown.csv 2>/dev/null || echo 'No CSV'"
