@@ -61,6 +61,21 @@ jobs:
           echo "FULL_SQLITE=$FULL_SQLITE" >> $GITHUB_ENV
           ssh $NODE "ls -lh $FULL_SQLITE"
 
+      - name: Debug NVTX tables and content
+        run: |
+          echo "=== SQLite tables ==="
+          ssh $NODE "docker exec $CONTAINER sqlite3 $FULL_SQLITE '.tables'"
+          echo "=== NVTX_EVENTS schema ==="
+          ssh $NODE "docker exec $CONTAINER sqlite3 $FULL_SQLITE '.schema NVTX_EVENTS'" 2>/dev/null || echo "No NVTX_EVENTS table"
+          echo "=== Sample NVTX texts (first 20 distinct) ==="
+          ssh $NODE "docker exec $CONTAINER sqlite3 $FULL_SQLITE \"SELECT DISTINCT SUBSTR(s.value,1,120) FROM NVTX_EVENTS n JOIN StringIds s ON n.textId=s.id LIMIT 20\"" 2>/dev/null || true
+          echo "=== NVTX texts containing 'model' or 'Module' ==="
+          ssh $NODE "docker exec $CONTAINER sqlite3 $FULL_SQLITE \"SELECT COUNT(*), SUBSTR(s.value,1,120) FROM NVTX_EVENTS n JOIN StringIds s ON n.textId=s.id WHERE s.value LIKE '%model%' OR s.value LIKE '%Module%' GROUP BY SUBSTR(s.value,1,120) LIMIT 20\"" 2>/dev/null || true
+          echo "=== Check for GENERIC_EVENT or other NVTX tables ==="
+          ssh $NODE "docker exec $CONTAINER sqlite3 $FULL_SQLITE \"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%NVTX%' OR name LIKE '%GENERIC%' OR name LIKE '%EVENT%'\"" 2>/dev/null || true
+          echo "=== NVTX_EVENTS textId vs eventType distribution ==="
+          ssh $NODE "docker exec $CONTAINER sqlite3 $FULL_SQLITE \"SELECT eventType, COUNT(*) FROM NVTX_EVENTS GROUP BY eventType\"" 2>/dev/null || true
+
       - name: Auto-detect benchmark time window from NVTX
         run: |
           TIMERANGE="${{ inputs.timerange }}"
