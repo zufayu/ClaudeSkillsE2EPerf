@@ -653,23 +653,27 @@ def main():
             write_csv(breakdown, len(decode_steps), args.csv)
 
     # Summary stats
-    step_durations = []
+    step_durations_sum = []  # sum of kernel durations (overcounts overlapping streams)
+    step_durations_wall = []  # wall-clock: span from first kernel to last kernel end
     for launch, kernels in decode_steps:
         if kernels:
-            step_dur = sum(k["dur"] for k in kernels)
-            step_durations.append(step_dur)
+            step_durations_sum.append(sum(k["dur"] for k in kernels))
+            wall_start = min(k["ts"] for k in kernels)
+            wall_end = max(k["ts"] + k["dur"] for k in kernels)
+            step_durations_wall.append(wall_end - wall_start)
 
-    if step_durations:
-        avg_dur = sum(step_durations) / len(step_durations)
-        min_dur = min(step_durations)
-        max_dur = max(step_durations)
-        print(f"\nDecode step duration stats ({len(step_durations)} steps):")
-        print(f"  Avg: {avg_dur:.1f}μs ({avg_dur/1000:.2f}ms)")
-        print(f"  Min: {min_dur:.1f}μs  Max: {max_dur:.1f}μs")
-        if avg_dur > 0:
-            print(f"  Range: {max_dur-min_dur:.1f}μs ({100*(max_dur-min_dur)/avg_dur:.1f}% variation)")
-        else:
-            print(f"  Range: {max_dur-min_dur:.1f}μs")
+    if step_durations_wall:
+        avg_wall = sum(step_durations_wall) / len(step_durations_wall)
+        min_wall = min(step_durations_wall)
+        max_wall = max(step_durations_wall)
+        avg_sum = sum(step_durations_sum) / len(step_durations_sum)
+        print(f"\nDecode step duration stats ({len(step_durations_wall)} steps):")
+        print(f"  Wall-clock avg: {avg_wall:.1f}μs ({avg_wall/1000:.2f}ms)")
+        print(f"  Wall-clock min: {min_wall:.1f}μs ({min_wall/1000:.2f}ms)  max: {max_wall:.1f}μs ({max_wall/1000:.2f}ms)")
+        print(f"  Kernel sum avg: {avg_sum:.1f}μs ({avg_sum/1000:.2f}ms) (includes stream overlap)")
+        if avg_wall > 0:
+            print(f"  Range: {max_wall-min_wall:.1f}μs ({100*(max_wall-min_wall)/avg_wall:.1f}% variation)")
+            print(f"  Overlap ratio: {avg_sum/avg_wall:.2f}x (sum/wall, >1.0 means multi-stream overlap)")
 
 
 if __name__ == "__main__":
