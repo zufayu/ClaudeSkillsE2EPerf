@@ -318,25 +318,56 @@ fi
 
 # ======================== Step 7: Summary =====================================
 
+SUMMARY_FILE="$RESULT_DIR/summary.md"
+cat > "$SUMMARY_FILE" << 'HEADER'
+# DeepSeek R1 Profiling Results (SGLang)
+## B200 Nsys Trace
+
+| Config | Scenario | CONC | Total Tput | Output Tput | TPOT (ms) | TTFT (ms) |
+|--------|----------|------|------------|-------------|-----------|-----------|
+HEADER
+
+if [[ -f "$RESULT_DIR/result_profiled_${TAG}.json" ]]; then
+    python3 -c "
+import json, sys
+with open('$RESULT_DIR/result_profiled_${TAG}.json') as f:
+    data = json.load(f)
+out_tps = data.get('output_throughput', 0)
+in_tps = data.get('input_throughput', 0)
+total_tps = data.get('total_token_throughput', in_tps + out_tps)
+ttft_p50 = data.get('ttft_p50', data.get('median_ttft_ms', 0))
+tpot_p50 = data.get('tpot_p50', data.get('median_tpot_ms', 0))
+print(f'| profiling | $SCENARIO | $CONCURRENCY | {total_tps:.1f} | {out_tps:.1f} | {tpot_p50:.1f} | {ttft_p50:.1f} |')
+" >> "$SUMMARY_FILE" 2>/dev/null || true
+fi
+
+# Append top kernels if SQLite export was done
+if [[ -f "$RESULT_DIR/${TAG}.sqlite" ]]; then
+    echo "" >> "$SUMMARY_FILE"
+    echo "## Top 10 Kernels by Total Duration" >> "$SUMMARY_FILE"
+    echo "" >> "$SUMMARY_FILE"
+    echo '```' >> "$SUMMARY_FILE"
+    sqlite3 -header -column "$RESULT_DIR/${TAG}.sqlite" "SELECT shortName, COUNT(*) as count, ROUND(CAST(SUM(end-start) AS FLOAT) / 1e6, 2) as total_ms, ROUND(CAST(AVG(end-start) AS FLOAT) / 1e3, 2) as avg_us FROM CUPTI_ACTIVITY_KIND_KERNEL GROUP BY shortName ORDER BY total_ms DESC LIMIT 10;" 2>/dev/null >> "$SUMMARY_FILE" || true
+    echo '```' >> "$SUMMARY_FILE"
+
+    echo "" >> "$SUMMARY_FILE"
+    echo "## NVTX Layer Markers" >> "$SUMMARY_FILE"
+    echo "" >> "$SUMMARY_FILE"
+    echo '```' >> "$SUMMARY_FILE"
+    sqlite3 -header -column "$RESULT_DIR/${TAG}.sqlite" "SELECT text, COUNT(*) as count, ROUND(AVG(end-start)/1e6, 3) as avg_ms, ROUND(SUM(end-start)/1e6, 1) as total_ms FROM NVTX_EVENTS WHERE text LIKE '%layer%' OR text LIKE '%Layer%' GROUP BY text ORDER BY total_ms DESC LIMIT 20;" 2>/dev/null >> "$SUMMARY_FILE" || true
+    echo '```' >> "$SUMMARY_FILE"
+fi
+
+log "Summary written to: $SUMMARY_FILE"
+cat "$SUMMARY_FILE"
+
 log "============================================================"
 log "  NSYS TRACE CAPTURE COMPLETE"
 log "============================================================"
 log "  Trace:      $TRACE_FILE (${TRACE_SIZE_MB} MB)"
+log "  Summary:    $SUMMARY_FILE"
 log "  Server log: $SERVER_LOG"
 log "  Result dir: $RESULT_DIR/"
 log "============================================================"
-
-# Show profiled benchmark result
-if [[ -f "$RESULT_DIR/result_profiled_${TAG}.json" ]]; then
-    python3 -c "
-import json
-with open('$RESULT_DIR/result_profiled_${TAG}.json') as f:
-    d = json.load(f)
-out_tps = d.get('output_throughput', 0)
-tpot = d.get('tpot_p50', d.get('median_tpot_ms', 0))
-ttft = d.get('ttft_p50', d.get('median_ttft_ms', 0))
-print(f'Profiled benchmark: Output Tput={out_tps:.1f}, TPOT p50={tpot:.1f}ms, TTFT p50={ttft:.1f}ms')
-" || true
-fi
 
 log "Done."

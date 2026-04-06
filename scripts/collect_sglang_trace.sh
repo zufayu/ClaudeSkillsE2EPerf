@@ -360,26 +360,68 @@ else
     log "Copied $TRACE_COUNT trace file(s) to $RESULT_DIR/"
 fi
 
-# ======================== Step 8: Summary =====================================
+# ======================== Step 8: Kernel Breakdown ============================
+
+EXTRACT_SCRIPT="$SCRIPT_DIR/extract_cuda_graph_kernels.py"
+FIRST_TRACE=$(find "$RESULT_DIR" -maxdepth 1 -name "*.json.gz" -type f 2>/dev/null | head -1)
+
+if [[ -f "$EXTRACT_SCRIPT" ]] && [[ -n "$FIRST_TRACE" ]]; then
+    log "Running CUDA Graph kernel breakdown on $(basename "$FIRST_TRACE")..."
+    BREAKDOWN_CSV="$RESULT_DIR/kernel_breakdown_${TAG}.csv"
+    python3 "$EXTRACT_SCRIPT" "$FIRST_TRACE" --platform b200 --csv "$BREAKDOWN_CSV" --max-steps 20 --skip-first 5 --show-steps 0 2>&1 | tee "$RESULT_DIR/kernel_breakdown_${TAG}.log" || log "WARNING: kernel breakdown extraction failed"
+else
+    if [[ ! -f "$EXTRACT_SCRIPT" ]]; then
+        log "WARNING: extract_cuda_graph_kernels.py not found at $EXTRACT_SCRIPT"
+    else
+        log "WARNING: No trace .json.gz found for kernel breakdown"
+    fi
+fi
+
+# ======================== Step 9: Summary =====================================
+
+SUMMARY_FILE="$RESULT_DIR/summary.md"
+cat > "$SUMMARY_FILE" << 'HEADER'
+# DeepSeek R1 Profiling Results (SGLang)
+## B200 Torch Profiler Trace
+
+| Config | Scenario | CONC | Total Tput | Output Tput | TPOT (ms) | TTFT (ms) |
+|--------|----------|------|------------|-------------|-----------|-----------|
+HEADER
+
+if [[ -f "$RESULT_DIR/${TRACE_RESULT_FILE}.json" ]]; then
+    python3 -c "
+import json, sys
+with open('$RESULT_DIR/${TRACE_RESULT_FILE}.json') as f:
+    data = json.load(f)
+out_tps = data.get('output_throughput', 0)
+in_tps = data.get('input_throughput', 0)
+total_tps = data.get('total_token_throughput', in_tps + out_tps)
+ttft_p50 = data.get('ttft_p50', data.get('median_ttft_ms', 0))
+tpot_p50 = data.get('tpot_p50', data.get('median_tpot_ms', 0))
+print(f'| profiling | $SCENARIO | $CONCURRENCY | {total_tps:.1f} | {out_tps:.1f} | {tpot_p50:.1f} | {ttft_p50:.1f} |')
+" >> "$SUMMARY_FILE" 2>/dev/null || true
+fi
+
+# Append kernel breakdown summary if available
+if [[ -f "$BREAKDOWN_CSV" ]]; then
+    echo "" >> "$SUMMARY_FILE"
+    echo "## Kernel Breakdown (per decode step, averaged)" >> "$SUMMARY_FILE"
+    echo "" >> "$SUMMARY_FILE"
+    echo '```' >> "$SUMMARY_FILE"
+    head -20 "$RESULT_DIR/kernel_breakdown_${TAG}.log" 2>/dev/null | grep -E '^\s*[0-9]+\s*\||^#|^=|Per-Decode|Total per' >> "$SUMMARY_FILE" || true
+    echo '```' >> "$SUMMARY_FILE"
+fi
+
+log "Summary written to: $SUMMARY_FILE"
+cat "$SUMMARY_FILE"
 
 log "============================================================"
 log "  TRACE CAPTURE COMPLETE"
 log "============================================================"
 log "  Traces:     $RESULT_DIR/"
+log "  Breakdown:  ${BREAKDOWN_CSV:-N/A}"
+log "  Summary:    $SUMMARY_FILE"
 log "  Server log: $SERVER_LOG"
 log "============================================================"
-
-# Show profiled benchmark result
-if [[ -f "$RESULT_DIR/${TRACE_RESULT_FILE}.json" ]]; then
-    python3 -c "
-import json
-with open('$RESULT_DIR/${TRACE_RESULT_FILE}.json') as f:
-    d = json.load(f)
-out_tps = d.get('output_throughput', 0)
-tpot = d.get('tpot_p50', d.get('median_tpot_ms', 0))
-ttft = d.get('ttft_p50', d.get('median_ttft_ms', 0))
-print(f'Profiled benchmark: Output Tput={out_tps:.1f}, TPOT p50={tpot:.1f}ms, TTFT p50={ttft:.1f}ms')
-" || true
-fi
 
 log "Done."
