@@ -57,18 +57,21 @@ jobs:
       - name: Run hierarchy dump
         if: always()
         run: |
-          # Find the run trace (non-capture trace)
+          # Search order: result dir, container result dir, container /tmp/trace/rank_0/
           RUN_TRACE=$(find $TRACE_DIR -name "*.json.gz" ! -name "*capture*" -type f 2>/dev/null | head -1)
           if [ -z "$RUN_TRACE" ]; then
-            # Try container paths
             RUN_TRACE=$(podman exec $CONTAINER bash -c "find $TRACE_DIR -name '*.json.gz' ! -name '*capture*' -type f 2>/dev/null | head -1")
           fi
           if [ -z "$RUN_TRACE" ]; then
-            echo "ERROR: No run trace .json.gz found. Traces may have been cleaned up."
+            RUN_TRACE=$(podman exec $CONTAINER bash -c "find /tmp/trace/rank_0 -name '*.json.gz' ! -name '*capture*' -type f 2>/dev/null | head -1")
+          fi
+          if [ -z "$RUN_TRACE" ]; then
+            echo "ERROR: No run trace .json.gz found anywhere."
             echo "Need to re-run profiling workflow first to generate traces."
             exit 1
           fi
           echo "Run trace: $RUN_TRACE"
+          mkdir -p $TRACE_DIR
           podman exec $CONTAINER python3 $REPO/scripts/dump_capture_graph_hierarchy.py "$RUN_TRACE" --max-depth 4 2>&1 | tee $TRACE_DIR/hierarchy_dump.log
 
       - name: Commit diagnostic output
