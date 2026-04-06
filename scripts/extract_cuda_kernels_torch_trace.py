@@ -354,6 +354,79 @@ def assign_modules_to_layer(layer):
     return kernels
 
 
+def compute_layer_timeline(layer):
+    """Compute elapsed (wall-clock) time for a layer using kernel timestamps.
+
+    Merges overlapping kernel intervals to get actual elapsed time.
+    Also detects overlapping kernel pairs on different streams.
+
+    Returns:
+      elapsed_us: actual wall-clock span (no double-counting)
+      kernel_sum_us: sum of all kernel durations (may double-count overlaps)
+      overlaps: list of (kernel_a, kernel_b, overlap_us) tuples
+      module_elapsed: dict of module -> elapsed_us (timeline-based)
+    """
+    kernels = layer["kernels"]
+    if not kernels:
+        return 0.0, 0.0, [], {}
+
+    # Build intervals: (start, end, stream, module, tag)
+    intervals = []
+    for k in kernels:
+        ts = k.get("ts", 0)
+        dur = k.get("dur", 0)
+        stream = k.get("args", {}).get("stream", k.get("tid", 0)) if isinstance(k.get("args"), dict) else k.get("tid", 0)
+        intervals.append((ts, ts + dur, stream, k.get("module", "other"), k.get("tag", "OTHER"), k.get("name", "")))
+
+    intervals.sort(key=lambda x: x[0])
+
+    # 1. Compute total elapsed by merging all intervals
+    kernel_sum = sum(k.get("dur", 0) for k in kernels)
+    merged = []
+    for start, end, *_ in intervals:
+        if merged and start < merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    elapsed = sum(e - s for s, e in merged)
+
+    # 2. Detect overlapping kernel pairs (different streams)
+    overlaps = []
+    for i in range(len(intervals)):
+        s1, e1, stream1, mod1, tag1, name1 = intervals[i]
+        for j in range(i + 1, len(intervals)):
+            s2, e2, stream2, mod2, tag2, name2 = intervals[j]
+            if s2 >= e1:
+                break  # no more overlaps possible
+            if stream1 != stream2 and s2 < e1:
+                overlap_us = min(e1, e2) - s2
+                if overlap_us > 0.5:  # ignore sub-microsecond noise
+                    overlaps.append({
+                        "kernel_a": tag1, "module_a": mod1, "name_a": name1[:60],
+                        "kernel_b": tag2, "module_b": mod2, "name_b": name2[:60],
+                        "overlap_us": overlap_us,
+                        "stream_a": stream1, "stream_b": stream2,
+                    })
+
+    # 3. Compute per-module elapsed (timeline-based, no double-counting within module)
+    module_intervals = defaultdict(list)
+    for start, end, stream, module, tag, name in intervals:
+        module_intervals[module].append((start, end))
+
+    module_elapsed = {}
+    for module, ivals in module_intervals.items():
+        ivals.sort()
+        m = []
+        for s, e in ivals:
+            if m and s < m[-1][1]:
+                m[-1] = (m[-1][0], max(m[-1][1], e))
+            else:
+                m.append((s, e))
+        module_elapsed[module] = sum(e - s for s, e in m)
+
+    return elapsed, kernel_sum, overlaps, module_elapsed
+
+
 def analyze_per_layer(decode_steps, layer_start=10, layer_end=40, kernel_map=None):
     """Per-layer analysis across multiple decode steps.
 
@@ -363,6 +436,7 @@ def analyze_per_layer(decode_steps, layer_start=10, layer_end=40, kernel_map=Non
       3. Select layers [layer_start, layer_end)
 
     Returns per-module breakdown averaged over selected layers.
+    Now includes both kernel_sum and elapsed (timeline) metrics.
     """
     # Module order for display
     MODULE_ORDER = [
@@ -376,22 +450,30 @@ def analyze_per_layer(decode_steps, layer_start=10, layer_end=40, kernel_map=Non
     all_module_stats = defaultdict(lambda: defaultdict(lambda: {
         "count": 0, "total_us": 0.0, "kernel_names": set()
     }))
+    # module → total elapsed (timeline-based)
+    all_module_elapsed = defaultdict(float)
+
     n_layers_total = 0
     layer_counts_per_step = []
-    layer_totals_per_step = []  # per-layer total μs for validation
+    layer_totals_per_step = []  # per-layer kernel sum
+    layer_elapsed_per_step = []  # per-layer elapsed (timeline)
+
+    # Overlap tracking: (tag_a, tag_b) → {count, total_overlap_us}
+    overlap_stats = defaultdict(lambda: {"count": 0, "total_us": 0.0})
 
     for step_idx, (launch, kernels) in enumerate(decode_steps):
         layers = split_step_into_layers(kernels)
         layer_counts_per_step.append(len(layers))
 
         if len(layers) < layer_end:
-            # Not enough layers; use what we have
             selected = layers[layer_start:] if len(layers) > layer_start else layers
         else:
             selected = layers[layer_start:layer_end]
 
         for layer in selected:
             assign_modules_to_layer(layer)
+
+            # Kernel sum (traditional)
             layer_total = 0.0
             for k in layer["kernels"]:
                 module = k.get("module", "other")
@@ -402,11 +484,24 @@ def analyze_per_layer(decode_steps, layer_start=10, layer_end=40, kernel_map=Non
                 stats["kernel_names"].add(k["name"])
                 layer_total += k["dur"]
             layer_totals_per_step.append(layer_total)
+
+            # Timeline analysis
+            elapsed, ksum, overlaps, mod_elapsed = compute_layer_timeline(layer)
+            layer_elapsed_per_step.append(elapsed)
+            for mod, el in mod_elapsed.items():
+                all_module_elapsed[mod] += el
+
+            # Track overlap patterns
+            for ov in overlaps:
+                key = (ov["kernel_a"], ov["kernel_b"])
+                overlap_stats[key]["count"] += 1
+                overlap_stats[key]["total_us"] += ov["overlap_us"]
+
             n_layers_total += 1
 
     if n_layers_total == 0:
         print("ERROR: No layers found in selected range")
-        return [], 0
+        return [], 0, {}
 
     # Build result table
     result = []
@@ -444,26 +539,71 @@ def analyze_per_layer(decode_steps, layer_start=10, layer_end=40, kernel_map=Non
                     "kernel_names": sorted(stats["kernel_names"]),
                 })
 
+    # Per-module elapsed averages
+    module_elapsed_avg = {mod: el / n_layers_total for mod, el in all_module_elapsed.items()}
+
     # Print summary
     avg_layer_count = sum(layer_counts_per_step) / len(layer_counts_per_step)
-    avg_layer_us = sum(layer_totals_per_step) / len(layer_totals_per_step)
+    avg_ksum = sum(layer_totals_per_step) / len(layer_totals_per_step)
+    avg_elapsed = sum(layer_elapsed_per_step) / len(layer_elapsed_per_step)
+
     print(f"\n  Layers detected per step: avg={avg_layer_count:.1f} (range: {min(layer_counts_per_step)}-{max(layer_counts_per_step)})")
     print(f"  Selected layers: {layer_start}-{layer_end} ({n_layers_total} total across {len(decode_steps)} steps)")
-    print(f"  Per-layer kernel sum avg: {avg_layer_us:.1f}μs ({avg_layer_us/1000:.3f}ms)")
-    print(f"  Estimated full model: {avg_layer_us:.1f} × {int(avg_layer_count)} = {avg_layer_us * avg_layer_count / 1000:.2f}ms")
+    print(f"  Per-layer kernel sum avg: {avg_ksum:.1f}μs ({avg_ksum/1000:.3f}ms)")
+    print(f"  Per-layer elapsed avg:    {avg_elapsed:.1f}μs ({avg_elapsed/1000:.3f}ms)")
+    print(f"  Per-layer overlap:        {avg_ksum - avg_elapsed:.1f}μs ({(avg_ksum - avg_elapsed) / avg_ksum * 100:.1f}%)")
+    print(f"  Estimated full model (kernel sum): {avg_ksum:.1f} × {int(avg_layer_count)} = {avg_ksum * avg_layer_count / 1000:.2f}ms")
+    print(f"  Estimated full model (elapsed):    {avg_elapsed:.1f} × {int(avg_layer_count)} = {avg_elapsed * avg_layer_count / 1000:.2f}ms")
 
-    return result, n_layers_total
+    # Print overlap analysis
+    if overlap_stats:
+        print(f"\n  Multi-stream overlap pairs (per-layer avg, top 15):")
+        print(f"  {'Kernel A':<25} {'Kernel B':<25} {'Avg overlap(μs)':>15} {'Occurrences':>12}")
+        print(f"  {'-'*80}")
+        sorted_overlaps = sorted(overlap_stats.items(), key=lambda x: -x[1]["total_us"])
+        for (tag_a, tag_b), stats in sorted_overlaps[:15]:
+            avg_ov = stats["total_us"] / n_layers_total
+            freq = stats["count"] / n_layers_total
+            print(f"  {tag_a:<25} {tag_b:<25} {avg_ov:>15.1f} {freq:>12.1f}")
+        total_overlap = sum(s["total_us"] for s in overlap_stats.values()) / n_layers_total
+        print(f"  {'TOTAL overlap':<52} {total_overlap:>15.1f}")
+
+    # Print per-module elapsed vs kernel_sum comparison
+    print(f"\n  Module elapsed vs kernel_sum (per-layer avg):")
+    print(f"  {'Module':<16} {'Kernel Sum':>10} {'Elapsed':>10} {'Overlap':>10} {'Overlap%':>8}")
+    print(f"  {'-'*58}")
+    total_ksum_mod = 0
+    total_elapsed_mod = 0
+    for module in MODULE_ORDER + [m for m in module_elapsed_avg if m not in MODULE_ORDER]:
+        mod_ksum = sum(r["avg_us"] for r in result if r["module"] == module)
+        mod_el = module_elapsed_avg.get(module, 0)
+        if mod_ksum < 0.01 and mod_el < 0.01:
+            continue
+        overlap_pct = (mod_ksum - mod_el) / mod_ksum * 100 if mod_ksum > 0 else 0
+        print(f"  {module:<16} {mod_ksum:>10.1f} {mod_el:>10.1f} {mod_ksum - mod_el:>10.1f} {overlap_pct:>7.1f}%")
+        total_ksum_mod += mod_ksum
+        total_elapsed_mod += mod_el
+    print(f"  {'TOTAL':<16} {total_ksum_mod:>10.1f} {total_elapsed_mod:>10.1f} {total_ksum_mod - total_elapsed_mod:>10.1f} {(total_ksum_mod - total_elapsed_mod) / total_ksum_mod * 100:>7.1f}%")
+
+    return result, n_layers_total, module_elapsed_avg
 
 
-def print_per_layer_table(result, n_layers):
-    """Print per-module per-layer breakdown table."""
+def print_per_layer_table(result, n_layers, module_elapsed=None):
+    """Print per-module per-layer breakdown table with elapsed comparison."""
     total_us = sum(r["avg_us"] for r in result)
+    total_elapsed = sum(module_elapsed.values()) if module_elapsed else total_us
+    has_elapsed = module_elapsed is not None and total_elapsed != total_us
 
-    print(f"\n{'='*120}")
-    print(f"Per-Module Kernel Breakdown (per-layer avg, {n_layers} layers, layer total={total_us:.1f}μs)")
-    print(f"{'='*120}")
-    print(f"{'Module':<16} | {'#':>2} | {'Operator':<42} | {'Avg(μs)':>8} | {'Pct%':>5} | {'Cnt':>4} | {'Kernel(s)':<30}")
-    print("-" * 120)
+    header_suffix = f", elapsed={total_elapsed:.1f}μs" if has_elapsed else ""
+    print(f"\n{'='*140}")
+    print(f"Per-Module Kernel Breakdown (per-layer avg, {n_layers} layers, kernel_sum={total_us:.1f}μs{header_suffix})")
+    print(f"{'='*140}")
+
+    if has_elapsed:
+        print(f"{'Module':<16} | {'#':>2} | {'Operator':<38} | {'Sum(μs)':>8} | {'Pct%':>5} | {'Elapsed':>8} | {'Ovlp':>6} | {'Cnt':>4} | {'Kernel(s)':<24}")
+    else:
+        print(f"{'Module':<16} | {'#':>2} | {'Operator':<38} | {'Avg(μs)':>8} | {'Pct%':>5} | {'Cnt':>4} | {'Kernel(s)':<30}")
+    print("-" * 140)
 
     current_module = None
     op_idx = 0
@@ -476,43 +616,63 @@ def print_per_layer_table(result, n_layers):
         op_idx += 1
         pct = 100 * r["avg_us"] / total_us if total_us > 0 else 0
         knames = ", ".join(r["kernel_names"][:1])
-        if len(knames) > 30:
-            knames = knames[:27] + "..."
+        if len(knames) > 24:
+            knames = knames[:21] + "..."
 
         # Module header
         if r["module"] != current_module:
             if current_module is not None:
                 sub = module_subtotals[current_module]
                 sub_pct = 100 * sub / total_us if total_us > 0 else 0
-                print(f"{'':>16}   {'':>2}   {'Subtotal':<42}   {sub:>8.1f}   {sub_pct:>5.1f}")
-                print("-" * 120)
+                el = module_elapsed.get(current_module, sub) if has_elapsed else sub
+                ovlp = sub - el
+                if has_elapsed:
+                    print(f"{'':>16}   {'':>2}   {'Subtotal':<38}   {sub:>8.1f}   {sub_pct:>5.1f}   {el:>8.1f}   {ovlp:>6.1f}")
+                else:
+                    print(f"{'':>16}   {'':>2}   {'Subtotal':<38}   {sub:>8.1f}   {sub_pct:>5.1f}")
+                print("-" * 140)
             current_module = r["module"]
 
-        print(f"{r['module'] if r['module'] != current_module or op_idx == 1 or result[op_idx-2]['module'] != current_module else '':.<16} | {op_idx:>2} | {r['operator']:<42} | {r['avg_us']:>8.1f} | {pct:>5.1f} | {r['avg_count']:>4.1f} | {knames:<30}")
+        mod_label = r['module'] if (r['module'] != current_module or op_idx == 1 or result[op_idx-2]['module'] != current_module) else ''
+        if has_elapsed:
+            print(f"{mod_label:.<16} | {op_idx:>2} | {r['operator']:<38} | {r['avg_us']:>8.1f} | {pct:>5.1f} | {'':>8} | {'':>6} | {r['avg_count']:>4.1f} | {knames:<24}")
+        else:
+            print(f"{mod_label:.<16} | {op_idx:>2} | {r['operator']:<38} | {r['avg_us']:>8.1f} | {pct:>5.1f} | {r['avg_count']:>4.1f} | {knames:<30}")
 
     # Last module subtotal
     if current_module is not None:
         sub = module_subtotals[current_module]
         sub_pct = 100 * sub / total_us if total_us > 0 else 0
-        print(f"{'':>16}   {'':>2}   {'Subtotal':<42}   {sub:>8.1f}   {sub_pct:>5.1f}")
+        el = module_elapsed.get(current_module, sub) if has_elapsed else sub
+        ovlp = sub - el
+        if has_elapsed:
+            print(f"{'':>16}   {'':>2}   {'Subtotal':<38}   {sub:>8.1f}   {sub_pct:>5.1f}   {el:>8.1f}   {ovlp:>6.1f}")
+        else:
+            print(f"{'':>16}   {'':>2}   {'Subtotal':<38}   {sub:>8.1f}   {sub_pct:>5.1f}")
 
-    print(f"{'='*120}")
-    print(f"{'TOTAL':<16}   {'':>2}   {'':42}   {total_us:>8.1f}   100.0")
-    print(f"{'='*120}")
+    print(f"{'='*140}")
+    if has_elapsed:
+        overlap_total = total_us - total_elapsed
+        print(f"{'TOTAL':<16}   {'':>2}   {'':38}   {total_us:>8.1f}   100.0   {total_elapsed:>8.1f}   {overlap_total:>6.1f}")
+    else:
+        print(f"{'TOTAL':<16}   {'':>2}   {'':38}   {total_us:>8.1f}   100.0")
+    print(f"{'='*140}")
 
 
-def write_per_layer_csv(result, n_layers, filepath):
-    """Write per-layer breakdown to CSV."""
+def write_per_layer_csv(result, n_layers, filepath, module_elapsed=None):
+    """Write per-layer breakdown to CSV with elapsed data."""
+    fieldnames = ["module", "operator", "avg_us", "pct", "avg_count", "total_us", "n_layers", "kernel_names"]
+    if module_elapsed:
+        fieldnames.insert(4, "module_elapsed_us")
+
     with open(filepath, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=[
-            "module", "operator", "avg_us", "pct", "avg_count",
-            "total_us", "n_layers", "kernel_names"
-        ])
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         total_us = sum(r["avg_us"] for r in result)
+        seen_modules = set()
         for r in result:
             pct = 100 * r["avg_us"] / total_us if total_us > 0 else 0
-            writer.writerow({
+            row = {
                 "module": r["module"],
                 "operator": r["operator"],
                 "avg_us": f"{r['avg_us']:.2f}",
@@ -521,7 +681,13 @@ def write_per_layer_csv(result, n_layers, filepath):
                 "total_us": f"{r['total_us']:.1f}",
                 "n_layers": n_layers,
                 "kernel_names": "; ".join(r["kernel_names"]),
-            })
+            }
+            if module_elapsed and r["module"] not in seen_modules:
+                row["module_elapsed_us"] = f"{module_elapsed.get(r['module'], 0):.2f}"
+                seen_modules.add(r["module"])
+            elif module_elapsed:
+                row["module_elapsed_us"] = ""
+            writer.writerow(row)
     print(f"\nPer-layer CSV written to: {filepath}")
 
 
@@ -1071,14 +1237,14 @@ def main():
         layer_start = int(layer_range[0])
         layer_end = int(layer_range[1]) if len(layer_range) > 1 else layer_start + 30
 
-        per_layer_result, n_layers = analyze_per_layer(
+        per_layer_result, n_layers, module_elapsed = analyze_per_layer(
             decode_steps, layer_start=layer_start, layer_end=layer_end,
             kernel_map=kernel_map
         )
         if per_layer_result:
-            print_per_layer_table(per_layer_result, n_layers)
+            print_per_layer_table(per_layer_result, n_layers, module_elapsed)
             if args.per_layer_csv:
-                write_per_layer_csv(per_layer_result, n_layers, args.per_layer_csv)
+                write_per_layer_csv(per_layer_result, n_layers, args.per_layer_csv, module_elapsed)
 
     # Summary stats
     step_durations_sum = []  # sum of kernel durations (overcounts overlapping streams)
