@@ -41,45 +41,52 @@ from collections import defaultdict, OrderedDict
 # Kernel name → logical operator mapping
 # =============================================================================
 
-# B200 SGLang FP4 kernel mapping (from nsys analysis)
+# B200 SGLang FP4 kernel mapping
+# Kernel names vary between nsys (short) and torch profiler (full C++ mangled).
+# Regexes must match both forms.
 B200_KERNEL_MAP = OrderedDict([
-    # Pre-attention communication (Row 1)
-    (r"moefinalize_lamport", "pre_attn_comm: TP_AR+residual+RMSNorm"),
+    # Pre-attention: MoE finalize + residual + lamport allreduce
+    (r"finalizeKernelVecLoad|moefinalize", "pre_attn: MoE_finalize+residual"),
+    (r"vectorized_elementwise_kernel.*CUDAFunctor_add|elementwise.*add", "pre_attn: residual_add"),
+    # Communication: lamport allreduce fusion (includes RMSNorm)
+    (r"allreduce_fusion_kernel.*lamport|moefinalize_lamport", "comm: lamport_AR+RMSNorm"),
     # QKV projection
-    (r"nvjet_splitK_TNT", "qkv_proj: qkv_a_proj_GEMM"),
-    (r"splitKreduce.*bf16|splitKreduce.*bfloat", "qkv_proj: qkv_a_splitK_reduce"),
+    (r"splitK_TNT|nvjet_splitK_TNT", "qkv_proj: qkv_a_proj_GEMM"),
+    (r"splitKreduce.*bf16|splitKreduce.*bfloat|splitKreduce.*Bfloat16", "qkv_proj: qkv_a_splitK_reduce"),
     (r"RMSNormKernel", "qkv_proj: q/k_norm_RMSNorm"),
-    (r"nvjet_tst_TNN", "qkv_proj: q_b_proj_GEMM"),
-    (r"nvjet_tst_TNT", "qkv_proj: uk_gemm"),
+    (r"_v_bz_TNN|nvjet_tst_TNN", "qkv_proj: q_b_proj_GEMM"),
+    (r"_v_bz_TNT|nvjet_sm100_tst_128x64.*TNT", "qkv_proj: uk_gemm"),
     (r"CatArrayBatchedCopy", "qkv_proj: k_concat"),
     # RoPE + Attention
-    (r"applyMLARopeAndAssignQKV", "rope_attn: RoPE+KV_write"),
-    (r"fmhaSm100", "rope_attn: Attention_FMHA"),
+    (r"RopeQuantizeKernel|applyMLARopeAndAssignQKV", "rope_attn: RoPE+KV_write"),
+    (r"fmhaSm100|fmhaKernel", "rope_attn: Attention_FMHA"),
+    (r"set_mla_kv_buffer", "rope_attn: set_mla_kv"),
     # Output projection
-    (r"nvjet_tst(?!_T)", "out_proj: uv_gemm"),  # nvjet_tst without TNN/TNT suffix
-    (r"nvjet_ootst_FP4", "out_proj/shared: FP4_GEMM"),
+    (r"_h_bz_TNT(?!.*splitK)|nvjet_tst_TNT", "out_proj: uv_gemm"),
+    (r"_h_bz_splitK_TNT", "out_proj: o_proj_splitK_GEMM"),
+    (r"nvjet_ootst_FP4|DeviceGemmFp4GemmSm100", "out_proj/shared: FP4_GEMM"),
     (r"quantize_with_block_size", "quant: FP4_blockwise_quant"),
     # Post-attention communication
     (r"userbuffers_rmsnorm", "post_attn: TP_AR+RMSNorm"),
     (r"userbuffers_allgather", "post_attn: EP_allgather"),
     # Router
-    (r"nvjet_tss_splitK", "router: router_GEMM"),
-    (r"splitKreduce.*fp32|splitKreduce.*float32", "router: router_splitK_reduce"),
+    (r"nvjet_tss_splitK|splitK.*router", "router: router_GEMM"),
+    (r"splitKreduce.*fp32|splitKreduce.*float32|splitKreduce.*Fp32", "router: router_splitK_reduce"),
     (r"routingMainKernel", "router: TopK_select"),
     (r"routingIndicesCluster", "router: expert_sort"),
     # MoE expert
     (r"bmm_E2m1.*[Ss]wi[Gg]lu|bmm_E2m1.*E2m1E2m1", "moe: gate_up_GEMM"),
     (r"bmm_Bfloat16|bmm_.*E2m1.*Bfloat", "moe: down_GEMM"),
-    (r"DeviceGemmFp4", "moe: FP4_GEMM"),
     # Shared expert
-    (r"silu_and_mul_kernel", "shared: SiLU_mul"),
+    (r"act_and_mul_kernel|silu_and_mul_kernel", "shared: SiLU_mul"),
     # Elementwise
     (r"cvt_fp16_to_fp4|cvt_fp4", "quant: FP4_convert"),
-    (r"set_mla_kv_buffer", "rope_attn: set_mla_kv"),
-    # Communication
-    (r"allreduce|reduce_scatter|all_gather|nccl|lamport(?!.*moefinalize)", "comm: allreduce/other"),
+    # Communication (catch-all after specific lamport pattern)
+    (r"allreduce|reduce_scatter|all_gather|nccl", "comm: allreduce/other"),
     # Memory
     (r"memcpy|memset", "mem: copy/set"),
+    # Copy kernels
+    (r"unrolled_elementwise_kernel.*direct_copy|direct_copy_kernel", "mem: tensor_copy"),
 ])
 
 # MI355X ATOM MXFP4 kernel mapping
