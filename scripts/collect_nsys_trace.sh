@@ -38,6 +38,8 @@ WARMUP=0
 PORT=8888
 SKIP_EXPORT=false
 EXTRA_NSYS_ARGS=""
+MODEL_NAME="dsr1"
+ENV=""
 
 # ======================== Argument Parsing ====================================
 usage() {
@@ -101,6 +103,8 @@ while [[ $# -gt 0 ]]; do
         --port)            PORT="$2"; shift 2 ;;
         --skip-export)     SKIP_EXPORT=true; shift ;;
         --extra-nsys-args) EXTRA_NSYS_ARGS="$2"; shift 2 ;;
+        --model-name)      MODEL_NAME="$2"; shift 2 ;;
+        --env)             ENV="$2"; shift 2 ;;
         -h|--help)         usage ;;
         *)                 echo "Unknown arg: $1"; exit 1 ;;
     esac
@@ -139,7 +143,7 @@ TS() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { echo "[$(TS)] $*"; }
 
 # ======================== Tag & Output Setup ==================================
-TAG="nsys_${QUANT}_${CONFIG}_${SCENARIO}_tp${TP}_ep${EP}_c${CONCURRENCY}_iter${ITER_RANGE}"
+TAG="trace_nsys_b200_trt_${MODEL_NAME}_${QUANT}_${ENV}_${SCENARIO}_ep${EP}_tp${TP}_c${CONCURRENCY}_iter${ITER_RANGE}"
 [[ "$DP" == "true" ]] && TAG="${TAG}_dp"
 mkdir -p "$TRACE_DIR"
 

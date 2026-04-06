@@ -29,7 +29,7 @@ jobs:
 
       - name: Run SGLang FP4 profiling (TP4 EP4 chat c=64)
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_trace.sh --model $MODEL_FP4 --tp 4 --ep 4 --scenario chat --concurrency 64 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'"
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_trace.sh --model $MODEL_FP4 --tp 4 --ep 4 --scenario chat --concurrency 64 --env sglang059 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'"
 
       - name: Show results
         if: always()

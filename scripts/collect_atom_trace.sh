@@ -62,6 +62,9 @@ ROCTRACER_MAX_EVENTS=""     # if set, auto-generate libkineto.conf (default 1M, 
 FLUSH_TIMEOUT=300
 LAYER=40
 EXPERT_PARALLEL="false"
+MODEL_NAME="dsr1"
+QUANT="mxfp4"
+ENV=""
 
 # ======================== Argument Parsing ====================================
 usage() {
@@ -127,6 +130,9 @@ while [[ $# -gt 0 ]]; do
         --flush-timeout)    FLUSH_TIMEOUT="$2"; shift 2 ;;
         --layer)            LAYER="$2"; shift 2 ;;
         --ep)               EXPERT_PARALLEL="true"; shift 1 ;;
+        --model-name)       MODEL_NAME="$2"; shift 2 ;;
+        --quant)            QUANT="$2"; shift 2 ;;
+        --env)              ENV="$2"; shift 2 ;;
         -h|--help)          usage ;;
         *)                  echo "Unknown arg: $1"; exit 1 ;;
     esac
@@ -328,7 +334,9 @@ trap_cleanup() {
 }
 trap trap_cleanup EXIT INT TERM
 
-TAG="trace_${SCENARIO}_c${CONCURRENCY}_tp${TP}_p${PROFILE_NUM_PROMPTS}"
+EP_SIZE=1
+[[ "$EXPERT_PARALLEL" == "true" ]] && EP_SIZE=$TP
+TAG="trace_torch_mi355x_atom_${MODEL_NAME}_${QUANT}_${ENV}_${SCENARIO}_ep${EP_SIZE}_tp${TP}_c${CONCURRENCY}_full"
 
 log "============================================================"
 log "  ATOM Torch Profiler Trace Capture"

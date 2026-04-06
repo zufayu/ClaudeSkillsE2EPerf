@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Torch Profiler Trace Capture for SGLang Inference (B200)
+# Nsight Systems Trace Capture for SGLang Inference (B200)
 #
-# Mirrors collect_atom_trace.sh methodology for cross-platform comparison:
-#   1. Cleanup residual processes
-#   2. Start SGLang server with SGLANG_TORCH_PROFILER_DIR
-#   3. Warmup with CONC*2 prompts (reach steady state)
-#   4. Start profile via HTTP, run full benchmark (CONC*10), stop profile
-#   5. Wait for trace flush
-#   6. Stop server, copy traces
+# Captures GPU kernel timelines with per-layer NVTX markers for kernel-level
+# performance analysis. Uses SGLang's --enable-layerwise-nvtx-marker to annotate
+# each transformer layer, equivalent to TRT-LLM's TLLM_LLMAPI_ENABLE_NVTX.
 #
-# SGLang profiling uses the same /start_profile /stop_profile HTTP endpoints
-# as ATOM/vLLM. The key difference from SA InferenceX's PROFILE=1 mode:
-#   - SA reduces num_prompts to CONC (small trace, not steady state)
-#   - We keep num_prompts = CONC*10 (matches benchmark, captures steady state)
+# Approach:
+#   1. Start SGLang server under nsys with delay (covers warmup) + duration
+#   2. Warmup: CONC*2 prompts during nsys delay period
+#   3. Benchmark: CONC*10 prompts during nsys capture window
+#   4. nsys auto-stops after duration, server killed, trace collected
+#
+# Key difference from TRT-LLM nsys:
+#   - TRT-LLM uses TLLM_PROFILE_START_STOP with -c cudaProfilerApi
+#   - SGLang uses nsys --delay/--duration (no cudaProfilerApi support)
+#   - SGLang provides --enable-layerwise-nvtx-marker for per-layer NVTX
 #
 # Usage:
-#   bash scripts/collect_sglang_trace.sh \
+#   bash scripts/collect_sglang_nsys_trace.sh \
 #     --model /path/to/DeepSeek-R1-0528-NVFP4-v2 \
 #     --tp 4 --ep 4 --scenario chat --concurrency 64 \
-#     --result-dir ./results/sglang_profiling
+#     --result-dir ./results/sglang_nsys_profiling
 # =============================================================================
 
 set -euo pipefail
@@ -37,17 +39,15 @@ PORT=8888
 SCENARIO="chat"
 CONCURRENCY=64
 RESULT_DIR=""
-TRACE_DIR="/tmp/sglang_trace"
-PROFILE_NUM_PROMPTS=""
-PROFILE_STEPS=200
-PROFILE_START_STEP=30
-FLUSH_TIMEOUT=300
+NSYS_DELAY=180
+NSYS_DURATION=60
+SKIP_EXPORT=false
 CONTAINER_IMAGE=""
 MODEL_NAME="dsr1"
 QUANT="fp4"
 ENV=""
 
-# SA InferenceX server parameters (from dsr1_fp4_b200.sh)
+# SA InferenceX server parameters
 MEM_FRACTION_STATIC=0.85
 CHUNKED_PREFILL_SIZE=16384
 CUDA_GRAPH_MAX_BS=256
@@ -60,8 +60,7 @@ usage() {
     cat <<EOF
 Usage: $0 --model MODEL_PATH --result-dir DIR [options]
 
-Torch Profiler trace capture for SGLang on B200, matching collect_atom_trace.sh
-methodology for cross-platform comparison.
+Nsight Systems trace capture for SGLang on B200 with per-layer NVTX markers.
 
 Required:
   --model PATH          Path to DeepSeek-R1 FP4 model
@@ -73,21 +72,18 @@ Options:
   --scenario NAME       chat|reasoning|summarize (default: chat)
   --concurrency N       Max concurrency (default: 64)
   --port N              Server port (default: 8888)
-  --profile-prompts N   Prompts during profiling (default: CONC*10, full load)
-  --profile-steps N     Forward steps to profile (default: 200)
-  --profile-start-step N Skip first N steps to capture steady-state (default: 30)
-  --flush-timeout N     Max seconds to wait for trace flush (default: 300)
+  --nsys-delay N        Seconds before nsys starts capturing (covers server startup + warmup) (default: 180)
+  --nsys-duration N     Seconds of nsys capture (default: 60)
+  --skip-export         Skip post-processing (just capture .nsys-rep)
   --container-image IMG Container image name for metadata
   -h, --help            Show this help
 
 Profiling methodology:
-  1. Start server with SGLANG_TORCH_PROFILER_DIR
-  2. Warmup: CONC*2 prompts (reach steady state)
-  3. HTTP POST /start_profile with num_steps + start_step
-     (skip initial prefill ramp-up, capture steady-state decode)
-  4. Benchmark: CONC*10 prompts (full load)
-  5. Profiler auto-stops after num_steps, or /stop_profile as fallback
-  6. Wait for trace flush, collect traces
+  1. Start SGLang server under nsys with --delay and --duration
+  2. Wait for server ready, run warmup (during nsys delay period)
+  3. nsys capture begins automatically after delay
+  4. Run benchmark during capture window
+  5. nsys auto-stops, collect .nsys-rep trace
 EOF
     exit 0
 }
@@ -101,10 +97,9 @@ while [[ $# -gt 0 ]]; do
         --concurrency)     CONCURRENCY="$2"; shift 2 ;;
         --result-dir)      RESULT_DIR="$2"; shift 2 ;;
         --port)            PORT="$2"; shift 2 ;;
-        --profile-prompts) PROFILE_NUM_PROMPTS="$2"; shift 2 ;;
-        --profile-steps)   PROFILE_STEPS="$2"; shift 2 ;;
-        --profile-start-step) PROFILE_START_STEP="$2"; shift 2 ;;
-        --flush-timeout)   FLUSH_TIMEOUT="$2"; shift 2 ;;
+        --nsys-delay)      NSYS_DELAY="$2"; shift 2 ;;
+        --nsys-duration)   NSYS_DURATION="$2"; shift 2 ;;
+        --skip-export)     SKIP_EXPORT=true; shift ;;
         --container-image) CONTAINER_IMAGE="$2"; shift 2 ;;
         --model-name)      MODEL_NAME="$2"; shift 2 ;;
         --quant)           QUANT="$2"; shift 2 ;;
@@ -117,7 +112,7 @@ done
 [[ -z "$MODEL" ]] && { echo "ERROR: --model is required"; usage; }
 [[ -z "$RESULT_DIR" ]] && { echo "ERROR: --result-dir is required"; usage; }
 
-# ======================== Scenario → ISL/OSL ==================================
+# ======================== Scenario -> ISL/OSL ==================================
 
 case "$SCENARIO" in
     chat)       ISL=1024; OSL=1024 ;;
@@ -127,10 +122,9 @@ case "$SCENARIO" in
 esac
 
 WARMUP_NUM_PROMPTS=$((CONCURRENCY * 2))
-[[ -z "$PROFILE_NUM_PROMPTS" ]] && PROFILE_NUM_PROMPTS=$((CONCURRENCY * 10))
+BENCH_NUM_PROMPTS=$((CONCURRENCY * 10))
 GPU_COUNT=$((TP > EP ? TP : EP))
 
-# Scheduler recv interval: SA uses 30 for conc>=16, 10 otherwise
 SCHEDULER_RECV_INTERVAL=10
 [[ $CONCURRENCY -ge 16 ]] && SCHEDULER_RECV_INTERVAL=30
 
@@ -138,19 +132,19 @@ SCHEDULER_RECV_INTERVAL=10
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
-PROFILE_END_STEP=$((PROFILE_START_STEP + PROFILE_STEPS))
-TAG="trace_torch_b200_sglang_${MODEL_NAME}_${QUANT}_${ENV}_${SCENARIO}_ep${EP}_tp${TP}_c${CONCURRENCY}_step${PROFILE_START_STEP}-${PROFILE_END_STEP}"
+TAG="trace_nsys_b200_sglang_${MODEL_NAME}_${QUANT}_${ENV}_${SCENARIO}_ep${EP}_tp${TP}_c${CONCURRENCY}_delay${NSYS_DELAY}s-dur${NSYS_DURATION}s"
 
 log "============================================================"
-log "  SGLang Torch Profiler Trace Capture"
+log "  SGLang Nsight Systems Trace Capture"
 log "============================================================"
 log "  Model:       $MODEL"
 log "  Scenario:    $SCENARIO (ISL=$ISL, OSL=$OSL)"
 log "  TP=$TP  EP=$EP  GPU_COUNT=$GPU_COUNT"
 log "  Concurrency: $CONCURRENCY"
 log "  Warmup:      $WARMUP_NUM_PROMPTS prompts"
-log "  Profile:     $PROFILE_NUM_PROMPTS prompts (steps=$PROFILE_STEPS, start_step=$PROFILE_START_STEP)"
-log "  Trace Dir:   $TRACE_DIR"
+log "  Benchmark:   $BENCH_NUM_PROMPTS prompts"
+log "  nsys delay:  ${NSYS_DELAY}s (covers startup + warmup)"
+log "  nsys duration: ${NSYS_DURATION}s (capture window)"
 log "  Result Dir:  $RESULT_DIR"
 log "  Tag:         $TAG"
 log "============================================================"
@@ -161,6 +155,9 @@ mkdir -p "$RESULT_DIR"
 
 sglang_version=$(python3 -c "import sglang; print(sglang.__version__)" 2>/dev/null || echo "unknown")
 log "SGLang version: $sglang_version"
+
+nsys_version=$(nsys --version 2>/dev/null | head -1 || echo "unknown")
+log "nsys version: $nsys_version"
 
 # ======================== GPU Visibility ======================================
 
@@ -178,7 +175,6 @@ cleanup() {
     sleep 2
     pkill -f "sglang.launch_server" 2>/dev/null || true
     sleep 2
-    rm -rf "$TRACE_DIR"
     log "Cleanup done."
 }
 
@@ -199,15 +195,16 @@ trap trap_cleanup EXIT INT TERM
 
 cleanup
 
-# ======================== Step 2: Start Server ================================
+# ======================== Step 2: Start Server under nsys =====================
 
 SERVER_LOG="$RESULT_DIR/server_${TAG}.log"
-log "Starting SGLang server with profiler enabled..."
+log "Starting SGLang server under nsys (delay=${NSYS_DELAY}s, duration=${NSYS_DURATION}s)..."
+log "  --enable-layerwise-nvtx-marker for per-layer NVTX annotations"
+log "  --cuda-graph-trace node to expand CUDA Graph kernels"
 
-SGLANG_TORCH_PROFILER_DIR="$TRACE_DIR" \
-SGLANG_PROFILE_WITH_STACK=False \
-PYTHONNOUSERSITE=1 \
-python3 -m sglang.launch_server \
+nsys profile -o "$RESULT_DIR/${TAG}" -f true -t 'cuda,nvtx' --delay "$NSYS_DELAY" --duration "$NSYS_DURATION" --cuda-graph-trace node --sample=none --cpuctxsw=none --trace-fork-before-exec=true \
+    env PYTHONNOUSERSITE=1 \
+    python3 -m sglang.launch_server \
     --model-path "$MODEL" \
     --host 0.0.0.0 \
     --port "$PORT" \
@@ -228,10 +225,11 @@ python3 -m sglang.launch_server \
     --attention-backend trtllm_mla \
     --moe-runner-backend flashinfer_trtllm \
     --stream-interval "$STREAM_INTERVAL" \
+    --enable-layerwise-nvtx-marker \
     > "$SERVER_LOG" 2>&1 &
 
 SERVER_PID=$!
-log "Server PID=$SERVER_PID"
+log "Server PID=$SERVER_PID (nsys-wrapped)"
 
 # Wait for server ready
 wait_for_server_ready --port "$PORT" --server-log "$SERVER_LOG" --server-pid "$SERVER_PID" --max-wait 1200
@@ -239,6 +237,9 @@ wait_for_server_ready --port "$PORT" --server-log "$SERVER_LOG" --server-pid "$S
 # ======================== Step 3: Warmup ======================================
 
 log "Running warmup ($WARMUP_NUM_PROMPTS prompts, concurrency $CONCURRENCY)..."
+log "  This runs during nsys delay period (no tracing yet)"
+
+WARMUP_START=$(date +%s)
 
 run_benchmark_serving \
     --model "$MODEL" \
@@ -253,20 +254,19 @@ run_benchmark_serving \
     --result-filename "result_warmup_${TAG}" \
     --result-dir "$RESULT_DIR"
 
-log "Warmup done."
+WARMUP_END=$(date +%s)
+WARMUP_ELAPSED=$((WARMUP_END - WARMUP_START))
+log "Warmup done in ${WARMUP_ELAPSED}s."
 
-# ======================== Step 4: Profile =====================================
+# Check if we need to wait for nsys delay to expire
+ELAPSED_SINCE_START=$((WARMUP_END - $(date -d "$(ps -p $SERVER_PID -o lstart= 2>/dev/null || echo 'now')" +%s 2>/dev/null || echo $WARMUP_END)))
+log "NOTE: nsys delay=${NSYS_DELAY}s. If warmup finishes early, benchmark starts before nsys capture."
+log "  This is OK - nsys will capture the tail end of the benchmark (steady state)."
 
-log "Starting profiler via HTTP (num_steps=$PROFILE_STEPS, start_step=$PROFILE_START_STEP)..."
-log "  start_step=$PROFILE_START_STEP skips initial prefill ramp-up to capture steady-state decode"
-PROFILE_RESP=$(curl -s -X POST "http://0.0.0.0:${PORT}/start_profile" -H "Content-Type: application/json" -d "{\"num_steps\": $PROFILE_STEPS, \"start_step\": $PROFILE_START_STEP}") || {
-    log "ERROR: Failed to start profiler"; exit 1
-}
-log "Profiler started. Response: $PROFILE_RESP"
+# ======================== Step 4: Benchmark ===================================
 
-log "Running profiled benchmark ($PROFILE_NUM_PROMPTS prompts, concurrency $CONCURRENCY)..."
-
-TRACE_RESULT_FILE="result_profiled_${TAG}"
+log "Running benchmark ($BENCH_NUM_PROMPTS prompts, concurrency $CONCURRENCY)..."
+log "  nsys capture will overlap with this benchmark phase"
 
 run_benchmark_serving \
     --model "$MODEL" \
@@ -275,60 +275,37 @@ run_benchmark_serving \
     --input-len "$ISL" \
     --output-len "$OSL" \
     --random-range-ratio 0.8 \
-    --num-prompts "$PROFILE_NUM_PROMPTS" \
+    --num-prompts "$BENCH_NUM_PROMPTS" \
     --max-concurrency "$CONCURRENCY" \
     --num-warmups 0 \
-    --result-filename "$TRACE_RESULT_FILE" \
+    --result-filename "result_profiled_${TAG}" \
     --result-dir "$RESULT_DIR" \
-    --metadata "sglang_version=$sglang_version" "container_image=$CONTAINER_IMAGE" "tp=$TP" "ep=$EP" "scenario=$SCENARIO" "profile_num_prompts=$PROFILE_NUM_PROMPTS"
+    --metadata "sglang_version=$sglang_version" "container_image=$CONTAINER_IMAGE" "tp=$TP" "ep=$EP" "scenario=$SCENARIO" "profiler=nsys" "nsys_delay=$NSYS_DELAY" "nsys_duration=$NSYS_DURATION"
 
-log "Profiled benchmark done."
+log "Benchmark done."
 
-log "Stopping profiler via HTTP (fallback, should have auto-stopped after $PROFILE_STEPS steps)..."
-curl -s -X POST "http://0.0.0.0:${PORT}/stop_profile" || true
-log "Profiler stop sent."
+# ======================== Step 5: Wait for nsys to finish =====================
 
-# ======================== Step 5: Wait for Trace Flush ========================
+log "Waiting for nsys to finish (duration=${NSYS_DURATION}s from start of capture)..."
+# nsys will auto-stop after duration seconds of capture
+# The server process will continue running; we wait for the .nsys-rep to appear
 
-log "Waiting for trace flush (timeout ${FLUSH_TIMEOUT}s)..."
-wait_elapsed=0
-
+WAIT_START=$(date +%s)
+NSYS_TIMEOUT=$((NSYS_DELAY + NSYS_DURATION + 60))
 while true; do
-    # SGLang writes traces to SGLANG_TORCH_PROFILER_DIR
-    # Look for .json.gz files (compressed traces)
-    gz_files=$(find "$TRACE_DIR" -name "*.json.gz" -o -name "*.trace.json.gz" 2>/dev/null | head -5) || true
-    json_files=$(find "$TRACE_DIR" -name "*.json" ! -name "*.json.gz" 2>/dev/null | head -5) || true
-
-    # Done when .json.gz exists AND no uncompressed .json remains
-    if [[ -n "$gz_files" ]] && [[ -z "$json_files" ]]; then
-        log "Trace flush complete."
+    if [[ -f "$RESULT_DIR/${TAG}.nsys-rep" ]]; then
+        log "nsys trace file created."
         break
     fi
-
-    # Also check for profiles/ subdirectory (SGLang v0.5.9 puts traces there)
-    gz_profiles=$(find "$TRACE_DIR" -path "*/profiles/*" -name "*.json.gz" 2>/dev/null | head -5) || true
-    if [[ -n "$gz_profiles" ]]; then
-        json_profiles=$(find "$TRACE_DIR" -path "*/profiles/*" -name "*.json" ! -name "*.json.gz" 2>/dev/null | head -5) || true
-        if [[ -z "$json_profiles" ]]; then
-            log "Trace flush complete (profiles/ dir)."
-            break
-        fi
+    WAITED=$(( $(date +%s) - WAIT_START ))
+    if [[ $WAITED -ge $NSYS_TIMEOUT ]]; then
+        log "WARNING: nsys trace not found after ${NSYS_TIMEOUT}s"
+        break
     fi
-
+    if [[ $((WAITED % 30)) -eq 0 ]] && [[ $WAITED -gt 0 ]]; then
+        log "  Waiting for nsys... (${WAITED}s)"
+    fi
     sleep 5
-    wait_elapsed=$((wait_elapsed + 5))
-
-    if [[ $wait_elapsed -ge $FLUSH_TIMEOUT ]]; then
-        log "WARNING: Trace flush timeout after ${FLUSH_TIMEOUT}s"
-        log "Files in trace dir:"
-        find "$TRACE_DIR" -type f -ls 2>/dev/null | head -20
-        break
-    fi
-
-    if [[ $((wait_elapsed % 30)) -eq 0 ]]; then
-        log "  Still waiting... (${wait_elapsed}s elapsed)"
-        find "$TRACE_DIR" -type f -name "*.json*" 2>/dev/null | head -10
-    fi
 done
 
 # ======================== Step 6: Stop Server =================================
@@ -338,42 +315,62 @@ kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
 SERVER_PID=""
 pkill -f "sglang.launch_server" 2>/dev/null || true
-sleep 3
+sleep 5
 
-# ======================== Step 7: Collect Traces ==============================
+# Wait a bit more for nsys to finalize
+sleep 5
 
-log "Trace files:"
-find "$TRACE_DIR" -type f -name "*.json*" -ls 2>/dev/null | head -20
+# ======================== Step 7: Post-Processing =============================
 
-# Copy all trace files to result dir
-TRACE_COUNT=0
-while IFS= read -r -d '' trace_file; do
-    cp -v "$trace_file" "$RESULT_DIR/"
-    TRACE_COUNT=$((TRACE_COUNT + 1))
-done < <(find "$TRACE_DIR" -type f \( -name "*.json.gz" -o -name "*.trace.json.gz" \) -print0 2>/dev/null)
+TRACE_FILE="$RESULT_DIR/${TAG}.nsys-rep"
 
-if [[ $TRACE_COUNT -eq 0 ]]; then
-    log "WARNING: No trace files found"
-    # Check for uncompressed traces
-    find "$TRACE_DIR" -type f -ls 2>/dev/null | head -20
+if [[ ! -f "$TRACE_FILE" ]]; then
+    log "ERROR: No .nsys-rep trace file found at $TRACE_FILE"
+    ls -la "$RESULT_DIR/" 2>/dev/null
+    exit 1
+fi
+
+TRACE_SIZE_MB=$(du -m "$TRACE_FILE" | cut -f1)
+log "Trace file: $TRACE_FILE (${TRACE_SIZE_MB} MB)"
+
+if [[ "$SKIP_EXPORT" == "false" ]]; then
+    log "=== POST-PROCESSING ==="
+
+    # Export to SQLite
+    log "Exporting to SQLite..."
+    nsys export --type sqlite -o "$RESULT_DIR/${TAG}.sqlite" "$TRACE_FILE" 2>&1 || log "WARN: SQLite export failed"
+
+    # Export kernel CSV
+    log "Exporting kernel trace CSV..."
+    nsys stats --report cuda_gpu_trace --format csv -o "$RESULT_DIR/${TAG}_kernels" "$TRACE_FILE" 2>&1 || log "WARN: Kernel CSV export failed"
+
+    # Print top kernels
+    if [[ -f "$RESULT_DIR/${TAG}.sqlite" ]]; then
+        log "=== Top 10 Kernels by Total Duration ==="
+        sqlite3 -header -column "$RESULT_DIR/${TAG}.sqlite" "SELECT shortName, COUNT(*) as count, SUM(end-start) as total_ns, AVG(end-start) as avg_ns, ROUND(CAST(SUM(end-start) AS FLOAT) / 1e6, 2) as total_ms FROM CUPTI_ACTIVITY_KIND_KERNEL GROUP BY shortName ORDER BY total_ns DESC LIMIT 10;" 2>/dev/null || log "WARN: Could not query kernel summary"
+
+        log "=== NVTX Layer Markers ==="
+        sqlite3 -header -column "$RESULT_DIR/${TAG}.sqlite" "SELECT text, COUNT(*) as count, ROUND(AVG(end-start)/1e6, 3) as avg_ms, ROUND(SUM(end-start)/1e6, 1) as total_ms FROM NVTX_EVENTS WHERE text LIKE '%layer%' OR text LIKE '%Layer%' GROUP BY text ORDER BY total_ms DESC LIMIT 20;" 2>/dev/null || log "WARN: Could not query NVTX events"
+    fi
 else
-    log "Copied $TRACE_COUNT trace file(s) to $RESULT_DIR/"
+    log "Skipping post-processing (--skip-export)"
 fi
 
 # ======================== Step 8: Summary =====================================
 
 log "============================================================"
-log "  TRACE CAPTURE COMPLETE"
+log "  NSYS TRACE CAPTURE COMPLETE"
 log "============================================================"
-log "  Traces:     $RESULT_DIR/"
+log "  Trace:      $TRACE_FILE (${TRACE_SIZE_MB} MB)"
 log "  Server log: $SERVER_LOG"
+log "  Result dir: $RESULT_DIR/"
 log "============================================================"
 
 # Show profiled benchmark result
-if [[ -f "$RESULT_DIR/${TRACE_RESULT_FILE}.json" ]]; then
+if [[ -f "$RESULT_DIR/result_profiled_${TAG}.json" ]]; then
     python3 -c "
 import json
-with open('$RESULT_DIR/${TRACE_RESULT_FILE}.json') as f:
+with open('$RESULT_DIR/result_profiled_${TAG}.json') as f:
     d = json.load(f)
 out_tps = d.get('output_throughput', 0)
 tpot = d.get('tpot_p50', d.get('median_tpot_ms', 0))

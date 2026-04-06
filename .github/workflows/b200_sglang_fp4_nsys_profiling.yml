@@ -1,17 +1,18 @@
-name: B200 FP4 Profiling
+name: B200 SGLang FP4 Nsys Profiling
 on:
   workflow_dispatch:
+
 jobs:
-  fp4-ep8-profiling:
+  sglang-fp4-nsys:
     runs-on: [self-hosted, b200]
     timeout-minutes: 120
     env:
       NODE: hungry-hippo-fin-03-2
-      CONTAINER: zufa_trt
+      CONTAINER: zufa_sglang
       SFS: /SFS-aGqda6ct
       REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
-      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_post2_profiling
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep1_tp4_sglang059_nsys
     steps:
       - name: Sync repo
         run: |
@@ -20,27 +21,32 @@ jobs:
 
       - name: Verify container and GPU
         run: |
-          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2"
+          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -4"
+          ssh $NODE "docker exec $CONTAINER python3 -c 'import sglang; print(f\"SGLang {sglang.__version__}\")'"
+
+      - name: Check nsys availability
+        run: ssh $NODE "docker exec $CONTAINER nsys --version"
 
       - name: Clean old results
         run: ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true' && rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true"
 
-      - name: Run FP4 EP8 profiling (serve mode, chat c=64, DP=false)
+      - name: Run SGLang FP4 nsys profiling (chat c=64, TP4 EP1)
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_nsys_trace.sh --model $MODEL_FP4 --mode serve --scenario chat --concurrency 64 --quant fp4 --config throughput --tp 8 --ep 8 --dp false --env post2 --trace-dir ./$RESULT_DIR --skip-export'"
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_nsys_trace.sh --model $MODEL_FP4 --tp 4 --ep 1 --scenario chat --concurrency 64 --env sglang059 --result-dir ./$RESULT_DIR --nsys-delay 180 --nsys-duration 60 --skip-export'"
 
       - name: Show profiling results
         if: always()
         run: |
           ssh $NODE "ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'"
+          ssh $NODE "ls -la $REPO/$RESULT_DIR/*.nsys-rep 2>/dev/null || echo 'No nsys-rep file'"
           ssh $NODE "cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'"
 
-      - name: Git commit and push results
+      - name: Git commit and push results (no .nsys-rep)
         if: always()
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
-          ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; for ext in log yml jsonl json md csv xlsx; do git add -f $RESULT_DIR/*.\$ext 2>/dev/null; done; git diff --cached --name-only"
-          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=8 TP=8 profiling serve mode (chat c=64, post2)
+          ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; for ext in log yml jsonl json md csv; do git add -f $RESULT_DIR/*.\$ext 2>/dev/null; done; git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 SGLang FP4 nsys profiling (chat c=64, TP4 EP1)
 
           Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
 
