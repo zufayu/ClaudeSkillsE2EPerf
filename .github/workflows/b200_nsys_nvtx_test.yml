@@ -12,44 +12,120 @@ jobs:
       REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
       RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_nsys
     steps:
-      - name: Find nsys-rep
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git fetch origin && git reset --hard origin/main"
+
+      - name: Find nsys-rep and SQLite
         run: |
           NSYS_REP=$(ssh $NODE "ls -t $REPO/$RESULT_DIR/*.nsys-rep 2>/dev/null | head -1")
           if [ -z "$NSYS_REP" ]; then echo "ERROR: No .nsys-rep"; exit 1; fi
           echo "NSYS_REP=$NSYS_REP" >> $GITHUB_ENV
-          ssh $NODE "ls -lh $NSYS_REP"
+          SQLITE="${NSYS_REP%.nsys-rep}.sqlite"
+          echo "SQLITE=$SQLITE" >> $GITHUB_ENV
+          ssh $NODE "ls -lh $NSYS_REP $SQLITE"
 
-      - name: List available nsys stats reports
-        run: |
-          ssh $NODE "docker exec $CONTAINER nsys stats --help-reports 2>&1" || true
-
-      - name: Export nvtx_pushpop_trace CSV
-        run: |
-          NVTX_OUT="$REPO/$RESULT_DIR/nvtx_trace"
-          echo "Exporting nvtx_pushpop_trace..."
-          ssh $NODE "docker exec $CONTAINER nsys stats --report nvtx_pushpop_trace --format csv --force-overwrite true -o $NVTX_OUT $NSYS_REP 2>&1" || echo "WARN: nvtx_pushpop_trace export failed"
-          echo "=== Files ==="
-          ssh $NODE "ls -lh ${NVTX_OUT}* 2>/dev/null || echo 'No output'"
-          echo "=== Header + first 20 lines ==="
-          ssh $NODE "head -20 ${NVTX_OUT}*.csv 2>/dev/null || echo 'No CSV'"
-
-      - name: Search for module markers in nvtx trace
-        run: |
-          NVTX_OUT="$REPO/$RESULT_DIR/nvtx_trace"
-          echo "=== model.model markers ==="
-          ssh $NODE "grep -c 'model.model' ${NVTX_OUT}*.csv 2>/dev/null || echo '0 matches'"
-          ssh $NODE "grep 'model.model' ${NVTX_OUT}*.csv 2>/dev/null | grep -v 'layers' | head -20 || echo 'None without layers'"
-          echo ""
-          echo "=== decode markers ==="
-          ssh $NODE "grep -ci 'decode' ${NVTX_OUT}*.csv 2>/dev/null || echo '0 matches'"
-          ssh $NODE "grep -i 'decode' ${NVTX_OUT}*.csv 2>/dev/null | head -10 || echo 'None'"
-          echo ""
-          echo "=== Module markers ==="
-          ssh $NODE "grep -i 'module' ${NVTX_OUT}*.csv 2>/dev/null | head -10 || echo 'None'"
-
-      - name: Analyze decode steps from nvtx trace CSV
+      - name: Debug - find where module markers are stored in SQLite
         run: |
           ssh $NODE "docker exec $CONTAINER python3 -c \"
+          import sqlite3
+          conn = sqlite3.connect('$SQLITE')
+          cur = conn.cursor()
+
+          print('=== NVTX_EVENTS columns ===')
+          cols = [c[1] for c in cur.execute('PRAGMA table_info(NVTX_EVENTS)')]
+          print(cols)
+
+          print('\\n=== eventType distribution ===')
+          for r in cur.execute('SELECT eventType, COUNT(*) FROM NVTX_EVENTS GROUP BY eventType'):
+              print(f'  type={r[0]}: {r[1]} events')
+
+          print('\\n=== Check text column directly ===')
+          try:
+              for r in cur.execute(\\\"SELECT DISTINCT SUBSTR(text,1,100) FROM NVTX_EVENTS WHERE text IS NOT NULL AND text != '' LIMIT 20\\\"):
+                  print(f'  text: {r[0]}')
+          except Exception as e:
+              print(f'  ERROR: {e}')
+
+          print('\\n=== Check textId -> StringIds for model.model ===')
+          cnt = cur.execute(\\\"SELECT COUNT(*) FROM NVTX_EVENTS n JOIN StringIds s ON n.textId=s.id WHERE s.value LIKE '%model.model%'\\\").fetchone()
+          print(f'  textId match: {cnt[0]}')
+
+          print('\\n=== Check jsonText for model.model ===')
+          cnt = cur.execute(\\\"SELECT COUNT(*) FROM NVTX_EVENTS WHERE jsonText LIKE '%model.model%'\\\").fetchone()
+          print(f'  jsonText match: {cnt[0]}')
+
+          print('\\n=== Check jsonTextId -> StringIds for model.model ===')
+          try:
+              cnt = cur.execute(\\\"SELECT COUNT(*) FROM NVTX_EVENTS n JOIN StringIds s ON n.jsonTextId=s.id WHERE s.value LIKE '%model.model%'\\\").fetchone()
+              print(f'  jsonTextId match: {cnt[0]}')
+          except Exception as e:
+              print(f'  ERROR: {e}')
+
+          print('\\n=== All tables in DB ===')
+          for r in cur.execute(\\\"SELECT name FROM sqlite_master WHERE type='table' ORDER BY name\\\"):
+              print(f'  {r[0]}')
+
+          print('\\n=== COMPOSITE_EVENTS table? ===')
+          try:
+              cols = [c[1] for c in cur.execute('PRAGMA table_info(COMPOSITE_EVENTS)')]
+              print(f'  columns: {cols}')
+              cnt = cur.execute('SELECT COUNT(*) FROM COMPOSITE_EVENTS').fetchone()
+              print(f'  rows: {cnt[0]}')
+          except Exception as e:
+              print(f'  not found: {e}')
+
+          print('\\n=== Sample NVTX_EVENTS with all columns ===')
+          for r in cur.execute('SELECT * FROM NVTX_EVENTS LIMIT 3'):
+              print(f'  {r}')
+
+          print('\\n=== NVTX_EVENTS where textId matches model.model related StringIds ===')
+          for r in cur.execute(\\\"SELECT id, SUBSTR(value,1,80) FROM StringIds WHERE value LIKE '%model%' OR value LIKE '%Module%' LIMIT 20\\\"):
+              print(f'  StringId {r[0]}: {r[1]}')
+
+          print('\\n=== All StringIds containing Module (first 20) ===')
+          for r in cur.execute(\\\"SELECT id, SUBSTR(value,1,100) FROM StringIds WHERE value LIKE '%Module%' LIMIT 20\\\"):
+              print(f'  id={r[0]}: {r[1]}')
+
+          print('\\n=== NVTX_EVENTS with these textIds (sample) ===')
+          module_ids = [r[0] for r in cur.execute(\\\"SELECT id FROM StringIds WHERE value LIKE '%Module%' LIMIT 5\\\")]
+          if module_ids:
+              placeholders = ','.join(str(i) for i in module_ids)
+              for r in cur.execute(f'SELECT textId, start, end, eventType, SUBSTR(COALESCE(jsonText,\\'\\'),1,50) FROM NVTX_EVENTS WHERE textId IN ({placeholders}) LIMIT 5'):
+                  print(f'  textId={r[0]} start={r[1]/1e9:.1f}s dur={(r[2]-r[1])/1e6:.1f}ms type={r[3]} json={r[4]}')
+
+          conn.close()
+          \" 2>&1"
+
+      - name: Read nsys report script to understand query
+        run: |
+          echo "=== nvtx_pushpop_trace.py report script (first 80 lines) ==="
+          ssh $NODE "docker exec $CONTAINER head -80 /opt/nvidia/nsight-systems-cli/2026.1.1/target-linux-x64/reports/nvtx_pushpop_trace.py 2>&1" || echo "File not found"
+
+      - name: Read nsys report script - SQL query section
+        run: |
+          echo "=== grep for SELECT/SQL in report script ==="
+          ssh $NODE "docker exec $CONTAINER grep -n -i 'select\|from\|where\|join\|text\|name\|module\|string' /opt/nvidia/nsight-systems-cli/2026.1.1/target-linux-x64/reports/nvtx_pushpop_trace.py 2>&1" || echo "No matches"
+
+      - name: Check benchmark TPOT
+        run: |
+          ssh $NODE "docker exec $CONTAINER python3 << 'PYEOF'
+          import json, glob
+          files = glob.glob('$REPO/$RESULT_DIR/result_*.json')
+          for f in sorted(files):
+              with open(f) as fh:
+                  d = json.load(fh)
+              name = f.split('/')[-1]
+              tpot = d.get('tpot_p50', d.get('median_tpot_ms', 'N/A'))
+              ttft = d.get('ttft_p50', d.get('median_ttft_ms', 'N/A'))
+              out_tps = d.get('output_throughput', 'N/A')
+              conc = d.get('max_concurrency', d.get('concurrency', 'N/A'))
+              print(f'{name}: TPOT_p50={tpot}ms TTFT_p50={ttft}ms out_tps={out_tps} conc={conc}')
+          PYEOF
+          "
+
+      - name: Analyze decode steps from nvtx_pushpop_trace CSV
+        run: |
+          ssh $NODE "docker exec $CONTAINER python3 << 'PYEOF'
           import csv, glob, re, os
           from collections import Counter
 
@@ -59,93 +135,62 @@ jobs:
               exit(0)
 
           print(f'Reading {csvfiles[0]}')
-          print(f'Size: {os.path.getsize(csvfiles[0])/1e6:.1f}MB')
 
+          # Filter for model.model top-level (Lvl=0, no layers) on ONE PID
+          model_events = []
+          pids = Counter()
           with open(csvfiles[0]) as f:
               reader = csv.DictReader(f)
-              cols = reader.fieldnames
-              print(f'Columns: {cols}')
-
-              model_events = []
-              all_texts = Counter()
-              row_count = 0
               for row in reader:
-                  row_count += 1
-                  text = row.get('Name', row.get('Range', row.get('name', '')))
-                  all_texts[text[:80]] += 1
-                  if 'model.model' in str(text) and 'layers' not in str(text):
-                      model_events.append(row)
+                  name = row.get('Name', '')
+                  if 'model.model' in name and 'layers' not in name and 'embed' not in name and 'norm' not in name:
+                      lvl = row.get('Lvl', '')
+                      if lvl == '0':
+                          model_events.append(row)
+                          pids[row.get('PID', '')] += 1
 
-          print(f'Total rows: {row_count}')
-          print(f'\\nTop 20 NVTX texts:')
-          for text, cnt in all_texts.most_common(20):
-              print(f'  {cnt:>6}x  {text}')
+          print(f'Top-level model.model events: {len(model_events)}')
+          print(f'PIDs: {pids}')
 
-          print(f'\\nmodel.model events (no layers): {len(model_events)}')
-          if model_events:
-              print(f'  Sample keys: {list(model_events[0].keys())}')
-              for e in model_events[:3]:
-                  print(f'    {e}')
+          # Use first PID (one GPU)
+          if pids:
+              target_pid = pids.most_common(1)[0][0]
+              gpu_events = [e for e in model_events if e.get('PID') == target_pid]
+              gpu_events.sort(key=lambda e: int(e['Start (ns)']))
+              print(f'\nGPU PID={target_pid}: {len(gpu_events)} forward passes')
 
-              # Parse start/duration
-              durs = []
-              starts = []
-              for e in model_events:
-                  for dk in ['Duration(nsec)','Duration','duration','Dur(ns)']:
-                      if dk in e:
-                          try: durs.append(float(e[dk])); break
-                          except: pass
-                  for sk in ['Start(nsec)','Start','start','Start(ns)']:
-                      if sk in e:
-                          try: starts.append(float(e[sk])); break
-                          except: pass
+              # Parse durations
+              durs_ns = [int(e['Duration (ns)']) for e in gpu_events]
+              durs_ms = [d / 1e6 for d in durs_ns]
 
-              if durs:
-                  print(f'\\n  Duration stats ({len(durs)} events):')
-                  print(f'    avg={sum(durs)/len(durs)/1e6:.2f}ms  min={min(durs)/1e6:.2f}ms  max={max(durs)/1e6:.2f}ms')
+              # First few durations
+              print(f'\nFirst 5 durations (ms): {[f"{d:.1f}" for d in durs_ms[:5]]}')
+              print(f'Last 5 durations (ms): {[f"{d:.1f}" for d in durs_ms[-5:]]}')
 
-                  # Duration histogram
-                  buckets = Counter()
-                  for d in durs:
-                      ms = d / 1e6
-                      if ms < 1: buckets['<1ms'] += 1
-                      elif ms < 5: buckets['1-5ms'] += 1
-                      elif ms < 20: buckets['5-20ms'] += 1
-                      elif ms < 50: buckets['20-50ms'] += 1
-                      elif ms < 200: buckets['50-200ms'] += 1
-                      else: buckets['>200ms'] += 1
-                  print(f'  Duration distribution:')
-                  for b in ['<1ms','1-5ms','5-20ms','20-50ms','50-200ms','>200ms']:
-                      if b in buckets: print(f'    {b}: {buckets[b]}')
+              # Separate prefill (long) from decode (short)
+              sorted_durs = sorted(durs_ms)
+              median = sorted_durs[len(sorted_durs)//2]
 
-                  # Decode = most common duration range
-                  sorted_durs = sorted(durs)
-                  median = sorted_durs[len(sorted_durs)//2]
-                  # Decode events are the frequent ones with similar duration
-                  decode_durs = [d for d in durs if d < median * 3 and d > median * 0.3]
-                  print(f'\\n  Decode-like events (within 3x of median {median/1e6:.1f}ms): {len(decode_durs)}')
-                  if decode_durs:
-                      avg_ms = sum(decode_durs)/len(decode_durs)/1e6
-                      print(f'    avg decode model forward: {avg_ms:.2f}ms')
-                      print(f'    total decode count: {len(decode_durs)}')
+              prefill = [d for d in durs_ms if d > median * 5]
+              decode = [d for d in durs_ms if d <= median * 5]
 
-              if starts:
-                  total_span = (max(starts) - min(starts)) / 1e9
-                  print(f'\\n  Time span: {total_span:.1f}s ({min(starts)/1e9:.1f}s to {max(starts)/1e9:.1f}s)')
-          \" 2>&1"
+              print(f'\nPrefill-like (>{median*5:.0f}ms): {len(prefill)} events')
+              if prefill:
+                  print(f'  avg={sum(prefill)/len(prefill):.1f}ms')
 
-      - name: Check TPOT from benchmark results
-        run: |
-          ssh $NODE "docker exec $CONTAINER python3 -c \"
-          import json, glob
-          files = glob.glob('$REPO/$RESULT_DIR/result_*.json')
-          for f in sorted(files):
-              with open(f) as fh:
-                  d = json.load(fh)
-              tpot = d.get('tpot_p50', d.get('median_tpot_ms', 'N/A'))
-              ttft = d.get('ttft_p50', d.get('median_ttft_ms', 'N/A'))
-              out_tps = d.get('output_throughput', 'N/A')
-              conc = d.get('max_concurrency', d.get('concurrency', 'N/A'))
-              print(f'{f.split(\"/\")[-1]}:')
-              print(f'  TPOT_p50={tpot}ms  TTFT_p50={ttft}ms  output_tps={out_tps}  conc={conc}')
-          \" 2>&1" || echo "Could not parse"
+              print(f'Decode-like (<={median*5:.0f}ms): {len(decode)} events')
+              if decode:
+                  avg_decode = sum(decode)/len(decode)
+                  print(f'  avg={avg_decode:.2f}ms  min={min(decode):.2f}ms  max={max(decode):.2f}ms')
+                  print(f'  total decode count: {len(decode)}')
+
+                  # Time span
+                  decode_events = [e for e in gpu_events if int(e['Duration (ns)'])/1e6 <= median * 5]
+                  first_start = int(decode_events[0]['Start (ns)']) / 1e9
+                  last_end = int(decode_events[-1]['End (ns)']) / 1e9
+                  span = last_end - first_start
+                  print(f'  time span: {span:.1f}s ({first_start:.1f}s to {last_end:.1f}s)')
+                  print(f'  avg interval between decodes: {span/len(decode)*1000:.1f}ms')
+                  print(f'  effective decode rate: {len(decode)/span:.1f} steps/s')
+          PYEOF
+          "
