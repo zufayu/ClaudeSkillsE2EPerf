@@ -12,11 +12,13 @@
 #   3. Warmup: CONC*2 prompts
 #   4. Benchmark: CONC*10 prompts (this is the steady-state we analyze)
 #   5. Kill server → nsys exits and writes .nsys-rep
-#   6. Post-process: export to SQLite, query top kernels + NVTX markers
+#   6. Post-process: if trace >1GB, trim to benchmark window; export SQLite + jsonlines
 #
-# The trace captures everything (startup + warmup + benchmark), but
-# kernel analysis naturally focuses on the steady-state decode period.
-# --cuda-graph-trace node expands CUDA Graph internals.
+# The trace captures everything (startup + warmup + benchmark). For large
+# traces (>1GB), we trim exports to the benchmark window using recorded
+# timestamps. Exports include SQLite (for kernel analysis) and jsonlines
+# (Perfetto-compatible visualization). --cuda-graph-trace node expands
+# CUDA Graph internals.
 #
 # Usage:
 #   bash scripts/collect_sglang_nsys_trace.sh \
@@ -84,7 +86,7 @@ Profiling methodology (same as TRT-LLM serve mode):
   3. Warmup: CONC*2 prompts
   4. Benchmark: CONC*10 prompts (steady state)
   5. Kill server -> nsys writes .nsys-rep
-  6. Post-process: SQLite export, kernel + NVTX breakdown
+  6. Post-process: trim if >1GB, export SQLite + jsonlines (.json.gz)
 EOF
     exit 0
 }
@@ -226,6 +228,7 @@ nsys profile -o "$RESULT_DIR/${TAG}" -f true -t 'cuda,nvtx' --cuda-graph-trace n
     > "$SERVER_LOG" 2>&1 &
 
 SERVER_PID=$!
+NSYS_START_EPOCH=$(date +%s)
 log "Server PID=$SERVER_PID (nsys-wrapped)"
 
 # Wait for server ready
@@ -233,6 +236,7 @@ wait_for_server_ready --port "$PORT" --server-log "$SERVER_LOG" --server-pid "$S
 
 # ======================== Step 3: Warmup ======================================
 
+WARMUP_START_EPOCH=$(date +%s)
 log "Running warmup ($WARMUP_NUM_PROMPTS prompts, concurrency $CONCURRENCY)..."
 
 run_benchmark_serving \
@@ -252,6 +256,7 @@ log "Warmup done."
 
 # ======================== Step 4: Benchmark ===================================
 
+BENCH_START_EPOCH=$(date +%s)
 log "Running benchmark ($BENCH_NUM_PROMPTS prompts, concurrency $CONCURRENCY)..."
 
 run_benchmark_serving \
@@ -268,7 +273,9 @@ run_benchmark_serving \
     --result-dir "$RESULT_DIR" \
     --metadata "sglang_version=$sglang_version" "container_image=$CONTAINER_IMAGE" "tp=$TP" "ep=$EP" "scenario=$SCENARIO" "profiler=nsys"
 
+BENCH_END_EPOCH=$(date +%s)
 log "Benchmark done."
+log "Timestamps: warmup_start=${WARMUP_START_EPOCH}, bench_start=${BENCH_START_EPOCH}, bench_end=${BENCH_END_EPOCH}"
 
 # ======================== Step 5: Kill server -> nsys writes trace =============
 
@@ -296,22 +303,77 @@ log "Trace file: $TRACE_FILE (${TRACE_SIZE_MB} MB)"
 if [[ "$SKIP_EXPORT" == "false" ]]; then
     log "=== POST-PROCESSING ==="
 
-    # Export to SQLite
-    log "Exporting to SQLite..."
-    nsys export --type sqlite -o "$RESULT_DIR/${TAG}.sqlite" "$TRACE_FILE" 2>&1 || log "WARN: SQLite export failed"
+    TRIM_NEEDED=false
+    if [[ $TRACE_SIZE_MB -gt 1024 ]]; then
+        TRIM_NEEDED=true
+        # Calculate trim window: benchmark phase relative to nsys start, with 5s buffer
+        TRIM_START=$(( BENCH_START_EPOCH - NSYS_START_EPOCH - 5 ))
+        TRIM_END=$(( BENCH_END_EPOCH - NSYS_START_EPOCH + 5 ))
+        [[ $TRIM_START -lt 0 ]] && TRIM_START=0
+        TRIM_TAG="trim_${TRIM_START}-${TRIM_END}"
+        SQLITE_OUT="$RESULT_DIR/${TAG}_${TRIM_TAG}.sqlite"
+        JSON_OUT="$RESULT_DIR/${TAG}_${TRIM_TAG}.json.gz"
+        log "Trace >1GB (${TRACE_SIZE_MB}MB), trimming to benchmark window: ${TRIM_START}s-${TRIM_END}s"
 
-    # Export kernel CSV
-    log "Exporting kernel trace CSV..."
-    nsys stats --report cuda_gpu_trace --format csv -o "$RESULT_DIR/${TAG}_kernels" "$TRACE_FILE" 2>&1 || log "WARN: Kernel CSV export failed"
+        # Export trimmed SQLite
+        log "Exporting trimmed SQLite: $(basename "$SQLITE_OUT")"
+        nsys export --type sqlite --times="${TRIM_START}s/${TRIM_END}s" -f true -o "$SQLITE_OUT" "$TRACE_FILE" 2>&1 || log "WARN: Trimmed SQLite export failed"
 
-    # Print top kernels
-    if [[ -f "$RESULT_DIR/${TAG}.sqlite" ]]; then
+        # Export trimmed jsonlines compressed (Perfetto-compatible)
+        log "Exporting trimmed jsonlines: $(basename "$JSON_OUT")"
+        nsys export --type jsonlines --times="${TRIM_START}s/${TRIM_END}s" -f true -o "$JSON_OUT" "$TRACE_FILE" 2>&1 || log "WARN: Trimmed jsonlines export failed"
+
+        SQLITE_FILE="$SQLITE_OUT"
+    else
+        log "Trace ≤1GB (${TRACE_SIZE_MB}MB), exporting full trace"
+
+        # Export full SQLite
+        SQLITE_FILE="$RESULT_DIR/${TAG}.sqlite"
+        log "Exporting to SQLite..."
+        nsys export --type sqlite -f true -o "$SQLITE_FILE" "$TRACE_FILE" 2>&1 || log "WARN: SQLite export failed"
+
+        # Export full jsonlines compressed
+        JSON_OUT="$RESULT_DIR/${TAG}.json.gz"
+        log "Exporting jsonlines: $(basename "$JSON_OUT")"
+        nsys export --type jsonlines -f true -o "$JSON_OUT" "$TRACE_FILE" 2>&1 || log "WARN: Jsonlines export failed"
+    fi
+
+    # Print top kernels from whichever SQLite we have
+    if [[ -f "$SQLITE_FILE" ]]; then
+        log "SQLite: $(ls -lh "$SQLITE_FILE" | awk '{print $5}')"
+
         log "=== Top 10 Kernels by Total Duration ==="
-        sqlite3 -header -column "$RESULT_DIR/${TAG}.sqlite" "SELECT shortName, COUNT(*) as count, SUM(end-start) as total_ns, AVG(end-start) as avg_ns, ROUND(CAST(SUM(end-start) AS FLOAT) / 1e6, 2) as total_ms FROM CUPTI_ACTIVITY_KIND_KERNEL GROUP BY shortName ORDER BY total_ns DESC LIMIT 10;" 2>/dev/null || log "WARN: Could not query kernel summary"
+        python3 -c "
+import sqlite3
+conn = sqlite3.connect('$SQLITE_FILE')
+cur = conn.cursor()
+rows = cur.execute('''SELECT shortName, COUNT(*) as count, SUM(end-start) as total_ns, AVG(end-start) as avg_ns FROM CUPTI_ACTIVITY_KIND_KERNEL GROUP BY shortName ORDER BY total_ns DESC LIMIT 10''').fetchall()
+print(f'{\"Kernel\":<60} {\"Count\":>8} {\"Total(ms)\":>12} {\"Avg(us)\":>12}')
+print('-'*94)
+for name, cnt, total_ns, avg_ns in rows:
+    print(f'{name[:60]:<60} {cnt:>8} {total_ns/1e6:>12.2f} {avg_ns/1e3:>12.2f}')
+conn.close()
+" 2>/dev/null || log "WARN: Could not query kernel summary"
 
         log "=== NVTX Layer Markers ==="
-        sqlite3 -header -column "$RESULT_DIR/${TAG}.sqlite" "SELECT text, COUNT(*) as count, ROUND(AVG(end-start)/1e6, 3) as avg_ms, ROUND(SUM(end-start)/1e6, 1) as total_ms FROM NVTX_EVENTS WHERE text LIKE '%layer%' OR text LIKE '%Layer%' GROUP BY text ORDER BY total_ms DESC LIMIT 20;" 2>/dev/null || log "WARN: Could not query NVTX events"
+        python3 -c "
+import sqlite3
+conn = sqlite3.connect('$SQLITE_FILE')
+rows = conn.execute('''SELECT s.value, COUNT(*) as count, AVG(n.end-n.start)/1e6 as avg_ms, SUM(n.end-n.start)/1e6 as total_ms FROM NVTX_EVENTS n JOIN StringIds s ON n.textId=s.id WHERE s.value LIKE '%layer%' OR s.value LIKE '%Layer%' GROUP BY s.value ORDER BY total_ms DESC LIMIT 20''').fetchall()
+if rows:
+    print(f'{\"Marker\":<60} {\"Count\":>8} {\"Avg(ms)\":>10} {\"Total(ms)\":>12}')
+    print('-'*92)
+    for name, cnt, avg_ms, total_ms in rows:
+        print(f'{name[:60]:<60} {cnt:>8} {avg_ms:>10.3f} {total_ms:>12.1f}')
+else:
+    print('No layer markers found')
+conn.close()
+" 2>/dev/null || log "WARN: Could not query NVTX events"
     fi
+
+    # Show file sizes
+    log "=== Export files ==="
+    ls -lh "$RESULT_DIR/${TAG}"*.sqlite "$RESULT_DIR/${TAG}"*.json* 2>/dev/null || true
 else
     log "Skipping post-processing (--skip-export)"
 fi
@@ -342,20 +404,39 @@ print(f'| profiling | $SCENARIO | $CONCURRENCY | {total_tps:.1f} | {out_tps:.1f}
 fi
 
 # Append top kernels if SQLite export was done
-if [[ -f "$RESULT_DIR/${TAG}.sqlite" ]]; then
-    echo "" >> "$SUMMARY_FILE"
-    echo "## Top 10 Kernels by Total Duration" >> "$SUMMARY_FILE"
-    echo "" >> "$SUMMARY_FILE"
-    echo '```' >> "$SUMMARY_FILE"
-    sqlite3 -header -column "$RESULT_DIR/${TAG}.sqlite" "SELECT shortName, COUNT(*) as count, ROUND(CAST(SUM(end-start) AS FLOAT) / 1e6, 2) as total_ms, ROUND(CAST(AVG(end-start) AS FLOAT) / 1e3, 2) as avg_us FROM CUPTI_ACTIVITY_KIND_KERNEL GROUP BY shortName ORDER BY total_ms DESC LIMIT 10;" 2>/dev/null >> "$SUMMARY_FILE" || true
-    echo '```' >> "$SUMMARY_FILE"
+if [[ -n "${SQLITE_FILE:-}" ]] && [[ -f "$SQLITE_FILE" ]]; then
+    python3 -c "
+import sqlite3
+conn = sqlite3.connect('$SQLITE_FILE')
+cur = conn.cursor()
 
-    echo "" >> "$SUMMARY_FILE"
-    echo "## NVTX Layer Markers" >> "$SUMMARY_FILE"
-    echo "" >> "$SUMMARY_FILE"
-    echo '```' >> "$SUMMARY_FILE"
-    sqlite3 -header -column "$RESULT_DIR/${TAG}.sqlite" "SELECT text, COUNT(*) as count, ROUND(AVG(end-start)/1e6, 3) as avg_ms, ROUND(SUM(end-start)/1e6, 1) as total_ms FROM NVTX_EVENTS WHERE text LIKE '%layer%' OR text LIKE '%Layer%' GROUP BY text ORDER BY total_ms DESC LIMIT 20;" 2>/dev/null >> "$SUMMARY_FILE" || true
-    echo '```' >> "$SUMMARY_FILE"
+# Top kernels
+rows = cur.execute('''SELECT shortName, COUNT(*) as count, SUM(end-start) as total_ns, AVG(end-start) as avg_ns FROM CUPTI_ACTIVITY_KIND_KERNEL GROUP BY shortName ORDER BY total_ns DESC LIMIT 10''').fetchall()
+if rows:
+    print()
+    print('## Top 10 Kernels by Total Duration')
+    print()
+    print('\`\`\`')
+    print(f'{\"Kernel\":<60} {\"Count\":>8} {\"Total(ms)\":>12} {\"Avg(us)\":>12}')
+    print('-'*94)
+    for name, cnt, total_ns, avg_ns in rows:
+        print(f'{name[:60]:<60} {cnt:>8} {total_ns/1e6:>12.2f} {avg_ns/1e3:>12.2f}')
+    print('\`\`\`')
+
+# NVTX markers
+rows = conn.execute('''SELECT s.value, COUNT(*) as count, AVG(n.end-n.start)/1e6 as avg_ms, SUM(n.end-n.start)/1e6 as total_ms FROM NVTX_EVENTS n JOIN StringIds s ON n.textId=s.id WHERE s.value LIKE '%layer%' OR s.value LIKE '%Layer%' GROUP BY s.value ORDER BY total_ms DESC LIMIT 20''').fetchall()
+if rows:
+    print()
+    print('## NVTX Layer Markers')
+    print()
+    print('\`\`\`')
+    print(f'{\"Marker\":<60} {\"Count\":>8} {\"Avg(ms)\":>10} {\"Total(ms)\":>12}')
+    print('-'*92)
+    for name, cnt, avg_ms, total_ms in rows:
+        print(f'{name[:60]:<60} {cnt:>8} {avg_ms:>10.3f} {total_ms:>12.1f}')
+    print('\`\`\`')
+conn.close()
+" >> "$SUMMARY_FILE" 2>/dev/null || true
 fi
 
 log "Summary written to: $SUMMARY_FILE"
@@ -365,6 +446,11 @@ log "============================================================"
 log "  NSYS TRACE CAPTURE COMPLETE"
 log "============================================================"
 log "  Trace:      $TRACE_FILE (${TRACE_SIZE_MB} MB)"
+if [[ "${TRIM_NEEDED:-false}" == "true" ]]; then
+    log "  Trimmed:    ${TRIM_START}s-${TRIM_END}s (benchmark window)"
+    log "  SQLite:     $(basename "${SQLITE_FILE:-}")"
+    log "  Jsonlines:  $(basename "${JSON_OUT:-}")"
+fi
 log "  Summary:    $SUMMARY_FILE"
 log "  Server log: $SERVER_LOG"
 log "  Result dir: $RESULT_DIR/"

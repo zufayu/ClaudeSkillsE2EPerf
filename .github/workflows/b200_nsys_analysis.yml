@@ -177,19 +177,19 @@ jobs:
             echo "Falling back to full SQLite"
             echo "SQLITE=$FULL_SQLITE" >> $GITHUB_ENV
           fi
-          JSON_OUT="$REPO/$RESULT_DIR/${TRACE_BASE}_${TRIM_TAG}.json"
-          echo "Exporting trimmed jsonlines: ${TRACE_BASE}_${TRIM_TAG}.json"
+          JSON_OUT="$REPO/$RESULT_DIR/${TRACE_BASE}_${TRIM_TAG}.json.gz"
+          echo "Exporting trimmed jsonlines: ${TRACE_BASE}_${TRIM_TAG}.json.gz"
           ssh $NODE "docker exec $CONTAINER nsys export --type jsonlines --times='$TIMES_ARG' -f true -o $JSON_OUT $NSYS_REP 2>&1" || echo "WARN: jsonlines export failed"
-          ssh $NODE "ls -lh $JSON_OUT 2>/dev/null || echo 'No json file'"
+          ssh $NODE "ls -lh $JSON_OUT 2>/dev/null || echo 'No json.gz file'"
 
       - name: Export full jsonlines (when no trim)
         if: env.TIMERANGE == 'full'
         run: |
           TRACE_BASE=$(basename "$NSYS_REP" .nsys-rep)
-          JSON_OUT="$REPO/$RESULT_DIR/${TRACE_BASE}.json"
-          echo "Exporting full jsonlines: ${TRACE_BASE}.json"
+          JSON_OUT="$REPO/$RESULT_DIR/${TRACE_BASE}.json.gz"
+          echo "Exporting full jsonlines: ${TRACE_BASE}.json.gz"
           ssh $NODE "docker exec $CONTAINER nsys export --type jsonlines -f true -o $JSON_OUT $NSYS_REP 2>&1" || echo "WARN: jsonlines export failed"
-          ssh $NODE "ls -lh $JSON_OUT 2>/dev/null || echo 'No json file'"
+          ssh $NODE "ls -lh $JSON_OUT 2>/dev/null || echo 'No json.gz file'"
 
       - name: Show trace time range (for trim reference)
         run: |

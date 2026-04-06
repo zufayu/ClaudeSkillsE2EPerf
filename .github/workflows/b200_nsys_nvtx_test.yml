@@ -1,0 +1,159 @@
+name: B200 Nsys NVTX Trace Test
+on:
+  workflow_dispatch:
+
+jobs:
+  nvtx-trace-test:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 30
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_sglang
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_nsys
+    steps:
+      - name: Find nsys-rep
+        run: |
+          NSYS_REP=$(ssh $NODE "ls -t $REPO/$RESULT_DIR/*.nsys-rep 2>/dev/null | head -1")
+          if [ -z "$NSYS_REP" ]; then echo "ERROR: No .nsys-rep"; exit 1; fi
+          echo "NSYS_REP=$NSYS_REP" >> $GITHUB_ENV
+          ssh $NODE "ls -lh $NSYS_REP"
+
+      - name: Test nvtx_pushpop_trace report
+        run: |
+          echo "=== Testing nsys stats --report nvtx_pushpop_trace ==="
+          ssh $NODE "docker exec $CONTAINER nsys stats --help 2>&1 | head -40" || true
+          echo ""
+          echo "=== Available reports ==="
+          ssh $NODE "docker exec $CONTAINER nsys stats --help 2>&1 | grep -A50 'report'" || true
+
+      - name: Export nvtx_pushpop_trace CSV
+        run: |
+          NVTX_CSV="$REPO/$RESULT_DIR/nvtx_pushpop_trace"
+          echo "Exporting nvtx_pushpop_trace to CSV..."
+          ssh $NODE "docker exec $CONTAINER nsys stats --report nvtx_pushpop_trace --format csv -o $NVTX_CSV -f true $NSYS_REP 2>&1" || echo "WARN: nvtx_pushpop_trace failed, trying alternatives"
+          echo ""
+          echo "=== CSV files generated ==="
+          ssh $NODE "ls -lh ${NVTX_CSV}* 2>/dev/null || echo 'No CSV generated'"
+          echo ""
+          echo "=== First 30 lines of trace CSV ==="
+          ssh $NODE "head -30 ${NVTX_CSV}*.csv 2>/dev/null || echo 'No CSV'"
+
+      - name: Filter model.model markers
+        run: |
+          NVTX_CSV="$REPO/$RESULT_DIR/nvtx_pushpop_trace"
+          echo "=== Lines containing model.model (first 30) ==="
+          ssh $NODE "grep -i 'model.model' ${NVTX_CSV}*.csv 2>/dev/null | head -30 || echo 'No model.model in CSV'"
+          echo ""
+          echo "=== Lines containing decode (first 30) ==="
+          ssh $NODE "grep -i 'decode' ${NVTX_CSV}*.csv 2>/dev/null | head -30 || echo 'No decode in CSV'"
+          echo ""
+          echo "=== Lines containing forward (first 30) ==="
+          ssh $NODE "grep -i 'forward' ${NVTX_CSV}*.csv 2>/dev/null | head -30 || echo 'No forward in CSV'"
+
+      - name: Analyze decode steps from NVTX trace
+        run: |
+          ssh $NODE "docker exec $CONTAINER python3 -c \"
+          import csv, glob, re
+          from collections import Counter
+
+          # Find the nvtx trace CSV
+          csvfiles = glob.glob('$REPO/$RESULT_DIR/nvtx_pushpop_trace*.csv')
+          if not csvfiles:
+              print('No nvtx_pushpop_trace CSV found')
+              exit(0)
+
+          print(f'Reading {csvfiles[0]}')
+          with open(csvfiles[0]) as f:
+              reader = csv.DictReader(f)
+              cols = reader.fieldnames
+              print(f'Columns: {cols}')
+
+              model_events = []
+              all_texts = Counter()
+              for row in reader:
+                  # Grab the text/name column
+                  text = row.get('Name', row.get('Range', row.get('name', '')))
+                  all_texts[text[:80]] += 1
+                  if 'model.model' in str(text) and 'layers' not in str(text):
+                      model_events.append(row)
+
+          print(f'\\nTotal NVTX events in CSV: {sum(all_texts.values())}')
+          print(f'\\nTop 20 NVTX texts:')
+          for text, cnt in all_texts.most_common(20):
+              print(f'  {cnt:>6}x  {text}')
+
+          print(f'\\nmodel.model events (no layers): {len(model_events)}')
+          if model_events:
+              print(f'  Columns: {list(model_events[0].keys())}')
+              print(f'  First 5:')
+              for e in model_events[:5]:
+                  print(f'    {e}')
+              print(f'  Last 5:')
+              for e in model_events[-5:]:
+                  print(f'    {e}')
+
+              # Parse durations
+              durs = []
+              for e in model_events:
+                  dur = e.get('Duration(nsec)', e.get('Duration', e.get('duration', '')))
+                  try:
+                      durs.append(float(dur))
+                  except: pass
+
+              if durs:
+                  # Group by approximate duration to separate prefill vs decode
+                  print(f'\\n  Duration stats (all {len(durs)} events):')
+                  print(f'    avg={sum(durs)/len(durs)/1e6:.2f}ms  min={min(durs)/1e6:.2f}ms  max={max(durs)/1e6:.2f}ms')
+
+                  # Histogram by magnitude
+                  from collections import Counter
+                  buckets = Counter()
+                  for d in durs:
+                      ms = d / 1e6
+                      if ms < 1: buckets['<1ms'] += 1
+                      elif ms < 5: buckets['1-5ms'] += 1
+                      elif ms < 20: buckets['5-20ms'] += 1
+                      elif ms < 50: buckets['20-50ms'] += 1
+                      elif ms < 200: buckets['50-200ms'] += 1
+                      else: buckets['>200ms'] += 1
+                  print(f'\\n  Duration distribution:')
+                  for b in ['<1ms','1-5ms','5-20ms','20-50ms','50-200ms','>200ms']:
+                      if b in buckets: print(f'    {b}: {buckets[b]}')
+
+                  # Separate decode (frequent, shorter) from prefill (rarer, longer)
+                  median_dur = sorted(durs)[len(durs)//2]
+                  decode_events = [e for e, d in zip(model_events, durs) if d < median_dur * 2]
+                  print(f'\\n  Likely decode events (dur < {median_dur*2/1e6:.1f}ms): {len(decode_events)}')
+                  decode_durs = [float(e.get('Duration(nsec)', e.get('Duration', 0))) for e in decode_events]
+                  if decode_durs:
+                      avg_decode_ms = sum(decode_durs) / len(decode_durs) / 1e6
+                      print(f'    avg decode duration: {avg_decode_ms:.2f}ms')
+                      print(f'    total decode events: {len(decode_durs)}')
+          \" 2>&1"
+
+      - name: Also try nvtx_sum for comparison
+        run: |
+          echo "=== nvtx_sum (aggregated, for reference) ==="
+          ssh $NODE "docker exec $CONTAINER nsys stats --report nvtx_sum --format csv -o $REPO/$RESULT_DIR/nvtx_sum -f true $NSYS_REP 2>&1" || true
+          echo "=== First 30 lines ==="
+          ssh $NODE "head -30 $REPO/$RESULT_DIR/nvtx_sum*.csv 2>/dev/null || echo 'No CSV'"
+          echo ""
+          echo "=== model.model entries ==="
+          ssh $NODE "grep 'model.model' $REPO/$RESULT_DIR/nvtx_sum*.csv 2>/dev/null | head -10 || echo 'None'"
+
+      - name: Check benchmark result for TPOT comparison
+        run: |
+          echo "=== Benchmark result JSON (for TPOT comparison) ==="
+          ssh $NODE "ls $REPO/$RESULT_DIR/result_*.json 2>/dev/null || echo 'No result JSON'"
+          ssh $NODE "python3 -c \"
+          import json, glob
+          files = glob.glob('$REPO/$RESULT_DIR/result_*.json')
+          for f in sorted(files):
+              with open(f) as fh:
+                  d = json.load(fh)
+              tpot = d.get('tpot_p50', d.get('median_tpot_ms', 'N/A'))
+              ttft = d.get('ttft_p50', d.get('median_ttft_ms', 'N/A'))
+              out_tps = d.get('output_throughput', 'N/A')
+              print(f'{f.split(\"/\")[-1]}: TPOT_p50={tpot}ms, TTFT_p50={ttft}ms, out_tps={out_tps}')
+          \" 2>/dev/null || echo 'Could not parse results'"
