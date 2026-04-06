@@ -48,18 +48,35 @@ def connect(db_path):
 
 def dump_nvtx(conn, limit=50):
     """Show all distinct NVTX event texts to understand what markers exist."""
-    cur = conn.execute("""
-        SELECT s.value AS text, COUNT(*) AS cnt,
-               ROUND(AVG(n.end - n.start) / 1e6, 3) AS avg_ms,
-               ROUND(MIN(n.end - n.start) / 1e6, 3) AS min_ms,
-               ROUND(MAX(n.end - n.start) / 1e6, 3) AS max_ms
-        FROM NVTX_EVENTS n
-        JOIN StringIds s ON n.textId = s.id
-        WHERE n.end > n.start
-        GROUP BY s.value
-        ORDER BY cnt DESC
-        LIMIT ?
-    """, (limit,))
+    # Try text column first (SGLang stores markers here directly)
+    cols = [c[1] for c in conn.execute("PRAGMA table_info(NVTX_EVENTS)").fetchall()]
+    if 'text' in cols:
+        cur = conn.execute("""
+            SELECT COALESCE(n.text, s.value, '') AS marker_text, COUNT(*) AS cnt,
+                   ROUND(AVG(n.end - n.start) / 1e6, 3) AS avg_ms,
+                   ROUND(MIN(n.end - n.start) / 1e6, 3) AS min_ms,
+                   ROUND(MAX(n.end - n.start) / 1e6, 3) AS max_ms
+            FROM NVTX_EVENTS n
+            LEFT JOIN StringIds s ON n.textId = s.id
+            WHERE n.end > n.start
+              AND COALESCE(n.text, s.value, '') != ''
+            GROUP BY marker_text
+            ORDER BY cnt DESC
+            LIMIT ?
+        """, (limit,))
+    else:
+        cur = conn.execute("""
+            SELECT s.value AS marker_text, COUNT(*) AS cnt,
+                   ROUND(AVG(n.end - n.start) / 1e6, 3) AS avg_ms,
+                   ROUND(MIN(n.end - n.start) / 1e6, 3) AS min_ms,
+                   ROUND(MAX(n.end - n.start) / 1e6, 3) AS max_ms
+            FROM NVTX_EVENTS n
+            JOIN StringIds s ON n.textId = s.id
+            WHERE n.end > n.start
+            GROUP BY s.value
+            ORDER BY cnt DESC
+            LIMIT ?
+        """, (limit,))
     rows = cur.fetchall()
     print(f"\n{'='*80}")
     print(f"NVTX Events (top {limit} by count)")
@@ -74,9 +91,10 @@ def dump_nvtx(conn, limit=50):
 def _find_sglang_module_steps(conn, skip_first=5, max_steps=20):
     """Find decode steps from SGLang module-level NVTX markers.
 
-    SGLang with --enable-layerwise-nvtx-marker produces markers stored in
-    NVTX_EVENTS.jsonText (not textId/StringIds). The jsonText contains:
-      {"Module": "model.model", "Inputs": [[256], [256]]}
+    SGLang with --enable-layerwise-nvtx-marker produces markers in the
+    NVTX_EVENTS `text` column directly (not textId/StringIds or jsonText).
+    The text contains:
+      {'Module': 'model.model', 'Inputs': [[256], [256]]}
     where the number in Inputs is the batch dimension (token count).
 
     Strategy: find top-level 'model.model' markers (not model.model.layers.*),
@@ -85,31 +103,45 @@ def _find_sglang_module_steps(conn, skip_first=5, max_steps=20):
     """
     import re
 
-    # Check if jsonText column exists (nsys 2026.1+)
     cols = [c[1] for c in conn.execute("PRAGMA table_info(NVTX_EVENTS)").fetchall()]
-    if 'jsonText' not in cols:
-        print("  NVTX_EVENTS has no jsonText column, cannot detect SGLang markers")
-        return []
 
-    # Query jsonText for model.model top-level markers
-    cur = conn.execute("""
-        SELECT COALESCE(n.jsonText, '') AS text, n.start, n.end,
-               ROUND((n.end - n.start) / 1e6, 3) AS dur_ms
-        FROM NVTX_EVENTS n
-        WHERE n.jsonText LIKE '%model.model%'
-          AND n.jsonText NOT LIKE '%layers%'
-          AND n.end > n.start
-        ORDER BY n.start
-    """)
-    all_steps = cur.fetchall()
+    all_steps = []
 
-    if not all_steps:
-        # Also try via jsonTextId -> StringIds
+    # Strategy 1: Query `text` column directly (primary for SGLang)
+    if 'text' in cols:
         cur = conn.execute("""
-            SELECT COALESCE(s.value, '') AS text, n.start, n.end,
+            SELECT COALESCE(n.text, '') AS marker_text, n.start, n.end,
                    ROUND((n.end - n.start) / 1e6, 3) AS dur_ms
             FROM NVTX_EVENTS n
-            LEFT JOIN StringIds s ON n.jsonTextId = s.id
+            WHERE n.text LIKE '%model.model%'
+              AND n.text NOT LIKE '%layers%'
+              AND n.text NOT LIKE '%embed%'
+              AND n.text NOT LIKE '%norm%'
+              AND n.end > n.start
+            ORDER BY n.start
+        """)
+        all_steps = cur.fetchall()
+
+    # Strategy 2: Try jsonText (older nsys versions)
+    if not all_steps and 'jsonText' in cols:
+        cur = conn.execute("""
+            SELECT COALESCE(n.jsonText, '') AS marker_text, n.start, n.end,
+                   ROUND((n.end - n.start) / 1e6, 3) AS dur_ms
+            FROM NVTX_EVENTS n
+            WHERE n.jsonText LIKE '%model.model%'
+              AND n.jsonText NOT LIKE '%layers%'
+              AND n.end > n.start
+            ORDER BY n.start
+        """)
+        all_steps = cur.fetchall()
+
+    # Strategy 3: Try textId -> StringIds (TRT-LLM style)
+    if not all_steps:
+        cur = conn.execute("""
+            SELECT COALESCE(s.value, '') AS marker_text, n.start, n.end,
+                   ROUND((n.end - n.start) / 1e6, 3) AS dur_ms
+            FROM NVTX_EVENTS n
+            JOIN StringIds s ON n.textId = s.id
             WHERE s.value LIKE '%model.model%'
               AND s.value NOT LIKE '%layers%'
               AND n.end > n.start
@@ -123,12 +155,12 @@ def _find_sglang_module_steps(conn, skip_first=5, max_steps=20):
     # Parse batch size from Inputs: [[N], [N]] → extract N
     bs_steps = {}  # batch_size -> list of steps
     for step in all_steps:
-        m = re.search(r'"Inputs":\s*\[\[(\d+)\]', step[0])
-        if not m:
-            m = re.search(r"'Inputs':\s*\[\[(\d+)\]", step[0])
+        m = re.search(r"['\"]Inputs['\"]\s*:\s*\[\[(\d+)\]", step[0])
         if m:
             bs = int(m.group(1))
             bs_steps.setdefault(bs, []).append(step)
+        else:
+            bs_steps.setdefault(-1, []).append(step)
 
     if not bs_steps:
         return []
@@ -148,13 +180,12 @@ def _find_sglang_module_steps(conn, skip_first=5, max_steps=20):
     return steps
 
 
-def find_decode_steps(conn, pattern=None, gen_reqs_min=None, skip_first=5, max_steps=20):
-    """Find steady-state decode NVTX events.
+def _detect_nvtx_markers(conn):
+    """Detect what kind of NVTX markers exist, checking both text and textId columns."""
+    cols = [c[1] for c in conn.execute("PRAGMA table_info(NVTX_EVENTS)").fetchall()]
+    marker_types = []
 
-    For TRT-LLM: looks for '[Executor] _forward_step N: 0 ctx reqs, K gen reqs'
-    For SGLang: looks for 'decode[bs=N]' or module-level markers
-    """
-    # First, detect what kind of NVTX markers we have
+    # Check textId -> StringIds (TRT-LLM stores markers here)
     cur = conn.execute("""
         SELECT s.value, COUNT(*) as cnt
         FROM NVTX_EVENTS n JOIN StringIds s ON n.textId = s.id
@@ -163,6 +194,33 @@ def find_decode_steps(conn, pattern=None, gen_reqs_min=None, skip_first=5, max_s
         GROUP BY s.value ORDER BY cnt DESC LIMIT 10
     """)
     marker_types = cur.fetchall()
+    if marker_types:
+        return 'textId', marker_types
+
+    # Check text column directly (SGLang stores markers here)
+    if 'text' in cols:
+        cur = conn.execute("""
+            SELECT text, COUNT(*) as cnt
+            FROM NVTX_EVENTS
+            WHERE text IS NOT NULL AND text != ''
+              AND (text LIKE '%forward_step%' OR text LIKE '%decode%'
+                   OR text LIKE '%gen reqs%' OR text LIKE '%model.model%')
+            GROUP BY text ORDER BY cnt DESC LIMIT 10
+        """)
+        marker_types = cur.fetchall()
+        if marker_types:
+            return 'text', marker_types
+
+    return None, []
+
+
+def find_decode_steps(conn, pattern=None, gen_reqs_min=None, skip_first=5, max_steps=20):
+    """Find steady-state decode NVTX events.
+
+    For TRT-LLM: looks for '[Executor] _forward_step N: 0 ctx reqs, K gen reqs'
+    For SGLang: looks for 'decode[bs=N]' or module-level markers via text column
+    """
+    source, marker_types = _detect_nvtx_markers(conn)
 
     if not marker_types:
         # Try SGLang module-level markers
@@ -173,18 +231,22 @@ def find_decode_steps(conn, pattern=None, gen_reqs_min=None, skip_first=5, max_s
             print("Available NVTX markers:")
             dump_nvtx(conn, 20)
             return []
+    elif source == 'text' and any('model.model' in m[0] for m in marker_types):
+        # SGLang module markers in text column
+        print("SGLang module markers detected in text column")
+        steps = _find_sglang_module_steps(conn, skip_first, max_steps)
+        if not steps:
+            return []
     else:
-        # Build query based on detected markers
+        # TRT-LLM style via textId -> StringIds
         if pattern:
             where_clause = f"s.value LIKE '%{pattern}%'"
         elif any('forward_step' in m[0] for m in marker_types):
-            # TRT-LLM style
             if gen_reqs_min:
                 where_clause = f"s.value LIKE '%forward_step%' AND s.value LIKE '%{gen_reqs_min} gen reqs%' AND s.value LIKE '%0 ctx reqs%'"
             else:
                 where_clause = "s.value LIKE '%forward_step%' AND s.value LIKE '%0 ctx reqs%'"
         elif any('decode' in m[0] for m in marker_types):
-            # SGLang style
             where_clause = "s.value LIKE 'decode%'"
         else:
             where_clause = "1=1"
@@ -201,7 +263,6 @@ def find_decode_steps(conn, pattern=None, gen_reqs_min=None, skip_first=5, max_s
 
         if not steps:
             print(f"No NVTX events matching: {where_clause}")
-            # Fallback to SGLang module markers
             print("Trying SGLang module markers as fallback...")
             steps = _find_sglang_module_steps(conn, skip_first, max_steps)
             if not steps:
@@ -355,8 +416,28 @@ def analyze_step_kernels(conn, steps, device_id=None, top_n=30):
 
 def get_nvtx_layers_in_range(conn, start_ns, end_ns):
     """Get NVTX layer markers within a decode step for per-layer analysis."""
+    cols = [c[1] for c in conn.execute("PRAGMA table_info(NVTX_EVENTS)").fetchall()]
+
+    # Try text column first (SGLang stores layer markers here)
+    if 'text' in cols:
+        cur = conn.execute("""
+            SELECT COALESCE(n.text, '') AS marker_text, n.start, n.end,
+                   ROUND((n.end - n.start) / 1e6, 3) AS dur_ms
+            FROM NVTX_EVENTS n
+            WHERE n.start >= ? AND n.end <= ?
+              AND n.text IS NOT NULL AND n.text != ''
+              AND (n.text LIKE '%layers.%' OR n.text LIKE '%layer_%'
+                   OR n.text LIKE '%DecoderLayer%')
+              AND n.text NOT LIKE '%embed%' AND n.text NOT LIKE '%norm%'
+            ORDER BY n.start
+        """, (start_ns, end_ns))
+        rows = cur.fetchall()
+        if rows:
+            return rows
+
+    # Fallback: textId -> StringIds (TRT-LLM style)
     cur = conn.execute("""
-        SELECT s.value AS text, n.start, n.end,
+        SELECT s.value AS marker_text, n.start, n.end,
                ROUND((n.end - n.start) / 1e6, 3) AS dur_ms
         FROM NVTX_EVENTS n
         JOIN StringIds s ON n.textId = s.id

@@ -121,8 +121,8 @@ jobs:
             TIMERANGE=$(ssh $NODE "docker exec $CONTAINER python3 -c \"
           import sqlite3, re
           conn = sqlite3.connect('$FULL_SQLITE')
-          # Try SGLang module markers in jsonText first
-          rows = conn.execute(\\\"SELECT COALESCE(n.jsonText,''), n.start, n.end FROM NVTX_EVENTS n WHERE n.jsonText LIKE '%model.model%' AND n.jsonText NOT LIKE '%layers%' AND n.end > n.start ORDER BY n.start\\\").fetchall()
+          # Try SGLang module markers in text column first (primary)
+          rows = conn.execute(\\\"SELECT COALESCE(text,''), start, end FROM NVTX_EVENTS WHERE text LIKE '%model.model%' AND text NOT LIKE '%layers%' AND text NOT LIKE '%embed%' AND text NOT LIKE '%norm%' AND end > start ORDER BY start\\\").fetchall()
           if not rows:
               # Try textId for TRT-LLM style
               rows = conn.execute(\\\"SELECT s.value, n.start, n.end FROM NVTX_EVENTS n JOIN StringIds s ON n.textId=s.id WHERE s.value LIKE '%forward_step%' AND n.end > n.start ORDER BY n.start\\\").fetchall()
@@ -201,15 +201,18 @@ jobs:
               print(f'Kernel time range: {row[0]/1e9:.1f}s ~ {row[1]/1e9:.1f}s (duration: {(row[1]-row[0])/1e9:.1f}s)')
           else:
               print('No kernels found in this SQLite')
-          # Check NVTX markers
+          # Check NVTX markers (textId -> StringIds for TRT-LLM)
           for label, query in [
               ('TRT-LLM forward_step', \\\"s.value LIKE '%forward_step%'\\\"),
               ('SGLang decode', \\\"s.value LIKE 'decode%'\\\"),
-              ('SGLang module', \\\"s.value LIKE '%model.model%Inputs%' AND s.value NOT LIKE '%layers%'\\\"),
           ]:
               rows = conn.execute(f'SELECT s.value, n.start, n.end FROM NVTX_EVENTS n JOIN StringIds s ON n.textId=s.id WHERE {query} AND n.end>n.start ORDER BY n.start').fetchall()
               if rows:
                   print(f'{label}: {len(rows)} events, {rows[0][1]/1e9:.1f}s ~ {rows[-1][2]/1e9:.1f}s (span {(rows[-1][2]-rows[0][1])/1e9:.1f}s)')
+          # Check SGLang module markers in text column directly
+          rows = conn.execute(\\\"SELECT text, start, end FROM NVTX_EVENTS WHERE text LIKE '%model.model%' AND text NOT LIKE '%layers%' AND text NOT LIKE '%embed%' AND text NOT LIKE '%norm%' AND end>start ORDER BY start\\\").fetchall()
+          if rows:
+              print(f'SGLang module (text col): {len(rows)} events, {rows[0][1]/1e9:.1f}s ~ {rows[-1][2]/1e9:.1f}s (span {(rows[-1][2]-rows[0][1])/1e9:.1f}s)')
           conn.close()
           \" 2>&1"
 
