@@ -362,7 +362,7 @@ fi
 
 # ======================== Step 8: Kernel Breakdown ============================
 
-EXTRACT_SCRIPT="$SCRIPT_DIR/extract_cuda_graph_kernels.py"
+EXTRACT_SCRIPT="$SCRIPT_DIR/extract_cuda_kernels_torch_trace.py"
 FIRST_TRACE=$(find "$RESULT_DIR" -maxdepth 1 -name "*.json.gz" -type f 2>/dev/null | head -1)
 
 if [[ -f "$EXTRACT_SCRIPT" ]] && [[ -n "$FIRST_TRACE" ]]; then
@@ -371,7 +371,7 @@ if [[ -f "$EXTRACT_SCRIPT" ]] && [[ -n "$FIRST_TRACE" ]]; then
     python3 "$EXTRACT_SCRIPT" "$FIRST_TRACE" --platform b200 --csv "$BREAKDOWN_CSV" --max-steps 20 --skip-first 5 --show-steps 0 2>&1 | tee "$RESULT_DIR/kernel_breakdown_${TAG}.log" || log "WARNING: kernel breakdown extraction failed"
 else
     if [[ ! -f "$EXTRACT_SCRIPT" ]]; then
-        log "WARNING: extract_cuda_graph_kernels.py not found at $EXTRACT_SCRIPT"
+        log "WARNING: extract_cuda_kernels_torch_trace.py not found at $EXTRACT_SCRIPT"
     else
         log "WARNING: No trace .json.gz found for kernel breakdown"
     fi
