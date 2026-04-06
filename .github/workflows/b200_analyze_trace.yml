@@ -21,10 +21,63 @@ jobs:
       - name: Run --info (trace metadata)
         run: ssh $NODE "docker exec zufa_sglang python3 $REPO/scripts/extract_cuda_kernels_torch_trace.py $REPO/$TRACE --info"
 
-      - name: Run kernel breakdown (skip-first=5, max-steps=20)
+      - name: Analyze cudaGraphLaunch grouping
         if: always()
-        run: ssh $NODE "docker exec zufa_sglang python3 $REPO/scripts/extract_cuda_kernels_torch_trace.py $REPO/$TRACE --platform b200 --max-steps 20 --skip-first 5 --show-steps 2 --csv $REPO/results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling/kernel_breakdown.csv"
+        run: |
+          ssh $NODE "docker exec zufa_sglang python3 -c \"
+          import gzip, json, sys
+          from collections import defaultdict
 
-      - name: Show CSV
-        if: always()
-        run: ssh $NODE "cat $REPO/results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling/kernel_breakdown.csv 2>/dev/null || echo 'No CSV'"
+          print('Loading trace...')
+          with gzip.open('$REPO/$TRACE', 'rt') as f:
+              data = json.load(f)
+          events = data.get('traceEvents', [])
+          min_ts = min(e['ts'] for e in events if 'ts' in e)
+
+          # 1. Print all cudaGraphLaunch with timestamps and gaps
+          launches = sorted([e for e in events if 'cudaGraphLaunch' in e.get('name','') and e.get('ph')=='X'], key=lambda x: x['ts'])
+          print(f'\n=== cudaGraphLaunch timeline ({len(launches)} total) ===')
+          print(f'{'idx':>4} {'rel_s':>10} {'dur_ms':>8} {'gap_ms':>8}')
+          prev_end = None
+          for i, l in enumerate(launches[:30]):
+              rel = (l['ts'] - min_ts) / 1e6
+              dur = l.get('dur',0) / 1e3
+              gap = (l['ts'] - prev_end) / 1e3 if prev_end else 0
+              print(f'{i:>4} {rel:>10.3f} {dur:>8.2f} {gap:>8.2f}')
+              prev_end = l['ts'] + l.get('dur', 0)
+
+          # 2. Print annotations timeline
+          anns = sorted([e for e in events if e.get('cat') in ('gpu_user_annotation','user_annotation') and e.get('ph')=='X'], key=lambda x: x['ts'])
+          print(f'\n=== Annotations timeline ({len(anns)} total) ===')
+          ann_names = defaultdict(int)
+          for a in anns:
+              ann_names[a.get('name','')[:60]] += 1
+          for name, cnt in sorted(ann_names.items(), key=lambda x: -x[1]):
+              print(f'  {cnt:>5}x  {name}')
+
+          # Show first 20 annotations with timestamps
+          print(f'\nFirst 20 annotations:')
+          for a in anns[:20]:
+              rel = (a['ts'] - min_ts) / 1e6
+              dur = a.get('dur',0) / 1e3
+              print(f'  {rel:>8.3f}s  dur={dur:>8.2f}ms  {a.get(\"name\",\"\")[:60]}')
+
+          # 3. Group launches by time gap (>5ms gap = new decode iteration)
+          groups = []
+          group = []
+          for l in launches:
+              if group and (l['ts'] - (group[-1]['ts'] + group[-1].get('dur',0))) > 5000:  # 5ms gap
+                  groups.append(group)
+                  group = []
+              group.append(l)
+          if group:
+              groups.append(group)
+
+          print(f'\n=== Launch groups (gap>5ms = new iteration) ===')
+          print(f'Total groups: {len(groups)}')
+          for i, g in enumerate(groups[:15]):
+              total_dur = sum(l.get('dur',0) for l in g) / 1e3
+              span = (g[-1]['ts'] + g[-1].get('dur',0) - g[0]['ts']) / 1e3
+              rel = (g[0]['ts'] - min_ts) / 1e6
+              print(f'  Group {i:>3}: {len(g):>3} launches, span={span:>8.2f}ms, kernel_dur={total_dur:>8.2f}ms, at {rel:.3f}s')
+          \""
