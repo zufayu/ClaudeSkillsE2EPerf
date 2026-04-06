@@ -74,33 +74,58 @@ def dump_nvtx(conn, limit=50):
 def _find_sglang_module_steps(conn, skip_first=5, max_steps=20):
     """Find decode steps from SGLang module-level NVTX markers.
 
-    SGLang with --enable-layerwise-nvtx-marker produces markers like:
-      :{'Module': 'model.model', 'Inputs': [[256], [256]]}
+    SGLang with --enable-layerwise-nvtx-marker produces markers stored in
+    NVTX_EVENTS.jsonText (not textId/StringIds). The jsonText contains:
+      {"Module": "model.model", "Inputs": [[256], [256]]}
     where the number in Inputs is the batch dimension (token count).
 
     Strategy: find top-level 'model.model' markers (not model.model.layers.*),
     group by batch size, identify decode steps as the most frequent batch size
     (decode steps repeat many times, prefill is fewer with larger batch).
     """
+    import re
+
+    # Check if jsonText column exists (nsys 2026.1+)
+    cols = [c[1] for c in conn.execute("PRAGMA table_info(NVTX_EVENTS)").fetchall()]
+    if 'jsonText' not in cols:
+        print("  NVTX_EVENTS has no jsonText column, cannot detect SGLang markers")
+        return []
+
+    # Query jsonText for model.model top-level markers
     cur = conn.execute("""
-        SELECT s.value AS text, n.start, n.end,
+        SELECT COALESCE(n.jsonText, '') AS text, n.start, n.end,
                ROUND((n.end - n.start) / 1e6, 3) AS dur_ms
         FROM NVTX_EVENTS n
-        JOIN StringIds s ON n.textId = s.id
-        WHERE s.value LIKE '%model.model%Inputs%'
-          AND s.value NOT LIKE '%layers%'
+        WHERE n.jsonText LIKE '%model.model%'
+          AND n.jsonText NOT LIKE '%layers%'
           AND n.end > n.start
         ORDER BY n.start
     """)
     all_steps = cur.fetchall()
+
+    if not all_steps:
+        # Also try via jsonTextId -> StringIds
+        cur = conn.execute("""
+            SELECT COALESCE(s.value, '') AS text, n.start, n.end,
+                   ROUND((n.end - n.start) / 1e6, 3) AS dur_ms
+            FROM NVTX_EVENTS n
+            LEFT JOIN StringIds s ON n.jsonTextId = s.id
+            WHERE s.value LIKE '%model.model%'
+              AND s.value NOT LIKE '%layers%'
+              AND n.end > n.start
+            ORDER BY n.start
+        """)
+        all_steps = cur.fetchall()
+
     if not all_steps:
         return []
 
     # Parse batch size from Inputs: [[N], [N]] → extract N
-    import re
     bs_steps = {}  # batch_size -> list of steps
     for step in all_steps:
-        m = re.search(r"'Inputs':\s*\[\[(\d+)\]", step[0])
+        m = re.search(r'"Inputs":\s*\[\[(\d+)\]', step[0])
+        if not m:
+            m = re.search(r"'Inputs':\s*\[\[(\d+)\]", step[0])
         if m:
             bs = int(m.group(1))
             bs_steps.setdefault(bs, []).append(step)

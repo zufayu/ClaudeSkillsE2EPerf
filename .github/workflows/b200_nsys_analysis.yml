@@ -99,28 +99,26 @@ jobs:
             TIMERANGE=$(ssh $NODE "docker exec $CONTAINER python3 -c \"
           import sqlite3, re
           conn = sqlite3.connect('$FULL_SQLITE')
-          # Find model.model top-level module markers (SGLang style)
-          rows = conn.execute(\\\"SELECT s.value, n.start, n.end FROM NVTX_EVENTS n JOIN StringIds s ON n.textId=s.id WHERE s.value LIKE '%model.model%Inputs%' AND s.value NOT LIKE '%layers%' AND n.end > n.start ORDER BY n.start\\\").fetchall()
+          # Try SGLang module markers in jsonText first
+          rows = conn.execute(\\\"SELECT COALESCE(n.jsonText,''), n.start, n.end FROM NVTX_EVENTS n WHERE n.jsonText LIKE '%model.model%' AND n.jsonText NOT LIKE '%layers%' AND n.end > n.start ORDER BY n.start\\\").fetchall()
           if not rows:
-              # Try TRT-LLM style
+              # Try textId for TRT-LLM style
               rows = conn.execute(\\\"SELECT s.value, n.start, n.end FROM NVTX_EVENTS n JOIN StringIds s ON n.textId=s.id WHERE s.value LIKE '%forward_step%' AND n.end > n.start ORDER BY n.start\\\").fetchall()
           if rows:
-              # Find the most common batch size (= decode steps)
               from collections import Counter
               bs_counter = Counter()
               for text, start, end in rows:
                   m = re.search(r'Inputs.*?\[\[(\d+)\]', text)
+                  if not m: m = re.search(r'Inputs.*?\[\[(\d+)\]', text)
                   if m: bs_counter[int(m.group(1))] += 1
                   else: bs_counter[-1] += 1
               decode_bs = bs_counter.most_common(1)[0][0]
-              decode_rows = [(t,s,e) for t,s,e in rows if f'[[{decode_bs}]' in t or decode_bs == -1]
+              decode_rows = [(t,s,e) for t,s,e in rows if str(decode_bs) in t or decode_bs == -1]
               if decode_rows:
-                  # Use last 60% of decode steps as steady state
                   n = len(decode_rows)
                   start_idx = n * 2 // 5
                   start_s = int(decode_rows[start_idx][1] / 1e9) - 5
                   end_s = int(decode_rows[-1][2] / 1e9) + 5
-                  # Cap at 120s window max
                   if end_s - start_s > 120: end_s = start_s + 120
                   print(f'{start_s},{end_s}')
               else:
