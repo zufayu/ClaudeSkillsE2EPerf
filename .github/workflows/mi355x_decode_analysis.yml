@@ -25,16 +25,12 @@ jobs:
 
       - name: Check TPOT from benchmark results
         run: |
-          echo "=== Result JSONs on host ==="
-          ls -lh $REPO/$TRACE_DIR/result_*.json 2>/dev/null || echo "None on host"
-          echo "=== Result JSONs in container ==="
-          podman exec $CONTAINER bash -c "ls -lh $REPO/$TRACE_DIR/result_*.json 2>/dev/null || echo 'None in container'"
-          echo "=== All result JSONs under mi355x_dsr_mxfp4 ==="
-          ls -lh $REPO/results/mi355x_dsr_mxfp4/*/result_*.json 2>/dev/null | head -10 || echo "None"
+          echo "=== Result JSONs ==="
+          ls -lh $REPO/$TRACE_DIR/result_*.json $REPO/results/mi355x_dsr_mxfp4/*/result_*.json 2>/dev/null | head -15 || echo "None"
           echo "=== TPOT values ==="
-          podman exec $CONTAINER python3 << PYEOF
-          import json, glob, os
-          base = '$REPO/results/mi355x_dsr_mxfp4'
+          python3 << 'PYEOF'
+          import json, glob
+          base = '/shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf/results/mi355x_dsr_mxfp4'
           files = glob.glob(f'{base}/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm711_profiling/result_*.json')
           if not files:
               files = glob.glob(f'{base}/*/result_*.json')
@@ -50,69 +46,131 @@ jobs:
               print(f'{name}: TPOT_p50={tpot}ms TTFT_p50={ttft}ms out_tps={out_tps} conc={conc}')
           PYEOF
 
-      - name: Analyze ATOM trace decode steps
-        timeout-minutes: 20
+      - name: Trim trace to decode window
+        timeout-minutes: 15
         run: |
-          # Find a trace file
-          TRACE=$(ls -t $REPO/$TRACE_DIR/*.json.gz 2>/dev/null | grep -v capture | head -1)
+          TRACE=$(ls -t $REPO/$TRACE_DIR/*.json.gz 2>/dev/null | grep -v capture | grep -v _trim_ | head -1)
           if [ -z "$TRACE" ]; then
-            TRACE=$(podman exec $CONTAINER bash -c "find $REPO/$TRACE_DIR /tmp/trace/rank_0 -name '*.json.gz' ! -name '*capture*' -type f 2>/dev/null | head -1")
+            echo "No trace file found"
+            exit 0
+          fi
+          echo "Full trace: $TRACE ($(du -h "$TRACE" | cut -f1))"
+          TRIM_OUT="${TRACE%.json.gz}_trim_decode.json.gz"
+          if [ -f "$TRIM_OUT" ]; then
+            echo "Trimmed trace already exists: $TRIM_OUT ($(du -h "$TRIM_OUT" | cut -f1))"
+            echo "TRIM_TRACE=$TRIM_OUT" >> $GITHUB_ENV
+            echo "FULL_TRACE=$TRACE" >> $GITHUB_ENV
+            exit 0
+          fi
+          echo "Creating trimmed trace with only decode-window events..."
+          python3 << PYEOF
+          import gzip, json, re, sys
+
+          trace_path = "$TRACE"
+          trim_out = "$TRIM_OUT"
+
+          print(f"Pass 1: scanning for decode annotations in {trace_path}...")
+          with gzip.open(trace_path, 'rt') as f:
+              data = json.load(f)
+
+          events = data.get('traceEvents', [])
+          print(f"Total events: {len(events)}")
+
+          # Find decode time window
+          decode_ts = []
+          for e in events:
+              if e.get('ph') == 'X' and 'user_annotation' in e.get('cat', ''):
+                  name = e.get('name', '')
+                  if name.startswith('decode[') or name.startswith('decode '):
+                      decode_ts.append(e.get('ts', 0))
+
+          if not decode_ts:
+              print("ERROR: No decode annotations found!")
+              sys.exit(1)
+
+          decode_ts.sort()
+          # Use middle 60% of decode window to get steady state
+          n = len(decode_ts)
+          start_idx = n * 2 // 10
+          end_idx = n * 8 // 10
+          trim_start = decode_ts[start_idx] - 1000  # 1ms buffer before
+          trim_end = decode_ts[end_idx] + 50000     # 50ms buffer after last decode
+
+          print(f"Decode events: {n}")
+          print(f"Full window: {decode_ts[0]/1e6:.1f}s - {decode_ts[-1]/1e6:.1f}s")
+          print(f"Trim window (20%-80%): {trim_start/1e6:.1f}s - {trim_end/1e6:.1f}s")
+          print(f"  ({end_idx - start_idx} of {n} decode events)")
+
+          # Filter events to trim window
+          trimmed = [e for e in events if trim_start <= e.get('ts', 0) <= trim_end]
+          del events, data
+
+          print(f"Trimmed events: {len(trimmed)} (from {n} total)")
+
+          # Write trimmed trace
+          out_data = {"traceEvents": trimmed}
+          with gzip.open(trim_out, 'wt') as f:
+              json.dump(out_data, f)
+
+          import os
+          size_mb = os.path.getsize(trim_out) / 1e6
+          print(f"Trimmed trace: {trim_out} ({size_mb:.0f}MB)")
+          PYEOF
+          echo "TRIM_TRACE=$TRIM_OUT" >> $GITHUB_ENV
+          echo "FULL_TRACE=$TRACE" >> $GITHUB_ENV
+
+      - name: Analyze decode steps from trimmed trace
+        timeout-minutes: 10
+        run: |
+          TRACE="${TRIM_TRACE:-}"
+          if [ -z "$TRACE" ]; then
+            TRACE=$(ls -t $REPO/$TRACE_DIR/*_trim_*.json.gz 2>/dev/null | head -1)
+          fi
+          if [ -z "$TRACE" ]; then
+            TRACE=$(ls -t $REPO/$TRACE_DIR/*.json.gz 2>/dev/null | grep -v capture | head -1)
           fi
           if [ -z "$TRACE" ]; then
             echo "No trace file found"
             exit 0
           fi
-          echo "Trace: $TRACE"
-          ls -lh "$TRACE" 2>/dev/null || podman exec $CONTAINER ls -lh "$TRACE"
+          echo "Analyzing: $TRACE ($(du -h "$TRACE" | cut -f1))"
 
-          podman exec $CONTAINER python3 << PYEOF
-          import gzip, json, re, sys
+          python3 << PYEOF
+          import gzip, json, re
           from collections import Counter
 
           trace_path = "$TRACE"
-          print(f"Loading {trace_path} (streaming, only keeping decode/prefill events)...")
-
-          # Stream-parse: read line by line from the gzipped JSON array
-          # Chrome trace format: {"traceEvents": [{...}, {...}, ...]}
-          # We only keep user_annotation events to avoid OOM on 550MB+ traces
-          decode_events = []
-          prefill_events = []
-          ann_names = Counter()
-          total_events = 0
-          cats = Counter()
-
+          print(f"Loading {trace_path}...")
           with gzip.open(trace_path, 'rt') as f:
-              # Try to parse as standard Chrome trace JSON
-              # For large files, use incremental JSON decoder
-              decoder = json.JSONDecoder()
-              buf = f.read()
-              print(f"Decompressed size: {len(buf)/1e6:.0f}MB")
+              data = json.load(f)
 
-              data = json.loads(buf)
-              del buf  # free memory
+          events = data.get('traceEvents', [])
+          print(f"Total events: {len(events)}")
 
-              events = data.get('traceEvents', data if isinstance(data, list) else [])
-              total_events = len(events)
-              print(f"Total events: {total_events}")
-
-              for e in events:
-                  cat = e.get('cat', 'none')
-                  cats[cat] += 1
-                  if e.get('ph') != 'X':
-                      continue
-                  if cat == 'gpu_user_annotation' or 'user_annotation' in cat:
-                      name = e.get('name', '')
-                      ann_names[name[:60]] += 1
-                      if name.startswith('decode[') or name.startswith('decode '):
-                          decode_events.append({'name': name, 'ts': e.get('ts', 0), 'dur': e.get('dur', 0)})
-                      elif name.startswith('prefill'):
-                          prefill_events.append({'name': name, 'ts': e.get('ts', 0), 'dur': e.get('dur', 0)})
-
-              del events, data  # free memory
-
+          # Categorize
+          cats = Counter()
+          for e in events:
+              cats[e.get('cat', 'none')] += 1
           print(f"\nEvent categories (top 10):")
           for cat, cnt in cats.most_common(10):
               print(f"  {cnt:>8}x  {cat}")
+
+          # Find decode/prefill annotations
+          decode_events = []
+          prefill_events = []
+          ann_names = Counter()
+          for e in events:
+              if e.get('ph') != 'X':
+                  continue
+              cat = e.get('cat', '')
+              if 'user_annotation' not in cat:
+                  continue
+              name = e.get('name', '')
+              ann_names[name[:60]] += 1
+              if name.startswith('decode[') or name.startswith('decode '):
+                  decode_events.append(e)
+              elif name.startswith('prefill'):
+                  prefill_events.append(e)
 
           print(f"\n=== User Annotations ===")
           for name, cnt in ann_names.most_common(20):
@@ -125,36 +183,50 @@ jobs:
           if decode_events:
               bs_counter = Counter()
               for e in decode_events:
-                  m = re.search(r'bs=(\d+)', e['name'])
+                  m = re.search(r'bs=(\d+)', e.get('name', ''))
                   if m:
                       bs_counter[int(m.group(1))] += 1
                   else:
                       bs_counter[-1] += 1
               print(f"\nDecode batch sizes: {dict(bs_counter)}")
 
-              durs_ms = [e['dur'] / 1000 for e in decode_events]
+              durs_ms = [e.get('dur', 0) / 1000 for e in decode_events]
               print(f"\nAll decode durations ({len(durs_ms)} events):")
               print(f"  avg={sum(durs_ms)/len(durs_ms):.2f}ms  min={min(durs_ms):.2f}ms  max={max(durs_ms):.2f}ms")
 
-              for bs, cnt in sorted(bs_counter.items()):
+              for bs in sorted(bs_counter):
                   if bs >= 0:
-                      bs_durs = [e['dur']/1000 for e in decode_events if f'bs={bs}' in e['name']]
+                      bs_durs = [e.get('dur', 0)/1000 for e in decode_events if f'bs={bs}' in e.get('name', '')]
                   else:
-                      bs_durs = [e['dur']/1000 for e in decode_events if 'bs=' not in e['name']]
+                      bs_durs = [e.get('dur', 0)/1000 for e in decode_events if 'bs=' not in e.get('name', '')]
                   if bs_durs:
-                      print(f"  bs={bs}: {len(bs_durs)} events, avg={sum(bs_durs)/len(bs_durs):.2f}ms, min={min(bs_durs):.2f}ms, max={max(bs_durs):.2f}ms")
+                      bs_durs_s = sorted(bs_durs)
+                      p50 = bs_durs_s[len(bs_durs_s)//2]
+                      print(f"  bs={bs}: {len(bs_durs)} events, avg={sum(bs_durs)/len(bs_durs):.2f}ms, p50={p50:.2f}ms, min={min(bs_durs):.2f}ms, max={max(bs_durs):.2f}ms")
 
-              starts = sorted(e['ts'] for e in decode_events)
+              starts = sorted(e.get('ts', 0) for e in decode_events)
               span_s = (starts[-1] - starts[0]) / 1e6
               print(f"\nDecode time span: {span_s:.1f}s")
               if span_s > 0:
                   print(f"Decode rate: {len(decode_events)/span_s:.1f} steps/s")
 
-              sorted_decode = sorted(decode_events, key=lambda e: e['ts'])
+              sorted_decode = sorted(decode_events, key=lambda e: e.get('ts', 0))
               print(f"\nFirst 3 decode events:")
               for e in sorted_decode[:3]:
-                  print(f"  t={e['ts']/1e6:.1f}s dur={e['dur']/1000:.2f}ms name={e['name']}")
+                  print(f"  t={e['ts']/1e6:.1f}s dur={e.get('dur',0)/1000:.2f}ms name={e.get('name','')}")
               print(f"Last 3 decode events:")
               for e in sorted_decode[-3:]:
-                  print(f"  t={e['ts']/1e6:.1f}s dur={e['dur']/1000:.2f}ms name={e['name']}")
+                  print(f"  t={e['ts']/1e6:.1f}s dur={e.get('dur',0)/1000:.2f}ms name={e.get('name','')}")
+
+              # GPU kernel stats in decode window
+              gpu_kernels = [e for e in events if e.get('ph') == 'X' and e.get('cat') in ('kernel', 'gpu_memcpy')]
+              if gpu_kernels:
+                  d_start = min(e['ts'] for e in decode_events)
+                  d_end = max(e['ts'] + e.get('dur', 0) for e in decode_events)
+                  dk = [k for k in gpu_kernels if d_start <= k['ts'] <= d_end]
+                  total_ms = sum(k.get('dur', 0) for k in dk) / 1000
+                  print(f"\n=== GPU Kernels in decode window ===")
+                  print(f"Total kernels: {len(dk)}, total time: {total_ms:.1f}ms")
+                  if decode_events:
+                      print(f"Avg kernel time per decode step: {total_ms/len(decode_events):.2f}ms")
           PYEOF
