@@ -10,7 +10,7 @@ jobs:
       NODE: hungry-hippo-fin-03-2
       CONTAINER: zufa_sglang
       REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
-      TRACE: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling/1775399881.3412564-TP-0-EP-0.trace.json.gz
+      TRACE: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling/1775449594.3104873-TP-0-EP-0.trace.json.gz
       RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling
     steps:
       - name: Sync repo
