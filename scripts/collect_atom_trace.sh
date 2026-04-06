@@ -502,11 +502,60 @@ if [[ -n "$TRACE_FILE" ]]; then
     log "Copying traces to $RESULT_DIR/"
     cp -v "$TRACE_DIR"/rank_0/*.json.gz "$RESULT_DIR/"
 
+    # Update TRACE_FILE to point to the copied location
+    TRACE_BASENAME=$(basename "$TRACE_FILE")
+    TRACE_FILE="$RESULT_DIR/$TRACE_BASENAME"
+
     log "============================================================"
     log "  DECODE WALL TIME ANALYSIS"
     log "============================================================"
     DECODE_CSV="$RESULT_DIR/decode_walltime_${TAG}.csv"
     parse_decode_walltime "$TRACE_FILE" "$DECODE_CSV"
+
+    # Auto-trim: create a trimmed trace with only the steady-state decode window
+    # This makes analysis 10-50x faster (550MB → 50-100MB)
+    TRIM_FILE="${TRACE_FILE%.json.gz}_trim_decode.json.gz"
+    log "Creating trimmed trace (middle 60% of decode window)..."
+    python3 - "$TRACE_FILE" "$TRIM_FILE" << 'TRIM_PYEOF'
+import gzip, json, sys
+
+trace_path, trim_out = sys.argv[1], sys.argv[2]
+print(f"Loading {trace_path} for trimming...")
+with gzip.open(trace_path, 'rt') as f:
+    data = json.load(f)
+
+events = data.get('traceEvents', [])
+print(f"Total events: {len(events)}")
+
+# Find decode timestamps
+decode_ts = [e['ts'] for e in events if e.get('ph') == 'X' and 'user_annotation' in e.get('cat', '') and (e.get('name', '').startswith('decode[') or e.get('name', '').startswith('decode '))]
+decode_ts.sort()
+
+if not decode_ts:
+    print("No decode events found, skipping trim")
+    sys.exit(0)
+
+n = len(decode_ts)
+start_idx = n * 2 // 10
+end_idx = n * 8 // 10
+trim_start = decode_ts[start_idx] - 1000
+trim_end = decode_ts[end_idx] + 50000
+
+print(f"Decode events: {n}, trim window: {trim_start/1e6:.1f}s - {trim_end/1e6:.1f}s ({end_idx-start_idx} events)")
+
+trimmed = [e for e in events if trim_start <= e.get('ts', 0) <= trim_end]
+del events, data
+
+print(f"Trimmed events: {len(trimmed)}")
+with gzip.open(trim_out, 'wt') as f:
+    json.dump({"traceEvents": trimmed}, f)
+
+import os
+print(f"Trimmed trace: {trim_out} ({os.path.getsize(trim_out)/1e6:.0f}MB)")
+TRIM_PYEOF
+    if [[ -f "$TRIM_FILE" ]]; then
+        log "Trimmed trace: $(du -h "$TRIM_FILE" | cut -f1)"
+    fi
 
     # Run kernel breakdown analysis (selects steady-state bs for decode)
     RUN_PARSE="$SCRIPT_DIR/run_parse_trace.py"
@@ -525,6 +574,7 @@ log "============================================================"
 log "  TRACE CAPTURE COMPLETE"
 log "============================================================"
 log "  Traces:    $RESULT_DIR/"
+log "  Trimmed:   ${TRIM_FILE:-N/A}"
 log "  Decode CSV: $DECODE_CSV"
 log "  Log:       $SCRIPT_LOG"
 log "============================================================"
