@@ -39,7 +39,7 @@ CONCURRENCY=64
 RESULT_DIR=""
 TRACE_DIR="/tmp/sglang_trace"
 PROFILE_NUM_PROMPTS=""
-PROFILE_STEPS=200
+PROFILE_STEPS=1000
 PROFILE_START_STEP=30
 FLUSH_TIMEOUT=300
 CONTAINER_IMAGE=""
@@ -372,7 +372,7 @@ FIRST_TRACE=$(find "$RESULT_DIR" -maxdepth 1 -name "*.json.gz" -type f 2>/dev/nu
 if [[ -f "$EXTRACT_SCRIPT" ]] && [[ -n "$FIRST_TRACE" ]]; then
     log "Running CUDA Graph kernel breakdown on $(basename "$FIRST_TRACE")..."
     BREAKDOWN_CSV="$RESULT_DIR/kernel_breakdown_${TAG}.csv"
-    python3 "$EXTRACT_SCRIPT" "$FIRST_TRACE" --platform b200 --csv "$BREAKDOWN_CSV" --max-steps 20 --skip-first 5 --show-steps 0 2>&1 | tee "$RESULT_DIR/kernel_breakdown_${TAG}.log" || log "WARNING: kernel breakdown extraction failed"
+    python3 "$EXTRACT_SCRIPT" "$FIRST_TRACE" --platform b200 --csv "$BREAKDOWN_CSV" --max-steps 0 --skip-first 5 --show-steps 0 2>&1 | tee "$RESULT_DIR/kernel_breakdown_${TAG}.log" || log "WARNING: kernel breakdown extraction failed"
 else
     if [[ ! -f "$EXTRACT_SCRIPT" ]]; then
         log "WARNING: extract_cuda_kernels_torch_trace.py not found at $EXTRACT_SCRIPT"

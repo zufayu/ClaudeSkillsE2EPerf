@@ -45,14 +45,14 @@ jobs:
       # ===== Phase 2: Short Nsys Trace (Reference for Nsight Visualization) =====
       - name: "Phase 2: Short nsys capture (~5s steady state, reference only)"
         run: |
-          NSYS_DIR=$RESULT_DIR/profiling
+          NSYS_DIR=$RESULT_DIR/nsys
           ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_nsys_trace.sh --model $MODEL_FP4 --tp 4 --ep 4 --scenario chat --concurrency 64 --bench-prompts 64 --skip-export --env sglang059 --result-dir ./$NSYS_DIR'"
 
       - name: Show nsys reference trace
         if: always()
         run: |
-          ssh $NODE "ls -lh $REPO/$RESULT_DIR/profiling/*.nsys-rep 2>/dev/null || echo 'No nsys-rep file'"
-          ssh $NODE "ls -lh $REPO/$RESULT_DIR/profiling/ 2>/dev/null || echo 'No profiling dir'"
+          ssh $NODE "ls -lh $REPO/$RESULT_DIR/nsys/*.nsys-rep 2>/dev/null || echo 'No nsys-rep file'"
+          ssh $NODE "ls -lh $REPO/$RESULT_DIR/nsys/ 2>/dev/null || echo 'No nsys dir'"
 
       # ===== Commit Results (torch analysis only, no large trace files) =====
       - name: Git commit and push results
