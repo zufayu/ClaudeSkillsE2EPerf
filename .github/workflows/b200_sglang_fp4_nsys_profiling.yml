@@ -9,10 +9,9 @@ jobs:
     env:
       NODE: hungry-hippo-fin-03-2
       CONTAINER: zufa_sglang
-      SFS: /SFS-aGqda6ct
       REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
-      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep1_tp4_sglang059_nsys
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_nsys
     steps:
       - name: Sync repo
         run: |
@@ -30,15 +29,15 @@ jobs:
       - name: Clean old results
         run: ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true' && rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true"
 
-      - name: Run SGLang FP4 nsys profiling (chat c=64, TP4 EP1)
+      - name: Run SGLang FP4 nsys profiling (chat c=64, TP4 EP4)
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_nsys_trace.sh --model $MODEL_FP4 --tp 4 --ep 1 --scenario chat --concurrency 64 --env sglang059 --result-dir ./$RESULT_DIR --skip-export'"
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_nsys_trace.sh --model $MODEL_FP4 --tp 4 --ep 4 --scenario chat --concurrency 64 --env sglang059 --result-dir ./$RESULT_DIR'"
 
       - name: Show profiling results
         if: always()
         run: |
           ssh $NODE "ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'"
-          ssh $NODE "ls -la $REPO/$RESULT_DIR/*.nsys-rep 2>/dev/null || echo 'No nsys-rep file'"
+          ssh $NODE "ls -lh $REPO/$RESULT_DIR/*.nsys-rep 2>/dev/null || echo 'No nsys-rep file'"
           ssh $NODE "cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'"
 
       - name: Git commit and push results (no .nsys-rep)
@@ -46,7 +45,7 @@ jobs:
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
           ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; for ext in log yml jsonl json md csv; do git add -f $RESULT_DIR/*.\$ext 2>/dev/null; done; git diff --cached --name-only"
-          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 SGLang FP4 nsys profiling (chat c=64, TP4 EP1)
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 SGLang FP4 nsys profiling (chat c=64, TP4 EP4)
 
           Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
 
