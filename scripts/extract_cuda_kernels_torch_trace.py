@@ -215,14 +215,19 @@ def match_kernels_by_flow(launch, all_events, flow_starts, flow_ends):
         if flow_ts < launch_ts or flow_ts > launch_end:
             continue
         # Follow to the flow end(s) — these point to GPU kernel events
+        # Filter: only accept actual GPU kernel/memcpy/memset events,
+        # not ac2g (async cuda graph correlation) or other non-kernel events
         for end_evt in flow_ends.get(fid, []):
+            end_cat = end_evt.get("cat", "")
+            if end_cat not in ("kernel", "gpu_memcpy", "gpu_memset"):
+                continue
             matched_kernels.append({
                 "name": end_evt.get("name", ""),
                 "ts": end_evt.get("ts", 0),
                 "dur": end_evt.get("dur", 0),
                 "tid": end_evt.get("tid"),
                 "pid": end_evt.get("pid"),
-                "cat": end_evt.get("cat", ""),
+                "cat": end_cat,
             })
 
     matched_kernels.sort(key=lambda x: x["ts"])
@@ -621,7 +626,10 @@ def main():
         print(f"\nDecode step duration stats ({len(step_durations)} steps):")
         print(f"  Avg: {avg_dur:.1f}μs ({avg_dur/1000:.2f}ms)")
         print(f"  Min: {min_dur:.1f}μs  Max: {max_dur:.1f}μs")
-        print(f"  Range: {max_dur-min_dur:.1f}μs ({100*(max_dur-min_dur)/avg_dur:.1f}% variation)")
+        if avg_dur > 0:
+            print(f"  Range: {max_dur-min_dur:.1f}μs ({100*(max_dur-min_dur)/avg_dur:.1f}% variation)")
+        else:
+            print(f"  Range: {max_dur-min_dur:.1f}μs")
 
 
 if __name__ == "__main__":
