@@ -71,11 +71,63 @@ def dump_nvtx(conn, limit=50):
     return rows
 
 
+def _find_sglang_module_steps(conn, skip_first=5, max_steps=20):
+    """Find decode steps from SGLang module-level NVTX markers.
+
+    SGLang with --enable-layerwise-nvtx-marker produces markers like:
+      :{'Module': 'model.model', 'Inputs': [[256], [256]]}
+    where the number in Inputs is the batch dimension (token count).
+
+    Strategy: find top-level 'model.model' markers (not model.model.layers.*),
+    group by batch size, identify decode steps as the most frequent batch size
+    (decode steps repeat many times, prefill is fewer with larger batch).
+    """
+    cur = conn.execute("""
+        SELECT s.value AS text, n.start, n.end,
+               ROUND((n.end - n.start) / 1e6, 3) AS dur_ms
+        FROM NVTX_EVENTS n
+        JOIN StringIds s ON n.textId = s.id
+        WHERE s.value LIKE '%model.model%Inputs%'
+          AND s.value NOT LIKE '%layers%'
+          AND n.end > n.start
+        ORDER BY n.start
+    """)
+    all_steps = cur.fetchall()
+    if not all_steps:
+        return []
+
+    # Parse batch size from Inputs: [[N], [N]] → extract N
+    import re
+    bs_steps = {}  # batch_size -> list of steps
+    for step in all_steps:
+        m = re.search(r"'Inputs':\s*\[\[(\d+)\]", step[0])
+        if m:
+            bs = int(m.group(1))
+            bs_steps.setdefault(bs, []).append(step)
+
+    if not bs_steps:
+        return []
+
+    # Print batch size distribution
+    print("\nSGLang module-level NVTX markers detected (model.model top-level):")
+    for bs in sorted(bs_steps.keys()):
+        steps = bs_steps[bs]
+        avg_dur = sum(s[3] for s in steps) / len(steps)
+        print(f"  bs={bs}: {len(steps)} events, avg={avg_dur:.1f}ms")
+
+    # Decode steps = the batch size with the most events (decode repeats many times)
+    decode_bs = max(bs_steps.keys(), key=lambda b: len(bs_steps[b]))
+    steps = bs_steps[decode_bs]
+    print(f"\nUsing bs={decode_bs} as decode steps ({len(steps)} events)")
+
+    return steps
+
+
 def find_decode_steps(conn, pattern=None, gen_reqs_min=None, skip_first=5, max_steps=20):
     """Find steady-state decode NVTX events.
 
     For TRT-LLM: looks for '[Executor] _forward_step N: 0 ctx reqs, K gen reqs'
-    For SGLang: looks for 'decode[bs=N]' or layer markers within decode regions
+    For SGLang: looks for 'decode[bs=N]' or module-level markers
     """
     # First, detect what kind of NVTX markers we have
     cur = conn.execute("""
@@ -88,39 +140,47 @@ def find_decode_steps(conn, pattern=None, gen_reqs_min=None, skip_first=5, max_s
     marker_types = cur.fetchall()
 
     if not marker_types:
-        print("No forward_step/decode NVTX markers found.")
-        print("Available NVTX markers:")
-        dump_nvtx(conn, 20)
-        return []
-
-    # Build query based on detected markers
-    if pattern:
-        where_clause = f"s.value LIKE '%{pattern}%'"
-    elif any('forward_step' in m[0] for m in marker_types):
-        # TRT-LLM style
-        if gen_reqs_min:
-            where_clause = f"s.value LIKE '%forward_step%' AND s.value LIKE '%{gen_reqs_min} gen reqs%' AND s.value LIKE '%0 ctx reqs%'"
-        else:
-            where_clause = "s.value LIKE '%forward_step%' AND s.value LIKE '%0 ctx reqs%'"
-    elif any('decode' in m[0] for m in marker_types):
-        # SGLang style
-        where_clause = "s.value LIKE 'decode%'"
+        # Try SGLang module-level markers
+        print("No forward_step/decode NVTX markers found, trying SGLang module markers...")
+        steps = _find_sglang_module_steps(conn, skip_first, max_steps)
+        if not steps:
+            print("No SGLang module markers found either.")
+            print("Available NVTX markers:")
+            dump_nvtx(conn, 20)
+            return []
     else:
-        where_clause = "1=1"
+        # Build query based on detected markers
+        if pattern:
+            where_clause = f"s.value LIKE '%{pattern}%'"
+        elif any('forward_step' in m[0] for m in marker_types):
+            # TRT-LLM style
+            if gen_reqs_min:
+                where_clause = f"s.value LIKE '%forward_step%' AND s.value LIKE '%{gen_reqs_min} gen reqs%' AND s.value LIKE '%0 ctx reqs%'"
+            else:
+                where_clause = "s.value LIKE '%forward_step%' AND s.value LIKE '%0 ctx reqs%'"
+        elif any('decode' in m[0] for m in marker_types):
+            # SGLang style
+            where_clause = "s.value LIKE 'decode%'"
+        else:
+            where_clause = "1=1"
 
-    cur = conn.execute(f"""
-        SELECT s.value AS text, n.start, n.end,
-               ROUND((n.end - n.start) / 1e6, 3) AS dur_ms
-        FROM NVTX_EVENTS n
-        JOIN StringIds s ON n.textId = s.id
-        WHERE {where_clause} AND n.end > n.start
-        ORDER BY n.start
-    """)
-    steps = cur.fetchall()
+        cur = conn.execute(f"""
+            SELECT s.value AS text, n.start, n.end,
+                   ROUND((n.end - n.start) / 1e6, 3) AS dur_ms
+            FROM NVTX_EVENTS n
+            JOIN StringIds s ON n.textId = s.id
+            WHERE {where_clause} AND n.end > n.start
+            ORDER BY n.start
+        """)
+        steps = cur.fetchall()
 
-    if not steps:
-        print(f"No NVTX events matching: {where_clause}")
-        return []
+        if not steps:
+            print(f"No NVTX events matching: {where_clause}")
+            # Fallback to SGLang module markers
+            print("Trying SGLang module markers as fallback...")
+            steps = _find_sglang_module_steps(conn, skip_first, max_steps)
+            if not steps:
+                return []
 
     print(f"\nFound {len(steps)} decode step NVTX events")
 
