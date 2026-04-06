@@ -1,0 +1,143 @@
+name: Re-parse Profiling Traces
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Platform to re-parse'
+        type: choice
+        options:
+          - mi355x-ep4
+          - mi355x-ep8
+          - b200-sglang
+        default: mi355x-ep4
+      target_bs:
+        description: 'Target decode batch size (blank = auto)'
+        type: string
+        default: ''
+      layer:
+        description: 'Layer index for breakdown'
+        type: string
+        default: '3'
+
+jobs:
+  reparse-mi355x:
+    if: startsWith(inputs.platform, 'mi355x')
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 30
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Set trace dir
+        run: |
+          if [ "${{ inputs.platform }}" = "mi355x-ep4" ]; then
+            echo "TRACE_DIR=$REPO/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm711_profiling" >> $GITHUB_ENV
+          else
+            echo "TRACE_DIR=$REPO/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711_profiling" >> $GITHUB_ENV
+          fi
+
+      - name: Find trace files
+        run: |
+          echo "=== Trace files in result dir ==="
+          ls -lh $TRACE_DIR/*.json.gz 2>/dev/null || echo "None in result dir"
+          echo "=== In container /tmp ==="
+          podman exec $CONTAINER bash -c "find /tmp/trace -name '*.json.gz' 2>/dev/null | head -10" || echo "None"
+
+      - name: Re-parse with run_parse_trace.py (multi-EP fix)
+        run: |
+          RUN_TRACE=$(find $TRACE_DIR -name "*.json.gz" ! -name "*capture*" -type f 2>/dev/null | head -1)
+          if [ -z "$RUN_TRACE" ]; then
+            RUN_TRACE=$(podman exec $CONTAINER bash -c "find $TRACE_DIR -name '*.json.gz' ! -name '*capture*' -type f 2>/dev/null | head -1")
+          fi
+          if [ -z "$RUN_TRACE" ]; then
+            RUN_TRACE=$(podman exec $CONTAINER bash -c "find /tmp/trace/rank_0 -name '*.json.gz' ! -name '*capture*' -type f 2>/dev/null | head -1")
+          fi
+          if [ -z "$RUN_TRACE" ]; then
+            echo "ERROR: No run trace found"
+            exit 1
+          fi
+          echo "Using trace: $RUN_TRACE"
+          BS_ARG=""
+          if [ -n "${{ inputs.target_bs }}" ]; then
+            BS_ARG="--target-bs ${{ inputs.target_bs }}"
+          fi
+          podman exec $CONTAINER bash -c "cd $TRACE_DIR && python3 $REPO/scripts/run_parse_trace.py '$RUN_TRACE' --layer ${{ inputs.layer }} $BS_ARG 2>&1" | tee /tmp/reparse.log
+
+      - name: Show decode breakdown
+        if: always()
+        run: |
+          echo "=== decode_breakdown.xlsx ==="
+          python3 -c "
+          import openpyxl
+          wb = openpyxl.load_workbook('$TRACE_DIR/decode_breakdown.xlsx')
+          ws = wb.active
+          for row in ws.iter_rows(values_only=True):
+              print(row)
+          " 2>/dev/null || echo "No decode breakdown"
+          echo ""
+          echo "=== prefill_breakdown.xlsx ==="
+          python3 -c "
+          import openpyxl
+          wb = openpyxl.load_workbook('$TRACE_DIR/prefill_breakdown.xlsx')
+          ws = wb.active
+          for row in ws.iter_rows(values_only=True):
+              print(row)
+          " 2>/dev/null || echo "No prefill breakdown"
+
+      - name: Commit updated breakdowns
+        if: always()
+        run: |
+          cd $REPO
+          git config user.email "ci@github.com"
+          git config user.name "MI355X CI"
+          git pull --rebase origin main || true
+          git add -f $TRACE_DIR/decode_breakdown.xlsx $TRACE_DIR/prefill_breakdown.xlsx 2>/dev/null
+          git diff --cached --name-only
+          if ! git diff --cached --quiet; then
+            git commit -m "data: re-parsed MI355X trace with multi-EP fix
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+            git push
+          else
+            echo "Nothing to commit"
+          fi
+
+  reparse-b200-sglang:
+    if: inputs.platform == 'b200-sglang'
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 30
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_sglang
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      TRACE_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git fetch origin && git reset --hard origin/main"
+
+      - name: Find trace files
+        run: ssh $NODE "ls -lh $REPO/$TRACE_DIR/*.json.gz 2>/dev/null || echo 'No traces'"
+
+      - name: Re-parse with run_parse_trace.py
+        run: |
+          BS_ARG=""
+          if [ -n "${{ inputs.target_bs }}" ]; then
+            BS_ARG="--target-bs ${{ inputs.target_bs }}"
+          fi
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO/$TRACE_DIR && python3 $REPO/scripts/run_parse_trace.py \$(ls $REPO/$TRACE_DIR/*TP-0*.trace.json.gz 2>/dev/null | head -1) --layer ${{ inputs.layer }} $BS_ARG 2>&1'"
+
+      - name: Show results
+        if: always()
+        run: ssh $NODE "ls -lh $REPO/$TRACE_DIR/decode_breakdown.xlsx $REPO/$TRACE_DIR/prefill_breakdown.xlsx 2>/dev/null || echo 'No breakdowns'"
+
+      - name: Commit
+        if: always()
+        run: |
+          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && git add -f $TRACE_DIR/decode_breakdown.xlsx $TRACE_DIR/prefill_breakdown.xlsx 2>/dev/null && git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 're-parsed B200 SGLang trace with multi-EP fix
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push; else echo 'Nothing to commit'; fi"
