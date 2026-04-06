@@ -168,7 +168,6 @@ jobs:
           TRACE_BASE=$(basename "$NSYS_REP" .nsys-rep)
           TRIM_TAG="trim_${TIMERANGE//,/-}"
           SQLITE_OUT="$REPO/$RESULT_DIR/${TRACE_BASE}_${TRIM_TAG}.sqlite"
-          PERFETTO_OUT="$REPO/$RESULT_DIR/${TRACE_BASE}_${TRIM_TAG}.perfetto"
           echo "Exporting trimmed SQLite: ${TRACE_BASE}_${TRIM_TAG}.sqlite"
           ssh $NODE "docker exec $CONTAINER nsys export --type sqlite --times='$TIMES_ARG' -f true -o $SQLITE_OUT $NSYS_REP 2>&1" || echo "WARN: SQLite export failed"
           if ssh $NODE "test -f $SQLITE_OUT" 2>/dev/null; then
@@ -178,18 +177,19 @@ jobs:
             echo "Falling back to full SQLite"
             echo "SQLITE=$FULL_SQLITE" >> $GITHUB_ENV
           fi
-          echo "Exporting trimmed Perfetto: ${TRACE_BASE}_${TRIM_TAG}.perfetto"
-          ssh $NODE "docker exec $CONTAINER nsys export --type perfetto --times='$TIMES_ARG' -f true -o $PERFETTO_OUT $NSYS_REP 2>&1" || echo "WARN: Perfetto export failed"
-          ssh $NODE "ls -lh $PERFETTO_OUT 2>/dev/null || echo 'No perfetto file'"
+          JSON_OUT="$REPO/$RESULT_DIR/${TRACE_BASE}_${TRIM_TAG}.json"
+          echo "Exporting trimmed jsonlines: ${TRACE_BASE}_${TRIM_TAG}.json"
+          ssh $NODE "docker exec $CONTAINER nsys export --type jsonlines --times='$TIMES_ARG' -f true -o $JSON_OUT $NSYS_REP 2>&1" || echo "WARN: jsonlines export failed"
+          ssh $NODE "ls -lh $JSON_OUT 2>/dev/null || echo 'No json file'"
 
-      - name: Export full Perfetto (when no trim)
+      - name: Export full jsonlines (when no trim)
         if: env.TIMERANGE == 'full'
         run: |
           TRACE_BASE=$(basename "$NSYS_REP" .nsys-rep)
-          PERFETTO_OUT="$REPO/$RESULT_DIR/${TRACE_BASE}.perfetto"
-          echo "Exporting full Perfetto: ${TRACE_BASE}.perfetto"
-          ssh $NODE "docker exec $CONTAINER nsys export --type perfetto -f true -o $PERFETTO_OUT $NSYS_REP 2>&1" || echo "WARN: Perfetto export failed"
-          ssh $NODE "ls -lh $PERFETTO_OUT 2>/dev/null || echo 'No perfetto file'"
+          JSON_OUT="$REPO/$RESULT_DIR/${TRACE_BASE}.json"
+          echo "Exporting full jsonlines: ${TRACE_BASE}.json"
+          ssh $NODE "docker exec $CONTAINER nsys export --type jsonlines -f true -o $JSON_OUT $NSYS_REP 2>&1" || echo "WARN: jsonlines export failed"
+          ssh $NODE "ls -lh $JSON_OUT 2>/dev/null || echo 'No json file'"
 
       - name: Show trace time range (for trim reference)
         run: |
