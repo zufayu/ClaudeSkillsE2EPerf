@@ -22,6 +22,7 @@ jobs:
         run: ssh $NODE "docker exec zufa_sglang python3 $REPO/scripts/extract_cuda_kernels_torch_trace.py $REPO/$TRACE --info"
 
       - name: Run kernel breakdown (skip-first=5, max-steps=20)
+        if: always()
         run: ssh $NODE "docker exec zufa_sglang python3 $REPO/scripts/extract_cuda_kernels_torch_trace.py $REPO/$TRACE --platform b200 --max-steps 20 --skip-first 5 --show-steps 2 --csv $REPO/results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling/kernel_breakdown.csv"
 
       - name: Show CSV

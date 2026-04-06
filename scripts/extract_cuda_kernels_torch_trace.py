@@ -459,7 +459,7 @@ def print_trace_info(events):
         if pid is not None:
             pids[pid].add(cat)
     print(f"\n  PIDs ({len(pids)}):")
-    for pid in sorted(pids):
+    for pid in sorted(pids, key=lambda x: str(x)):
         cats_str = ", ".join(sorted(c for c in pids[pid] if c)[:5])
         print(f"    PID {pid}: {cats_str}")
 
