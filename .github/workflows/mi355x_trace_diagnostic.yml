@@ -1,0 +1,89 @@
+name: MI355X Trace Diagnostic
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: 'EP/TP config to analyze'
+        type: choice
+        options:
+          - ep4-tp4
+          - ep8-tp8
+        default: ep4-tp4
+
+jobs:
+  dump-hierarchy:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 30
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Find trace files (EP4 TP4)
+        if: inputs.config == 'ep4-tp4'
+        run: |
+          TRACE_DIR="$REPO/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm711_profiling"
+          echo "TRACE_DIR=$TRACE_DIR" >> $GITHUB_ENV
+          echo "Looking for trace files in $TRACE_DIR..."
+          ls -lh $TRACE_DIR/*.json.gz 2>/dev/null || echo "No .json.gz files in result dir"
+          echo "---"
+          echo "Looking in /tmp for traces..."
+          find /tmp -name "*.json.gz" -newer "$TRACE_DIR/summary.md" 2>/dev/null | head -10 || echo "No recent traces in /tmp"
+          echo "---"
+          echo "Checking container /tmp..."
+          podman exec $CONTAINER bash -c "find /tmp -name '*.json.gz' 2>/dev/null | head -10" || echo "No traces in container /tmp"
+
+      - name: Find trace files (EP8 TP8)
+        if: inputs.config == 'ep8-tp8'
+        run: |
+          TRACE_DIR="$REPO/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711_profiling"
+          echo "TRACE_DIR=$TRACE_DIR" >> $GITHUB_ENV
+          echo "Looking for trace files in $TRACE_DIR..."
+          ls -lh $TRACE_DIR/*.json.gz 2>/dev/null || echo "No .json.gz files in result dir"
+          echo "---"
+          podman exec $CONTAINER bash -c "find /tmp -name '*.json.gz' 2>/dev/null | head -10" || echo "No traces in container /tmp"
+
+      - name: Locate all trace files on machine
+        run: |
+          echo "=== All .json.gz trace files (last 7 days) ==="
+          find /shared/amdgpu/home/zufa_yu_qle -name "*.json.gz" -mtime -7 2>/dev/null | head -20 || echo "None found"
+          echo "---"
+          find /tmp -name "*.json.gz" -mtime -7 2>/dev/null | head -20 || echo "None in /tmp"
+          echo "---"
+          podman exec $CONTAINER bash -c "find / -name '*.json.gz' -mtime -7 2>/dev/null | grep -v proc | head -20" || echo "None in container"
+
+      - name: Run hierarchy dump
+        if: always()
+        run: |
+          # Find the run trace (non-capture trace)
+          RUN_TRACE=$(find $TRACE_DIR -name "*.json.gz" ! -name "*capture*" -type f 2>/dev/null | head -1)
+          if [ -z "$RUN_TRACE" ]; then
+            # Try container paths
+            RUN_TRACE=$(podman exec $CONTAINER bash -c "find $TRACE_DIR -name '*.json.gz' ! -name '*capture*' -type f 2>/dev/null | head -1")
+          fi
+          if [ -z "$RUN_TRACE" ]; then
+            echo "ERROR: No run trace .json.gz found. Traces may have been cleaned up."
+            echo "Need to re-run profiling workflow first to generate traces."
+            exit 1
+          fi
+          echo "Run trace: $RUN_TRACE"
+          podman exec $CONTAINER python3 $REPO/scripts/dump_capture_graph_hierarchy.py "$RUN_TRACE" --max-depth 4 2>&1 | tee $TRACE_DIR/hierarchy_dump.log
+
+      - name: Commit diagnostic output
+        if: always()
+        run: |
+          cd $REPO
+          git config user.email "ci@github.com"
+          git config user.name "MI355X CI"
+          git pull --rebase origin main || true
+          git add -f $TRACE_DIR/hierarchy_dump.log 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "diag: MI355X EP4 capture_graph hierarchy dump
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+            git push
+          else
+            echo "Nothing to commit"
+          fi
