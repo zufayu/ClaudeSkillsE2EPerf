@@ -43,29 +43,54 @@ jobs:
           echo "=== .sqlite files ==="
           ssh $NODE "ls -lh $REPO/$RESULT_DIR/*.sqlite 2>/dev/null || echo 'None'"
 
-      - name: Export SQLite (with optional timerange)
+      - name: Trim nsys-rep to steady-state window
         run: |
           NSYS_REP=$(ssh $NODE "ls -t $REPO/$RESULT_DIR/*.nsys-rep 2>/dev/null | head -1")
           if [ -z "$NSYS_REP" ]; then
             echo "ERROR: No .nsys-rep file found"
             exit 1
           fi
-          echo "Using: $NSYS_REP"
-          EXISTING_SQLITE=$(ssh $NODE "ls -t $REPO/$RESULT_DIR/*.sqlite 2>/dev/null | head -1")
+          echo "Full trace: $NSYS_REP"
+          ssh $NODE "ls -lh $NSYS_REP"
           TIMERANGE="${{ inputs.timerange }}"
-          if [ -n "$TIMERANGE" ]; then
-            echo "Exporting with --timerange $TIMERANGE"
-            SQLITE_OUT="$REPO/$RESULT_DIR/trace_t${TIMERANGE//,/-}.sqlite"
-            ssh $NODE "docker exec $CONTAINER nsys export --type sqlite --timeunit sec --timerange $TIMERANGE -o $SQLITE_OUT $NSYS_REP 2>&1" || echo "WARN: export failed"
+          if [ -z "$TIMERANGE" ]; then
+            echo "No timerange specified, auto-detecting middle 60s..."
+            TOTAL_S=$(ssh $NODE "docker exec $CONTAINER nsys stats --report nvtx_sum --format csv $NSYS_REP 2>&1 | tail -1 | cut -d, -f1" 2>/dev/null || echo "")
+            if [ -z "$TOTAL_S" ] || [ "$TOTAL_S" = "" ]; then
+              echo "Cannot auto-detect duration, defaulting to 270,330 (middle of ~590s trace)"
+              TIMERANGE="270,330"
+            else
+              MID=$((TOTAL_S / 2))
+              TIMERANGE="$((MID - 30)),$((MID + 30))"
+            fi
+          fi
+          echo "Using timerange: $TIMERANGE seconds"
+          echo "TIMERANGE=$TIMERANGE" >> $GITHUB_ENV
+          echo "NSYS_REP=$NSYS_REP" >> $GITHUB_ENV
+          TRIMMED="$REPO/$RESULT_DIR/trace_trimmed_t${TIMERANGE//,/-}.nsys-rep"
+          echo "Trimming to: $TRIMMED"
+          ssh $NODE "docker exec $CONTAINER nsys filter -i $NSYS_REP -o $TRIMMED --time-range=$TIMERANGE --timeunit sec 2>&1" && echo "TRIMMED=$TRIMMED" >> $GITHUB_ENV || echo "WARN: nsys filter failed, trying export approach"
+          if [ -z "$(grep TRIMMED $GITHUB_ENV 2>/dev/null)" ]; then
+            echo "nsys filter not available, falling back to nsys export with timerange"
+          fi
+          ssh $NODE "ls -lh $TRIMMED 2>/dev/null || echo 'No trimmed file'"
+
+      - name: Export SQLite (with timerange)
+        run: |
+          TIMERANGE="${{ inputs.timerange }}"
+          if [ -z "$TIMERANGE" ]; then
+            TIMERANGE="${TIMERANGE:-270,330}"
+          fi
+          SQLITE_OUT="$REPO/$RESULT_DIR/trace_t${TIMERANGE//,/-}.sqlite"
+          echo "Exporting SQLite with --timerange $TIMERANGE"
+          ssh $NODE "docker exec $CONTAINER nsys export --type sqlite --timeunit sec --timerange $TIMERANGE -o $SQLITE_OUT $NSYS_REP 2>&1" || echo "WARN: SQLite export failed"
+          if ssh $NODE "test -f $SQLITE_OUT" 2>/dev/null; then
             echo "SQLITE=$SQLITE_OUT" >> $GITHUB_ENV
-          elif [ -n "$EXISTING_SQLITE" ]; then
-            echo "Using existing SQLite: $EXISTING_SQLITE"
-            echo "SQLITE=$EXISTING_SQLITE" >> $GITHUB_ENV
+            ssh $NODE "ls -lh $SQLITE_OUT"
           else
-            echo "No existing SQLite, doing full export..."
-            SQLITE_OUT="$REPO/$RESULT_DIR/trace_full.sqlite"
-            ssh $NODE "docker exec $CONTAINER nsys export --type sqlite -o $SQLITE_OUT $NSYS_REP 2>&1" || echo "WARN: export failed"
-            echo "SQLITE=$SQLITE_OUT" >> $GITHUB_ENV
+            EXISTING=$(ssh $NODE "ls -t $REPO/$RESULT_DIR/*.sqlite 2>/dev/null | head -1")
+            echo "Falling back to existing: $EXISTING"
+            echo "SQLITE=$EXISTING" >> $GITHUB_ENV
           fi
 
       - name: Show trace time range (for trim reference)
