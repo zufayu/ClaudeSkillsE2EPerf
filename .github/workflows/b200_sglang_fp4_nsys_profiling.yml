@@ -32,7 +32,7 @@ jobs:
 
       - name: Run SGLang FP4 nsys profiling (chat c=64, TP4 EP1)
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_nsys_trace.sh --model $MODEL_FP4 --tp 4 --ep 1 --scenario chat --concurrency 64 --env sglang059 --result-dir ./$RESULT_DIR --nsys-delay 180 --nsys-duration 60 --skip-export'"
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_nsys_trace.sh --model $MODEL_FP4 --tp 4 --ep 1 --scenario chat --concurrency 64 --env sglang059 --result-dir ./$RESULT_DIR --skip-export'"
 
       - name: Show profiling results
         if: always()

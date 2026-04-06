@@ -6,21 +6,22 @@
 # performance analysis. Uses SGLang's --enable-layerwise-nvtx-marker to annotate
 # each transformer layer, equivalent to TRT-LLM's TLLM_LLMAPI_ENABLE_NVTX.
 #
-# Approach:
-#   1. Start SGLang server under nsys with delay (covers warmup) + duration
-#   2. Warmup: CONC*2 prompts during nsys delay period
-#   3. Benchmark: CONC*10 prompts during nsys capture window
-#   4. nsys auto-stops after duration, server killed, trace collected
+# Approach (same as TRT-LLM collect_nsys_trace.sh serve mode):
+#   1. Start SGLang server under nsys (background, always-on capture)
+#   2. Wait for server ready
+#   3. Warmup: CONC*2 prompts
+#   4. Benchmark: CONC*10 prompts (this is the steady-state we analyze)
+#   5. Kill server → nsys exits and writes .nsys-rep
+#   6. Post-process: export to SQLite, query top kernels + NVTX markers
 #
-# Key difference from TRT-LLM nsys:
-#   - TRT-LLM uses TLLM_PROFILE_START_STOP with -c cudaProfilerApi
-#   - SGLang uses nsys --delay/--duration (no cudaProfilerApi support)
-#   - SGLang provides --enable-layerwise-nvtx-marker for per-layer NVTX
+# The trace captures everything (startup + warmup + benchmark), but
+# kernel analysis naturally focuses on the steady-state decode period.
+# --cuda-graph-trace node expands CUDA Graph internals.
 #
 # Usage:
 #   bash scripts/collect_sglang_nsys_trace.sh \
 #     --model /path/to/DeepSeek-R1-0528-NVFP4-v2 \
-#     --tp 4 --ep 4 --scenario chat --concurrency 64 \
+#     --tp 4 --ep 1 --scenario chat --concurrency 64 \
 #     --result-dir ./results/sglang_nsys_profiling
 # =============================================================================
 
@@ -39,8 +40,6 @@ PORT=8888
 SCENARIO="chat"
 CONCURRENCY=64
 RESULT_DIR=""
-NSYS_DELAY=180
-NSYS_DURATION=60
 SKIP_EXPORT=false
 CONTAINER_IMAGE=""
 MODEL_NAME="dsr1"
@@ -72,18 +71,20 @@ Options:
   --scenario NAME       chat|reasoning|summarize (default: chat)
   --concurrency N       Max concurrency (default: 64)
   --port N              Server port (default: 8888)
-  --nsys-delay N        Seconds before nsys starts capturing (covers server startup + warmup) (default: 180)
-  --nsys-duration N     Seconds of nsys capture (default: 60)
   --skip-export         Skip post-processing (just capture .nsys-rep)
   --container-image IMG Container image name for metadata
+  --model-name NAME     Model short name for trace tag (default: dsr1)
+  --quant QUANT         Quantization for trace tag (default: fp4)
+  --env ENV             Container env for trace tag (e.g. sglang059)
   -h, --help            Show this help
 
-Profiling methodology:
-  1. Start SGLang server under nsys with --delay and --duration
-  2. Wait for server ready, run warmup (during nsys delay period)
-  3. nsys capture begins automatically after delay
-  4. Run benchmark during capture window
-  5. nsys auto-stops, collect .nsys-rep trace
+Profiling methodology (same as TRT-LLM serve mode):
+  1. Start SGLang server under nsys (always-on capture)
+  2. Wait for server ready
+  3. Warmup: CONC*2 prompts
+  4. Benchmark: CONC*10 prompts (steady state)
+  5. Kill server -> nsys writes .nsys-rep
+  6. Post-process: SQLite export, kernel + NVTX breakdown
 EOF
     exit 0
 }
@@ -97,8 +98,6 @@ while [[ $# -gt 0 ]]; do
         --concurrency)     CONCURRENCY="$2"; shift 2 ;;
         --result-dir)      RESULT_DIR="$2"; shift 2 ;;
         --port)            PORT="$2"; shift 2 ;;
-        --nsys-delay)      NSYS_DELAY="$2"; shift 2 ;;
-        --nsys-duration)   NSYS_DURATION="$2"; shift 2 ;;
         --skip-export)     SKIP_EXPORT=true; shift ;;
         --container-image) CONTAINER_IMAGE="$2"; shift 2 ;;
         --model-name)      MODEL_NAME="$2"; shift 2 ;;
@@ -132,7 +131,7 @@ SCHEDULER_RECV_INTERVAL=10
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
-TAG="trace_nsys_b200_sglang_${MODEL_NAME}_${QUANT}_${ENV}_${SCENARIO}_ep${EP}_tp${TP}_c${CONCURRENCY}_delay${NSYS_DELAY}s-dur${NSYS_DURATION}s"
+TAG="trace_nsys_b200_sglang_${MODEL_NAME}_${QUANT}_${ENV}_${SCENARIO}_ep${EP}_tp${TP}_c${CONCURRENCY}"
 
 log "============================================================"
 log "  SGLang Nsight Systems Trace Capture"
@@ -143,8 +142,6 @@ log "  TP=$TP  EP=$EP  GPU_COUNT=$GPU_COUNT"
 log "  Concurrency: $CONCURRENCY"
 log "  Warmup:      $WARMUP_NUM_PROMPTS prompts"
 log "  Benchmark:   $BENCH_NUM_PROMPTS prompts"
-log "  nsys delay:  ${NSYS_DELAY}s (covers startup + warmup)"
-log "  nsys duration: ${NSYS_DURATION}s (capture window)"
 log "  Result Dir:  $RESULT_DIR"
 log "  Tag:         $TAG"
 log "============================================================"
@@ -198,12 +195,12 @@ cleanup
 # ======================== Step 2: Start Server under nsys =====================
 
 SERVER_LOG="$RESULT_DIR/server_${TAG}.log"
-log "Starting SGLang server under nsys (delay=${NSYS_DELAY}s, duration=${NSYS_DURATION}s)..."
+log "Starting SGLang server under nsys (always-on capture)..."
 log "  --enable-layerwise-nvtx-marker for per-layer NVTX annotations"
 log "  --cuda-graph-trace node to expand CUDA Graph kernels"
 
-nsys profile -o "$RESULT_DIR/${TAG}" -f true -t 'cuda,nvtx' --delay "$NSYS_DELAY" --duration "$NSYS_DURATION" --cuda-graph-trace node --sample=none --cpuctxsw=none --trace-fork-before-exec=true \
-    env PYTHONNOUSERSITE=1 \
+PYTHONNOUSERSITE=1 \
+nsys profile -o "$RESULT_DIR/${TAG}" -f true -t 'cuda,nvtx' --cuda-graph-trace node --sample=none --cpuctxsw=none --trace-fork-before-exec=true \
     python3 -m sglang.launch_server \
     --model-path "$MODEL" \
     --host 0.0.0.0 \
@@ -237,9 +234,6 @@ wait_for_server_ready --port "$PORT" --server-log "$SERVER_LOG" --server-pid "$S
 # ======================== Step 3: Warmup ======================================
 
 log "Running warmup ($WARMUP_NUM_PROMPTS prompts, concurrency $CONCURRENCY)..."
-log "  This runs during nsys delay period (no tracing yet)"
-
-WARMUP_START=$(date +%s)
 
 run_benchmark_serving \
     --model "$MODEL" \
@@ -254,19 +248,11 @@ run_benchmark_serving \
     --result-filename "result_warmup_${TAG}" \
     --result-dir "$RESULT_DIR"
 
-WARMUP_END=$(date +%s)
-WARMUP_ELAPSED=$((WARMUP_END - WARMUP_START))
-log "Warmup done in ${WARMUP_ELAPSED}s."
-
-# Check if we need to wait for nsys delay to expire
-ELAPSED_SINCE_START=$((WARMUP_END - $(date -d "$(ps -p $SERVER_PID -o lstart= 2>/dev/null || echo 'now')" +%s 2>/dev/null || echo $WARMUP_END)))
-log "NOTE: nsys delay=${NSYS_DELAY}s. If warmup finishes early, benchmark starts before nsys capture."
-log "  This is OK - nsys will capture the tail end of the benchmark (steady state)."
+log "Warmup done."
 
 # ======================== Step 4: Benchmark ===================================
 
 log "Running benchmark ($BENCH_NUM_PROMPTS prompts, concurrency $CONCURRENCY)..."
-log "  nsys capture will overlap with this benchmark phase"
 
 run_benchmark_serving \
     --model "$MODEL" \
@@ -280,47 +266,21 @@ run_benchmark_serving \
     --num-warmups 0 \
     --result-filename "result_profiled_${TAG}" \
     --result-dir "$RESULT_DIR" \
-    --metadata "sglang_version=$sglang_version" "container_image=$CONTAINER_IMAGE" "tp=$TP" "ep=$EP" "scenario=$SCENARIO" "profiler=nsys" "nsys_delay=$NSYS_DELAY" "nsys_duration=$NSYS_DURATION"
+    --metadata "sglang_version=$sglang_version" "container_image=$CONTAINER_IMAGE" "tp=$TP" "ep=$EP" "scenario=$SCENARIO" "profiler=nsys"
 
 log "Benchmark done."
 
-# ======================== Step 5: Wait for nsys to finish =====================
+# ======================== Step 5: Kill server -> nsys writes trace =============
 
-log "Waiting for nsys to finish (duration=${NSYS_DURATION}s from start of capture)..."
-# nsys will auto-stop after duration seconds of capture
-# The server process will continue running; we wait for the .nsys-rep to appear
-
-WAIT_START=$(date +%s)
-NSYS_TIMEOUT=$((NSYS_DELAY + NSYS_DURATION + 60))
-while true; do
-    if [[ -f "$RESULT_DIR/${TAG}.nsys-rep" ]]; then
-        log "nsys trace file created."
-        break
-    fi
-    WAITED=$(( $(date +%s) - WAIT_START ))
-    if [[ $WAITED -ge $NSYS_TIMEOUT ]]; then
-        log "WARNING: nsys trace not found after ${NSYS_TIMEOUT}s"
-        break
-    fi
-    if [[ $((WAITED % 30)) -eq 0 ]] && [[ $WAITED -gt 0 ]]; then
-        log "  Waiting for nsys... (${WAITED}s)"
-    fi
-    sleep 5
-done
-
-# ======================== Step 6: Stop Server =================================
-
-log "Stopping server..."
+log "Stopping server (triggers nsys trace flush)..."
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
 SERVER_PID=""
 pkill -f "sglang.launch_server" 2>/dev/null || true
-sleep 5
+# Give nsys time to finalize the trace
+sleep 10
 
-# Wait a bit more for nsys to finalize
-sleep 5
-
-# ======================== Step 7: Post-Processing =============================
+# ======================== Step 6: Post-Processing =============================
 
 TRACE_FILE="$RESULT_DIR/${TAG}.nsys-rep"
 
@@ -356,7 +316,7 @@ else
     log "Skipping post-processing (--skip-export)"
 fi
 
-# ======================== Step 8: Summary =====================================
+# ======================== Step 7: Summary =====================================
 
 log "============================================================"
 log "  NSYS TRACE CAPTURE COMPLETE"
