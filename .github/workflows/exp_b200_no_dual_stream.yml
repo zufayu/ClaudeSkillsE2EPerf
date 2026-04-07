@@ -1,4 +1,4 @@
-name: "Experiment: B200 no dual-stream (shared expert overlap)"
+name: "Experiment: B200 no dual-stream"
 on:
   workflow_dispatch:
 jobs:
@@ -13,8 +13,7 @@ jobs:
       EXP_DIR: experiments/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling_no_dual_stream
     steps:
       - name: Sync repo
-        run: |
-          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+        run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
 
       - name: Verify container
         run: |
@@ -24,54 +23,11 @@ jobs:
       - name: Clean experiment dir
         run: ssh $NODE "docker exec $CONTAINER bash -c 'mkdir -p $REPO/$EXP_DIR && rm -rf $REPO/$EXP_DIR/* 2>/dev/null; true'"
 
-      - name: "Patch deepseek_v2.py: force alt_stream=None"
+      - name: Patch deepseek_v2.py and run profiling
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c '
-            DEEPSEEK_PY=\$(python3 -c \"import sglang.srt.models.deepseek_v2 as m; print(m.__file__)\")
-            cp \$DEEPSEEK_PY \${DEEPSEEK_PY}.bak
-            echo \"Patching: \$DEEPSEEK_PY\"
-            python3 -c \"
-import re, sys
-path = sys.argv[1]
-with open(path) as f:
-    src = f.read()
-old = r'''self.alt_stream = (
-            torch.cuda.Stream()
-            if _is_cuda or envs.SGLANG_NPU_USE_MULTI_STREAM.get()
-            else None
-        )'''
-new = r'''self.alt_stream = None  # EXPERIMENT: disabled dual-stream overlap'''
-if old not in src:
-    print(\\\"ERROR: pattern not found in\\\", path); sys.exit(1)
-with open(path, \\\"w\\\") as f:
-    f.write(src.replace(old, new))
-print(\\\"Patched successfully\\\")
-\" \$DEEPSEEK_PY
-            grep -n \"alt_stream\" \$DEEPSEEK_PY | head -5
-          '"
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && DEEPSEEK_PY=\$(python3 -c \"import sglang.srt.models.deepseek_v2 as m; print(m.__file__)\") && cp \$DEEPSEEK_PY \${DEEPSEEK_PY}.bak && echo \"Patching: \$DEEPSEEK_PY\" && sed -i \"s/self\\.alt_stream = (/self.alt_stream = None  # EXPERIMENT\\n        # orig: (/\" \$DEEPSEEK_PY && grep -n \"self.alt_stream = None\" \$DEEPSEEK_PY && echo \"Patch applied\" && bash scripts/collect_sglang_trace.sh --model $MODEL_FP4 --tp 4 --ep 4 --scenario chat --concurrency 64 --env sglang059 --result-dir ./$EXP_DIR; mv \${DEEPSEEK_PY}.bak \$DEEPSEEK_PY'"
 
-      - name: "Run profiling WITHOUT dual-stream"
-        run: |
-          ssh $NODE "docker exec $CONTAINER bash -c '
-            cd $REPO
-            bash scripts/collect_sglang_trace.sh \
-              --model $MODEL_FP4 \
-              --tp 4 --ep 4 \
-              --scenario chat \
-              --concurrency 64 \
-              --env sglang059 \
-              --result-dir ./$EXP_DIR
-          '"
-
-      - name: Restore deepseek_v2.py
-        if: always()
-        run: |
-          ssh $NODE "docker exec $CONTAINER bash -c '
-            DEEPSEEK_PY=\$(python3 -c \"import sglang.srt.models.deepseek_v2 as m; print(m.__file__)\")
-            if [ -f \${DEEPSEEK_PY}.bak ]; then mv \${DEEPSEEK_PY}.bak \$DEEPSEEK_PY; echo \"Restored\"; fi
-          '"
-
-      - name: Show results (no git commit - experiment only)
+      - name: Show results
         if: always()
         run: |
           echo "=== Experiment Results (NOT committed to git) ==="
