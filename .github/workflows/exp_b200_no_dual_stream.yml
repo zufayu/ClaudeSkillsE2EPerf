@@ -2,15 +2,15 @@ name: "Experiment: B200 no dual-stream"
 on:
   workflow_dispatch:
 jobs:
-  no-dual-stream-profiling:
+  no-dual-stream-bench:
     runs-on: [self-hosted, b200]
-    timeout-minutes: 120
+    timeout-minutes: 60
     env:
       NODE: hungry-hippo-fin-03-2
       CONTAINER: zufa_sglang
       REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
-      EXP_DIR: experiments/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling_no_dual_stream
+      EXP_DIR: experiments/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_no_dual_stream
     steps:
       - name: Sync repo
         run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
@@ -20,27 +20,27 @@ jobs:
           ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2"
           ssh $NODE "docker exec $CONTAINER python3 -c 'import sglang; print(f\"SGLang {sglang.__version__}\")'"
 
+      - name: Get container image name
+        run: echo "IMAGE=$(ssh $NODE "docker inspect $CONTAINER --format '{{.Config.Image}}'" 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
       - name: Clean experiment dir
         run: ssh $NODE "docker exec $CONTAINER bash -c 'mkdir -p $REPO/$EXP_DIR && rm -rf $REPO/$EXP_DIR/* 2>/dev/null; true'"
 
-      - name: Patch deepseek_v2.py and run profiling
-        run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && DEEPSEEK_PY=\$(python3 -c \"import sglang.srt.models.deepseek_v2 as m; print(m.__file__)\") && cp \$DEEPSEEK_PY \${DEEPSEEK_PY}.bak && echo \"Patching: \$DEEPSEEK_PY\" && sed -i \"s/self\\.alt_stream = (/self.alt_stream = None  # EXPERIMENT\\n        # orig: (/\" \$DEEPSEEK_PY && grep -n \"self.alt_stream = None\" \$DEEPSEEK_PY && echo \"Patch applied\" && bash scripts/collect_sglang_trace.sh --model $MODEL_FP4 --tp 4 --ep 4 --scenario chat --concurrency 64 --env sglang059 --result-dir ./$EXP_DIR; mv \${DEEPSEEK_PY}.bak \$DEEPSEEK_PY'"
+      - name: Patch deepseek_v2.py
+        run: ssh $NODE "docker exec $CONTAINER python3 $REPO/scripts/patch_disable_dual_stream.py"
+
+      - name: Run bench WITHOUT dual-stream (chat c=64)
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_sglang.sh --model $MODEL_FP4 --tp 4 --ep 4 --scenario chat --concurrency 64 --container-image ${{ env.IMAGE }} --result-dir ./$EXP_DIR'"
+
+      - name: Restore deepseek_v2.py
+        if: always()
+        run: ssh $NODE "docker exec $CONTAINER python3 $REPO/scripts/patch_disable_dual_stream.py --restore"
 
       - name: Show results
         if: always()
         run: |
-          echo "=== Experiment Results (NOT committed to git) ==="
+          echo "=== Experiment Results ==="
           ssh $NODE "ls -lh $REPO/$EXP_DIR/ 2>/dev/null || echo 'No results'"
-          echo ""
-          echo "=== Per-layer breakdown ==="
-          ssh $NODE "cat $REPO/$EXP_DIR/per_layer_breakdown_*.log 2>/dev/null || echo 'No per-layer log'"
-          echo ""
-          echo "=== Kernel breakdown ==="
-          ssh $NODE "cat $REPO/$EXP_DIR/kernel_breakdown_*.log 2>/dev/null || echo 'No kernel log'"
           echo ""
           echo "=== Summary ==="
           ssh $NODE "cat $REPO/$EXP_DIR/summary.md 2>/dev/null || echo 'No summary'"
-          echo ""
-          echo "=== Server log (last 20 lines) ==="
-          ssh $NODE "tail -20 $REPO/$EXP_DIR/server_*.log 2>/dev/null || echo 'No server log'"
