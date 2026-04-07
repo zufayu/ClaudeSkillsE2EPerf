@@ -1,6 +1,5 @@
 name: "Experiment: B200 no dual-stream (shared expert overlap)"
-on:
-  workflow_dispatch:
+on: [workflow_dispatch]
 jobs:
   no-dual-stream-profiling:
     runs-on: [self-hosted, b200]
