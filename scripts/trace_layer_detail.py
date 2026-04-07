@@ -499,24 +499,23 @@ def main():
             start_i = (len(ar_durs[:60]) // 20) * 20
             print(f"    [{start_i:>4}-{start_i+len(pattern_str)-1:>4}]: {pattern_str}")
 
-        # Check if pattern is strictly alternating
-        alt_bs = 0
-        alt_sb = 0
-        for i in range(1, min(len(ar_durs), 200)):
-            prev_big = ar_durs[i - 1] >= threshold
-            curr_big = ar_durs[i] >= threshold
-            if prev_big and not curr_big:
-                alt_bs += 1
-            elif not prev_big and curr_big:
-                alt_sb += 1
-        print(f"\n  Transition counts (first 200): B→S={alt_bs}  S→B={alt_sb}  (perfect alternating = equal)")
+        # Odd vs even index analysis (each layer has 2 allreduce_fusion calls)
+        # Separate stable-state events (exclude prefill outliers >100μs)
+        stable_ar = [d for d in ar_durs if d < 100]
+        odd_durs = [stable_ar[i] for i in range(0, len(stable_ar), 2)]  # 1st occurrence per layer
+        even_durs = [stable_ar[i] for i in range(1, len(stable_ar), 2)]  # 2nd occurrence per layer
+        print(f"\n  Odd/Even split (stable <100μs, n={len(stable_ar)}):")
+        if odd_durs:
+            print(f"    Odd  (1st per layer, #1):  n={len(odd_durs):>5}  avg={sum(odd_durs)/len(odd_durs):>6.1f}μs  median={median(odd_durs):>6.1f}μs  min={min(odd_durs):>5.1f}  max={max(odd_durs):>5.1f}")
+        if even_durs:
+            print(f"    Even (2nd per layer, #14): n={len(even_durs):>5}  avg={sum(even_durs)/len(even_durs):>6.1f}μs  median={median(even_durs):>6.1f}μs  min={min(even_durs):>5.1f}  max={max(even_durs):>5.1f}")
 
-        # Show detailed first 20 with timestamps
-        print(f"\n  First 20 allreduce_fusion events:")
-        print(f"  {'#':>4} {'ts':>14} {'dur':>8} {'type':>5}")
-        for i, k in enumerate(ar_events[:20]):
-            tag = "BIG" if k["dur"] >= threshold else "small"
-            print(f"  {i:>4} {k['ts']:>14.1f} {k['dur']:>8.1f} {tag:>5}")
+        # Show consecutive pairs (1st,2nd) for first 20 pairs in stable state
+        print(f"\n  First 20 consecutive pairs (1st, 2nd):")
+        for i in range(0, min(40, len(stable_ar)), 2):
+            d1 = stable_ar[i]
+            d2 = stable_ar[i + 1] if i + 1 < len(stable_ar) else 0
+            print(f"    pair {i//2:>3}: 1st={d1:>6.1f}μs  2nd={d2:>6.1f}μs")
 
     if args.output_dir and ar_events:
         csv_ar = os.path.join(args.output_dir, "allreduce_fusion_dist.csv")
