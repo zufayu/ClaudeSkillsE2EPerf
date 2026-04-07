@@ -300,60 +300,99 @@ def main():
                     })
             kernel_rows[i]["overlaps"] = overlaps
 
+        # Assign op_key: operator name + occurrence (e.g. "EP_AR+...#1", "EP_AR+...#2")
+        op_count = {}
+        for kr in kernel_rows:
+            op = kr["op"]
+            op_count[op] = op_count.get(op, 0) + 1
+            kr["op_key"] = f"{op}#{op_count[op]}"
+
+        # Build overlap descriptions using op_key of the overlapping kernel
+        for kr in kernel_rows:
+            ov_desc_parts = []
+            if kr["overlaps"]:
+                for ov in kr["overlaps"]:
+                    j_idx = ov["with"] - 1  # 0-based
+                    j_kr = kernel_rows[j_idx]
+                    tag = "same" if ov["same_stream"] else "cross"
+                    ov_desc_parts.append(f"{j_kr['op']}({ov['us']:.1f}μs,{tag})")
+            kr["ov_desc"] = " | ".join(ov_desc_parts) if ov_desc_parts else ""
+
         # Print layer table
-        print(f"\n{'='*220}")
+        print(f"\n{'='*260}")
         print(f"Layer {layer_i}: FMHA-to-FMHA={interval_dt:.1f}μs | walltime={layer_walltime:.1f}μs | kernel_sum={kernel_sum:.1f}μs | overlap={kernel_sum-layer_walltime:.1f}μs | kernels={len(layer_kernels)}")
-        print(f"{'='*220}")
-        print(f"{'#':>3} {'Module':<12} {'Operator':<32} {'Raw_Kernel':<80} {'Str':>4} {'Start':>8} {'Dur':>7} {'End':>8} {'Overlap_with':<50}")
-        print(f"{'-'*220}")
+        print(f"{'='*260}")
+        print(f"{'#':>3} {'Module':<12} {'Operator':<32} {'Raw_Kernel':<80} {'Str':>4} {'Start':>8} {'Dur':>7} {'End':>8}  {'Overlap_with':<80}")
+        print(f"{'-'*260}")
 
         for kr in kernel_rows:
-            # Format overlap column
-            if kr["overlaps"]:
-                ov_parts = []
-                for ov in kr["overlaps"]:
-                    tag = "same" if ov["same_stream"] else "cross"
-                    ov_parts.append(f"#{ov['with']}({ov['us']:.1f}μs,{tag})")
-                ov_str = " ".join(ov_parts)
-            else:
-                ov_str = ""
+            print(f"{kr['idx']+1:>3} {kr['module']:<12} {kr['op']:<32} {kr['raw_short']:<80} {kr['stream']:>4} {kr['ts']:>8.1f} {kr['dur']:>7.1f} {kr['end']:>8.1f}  {kr['ov_desc']:<80}")
 
-            print(f"{kr['idx']+1:>3} {kr['module']:<12} {kr['op']:<32} {kr['raw_short']:<80} {kr['stream']:>4} {kr['ts']:>8.1f} {kr['dur']:>7.1f} {kr['end']:>8.1f} {ov_str:<50}")
-
-        # Collect per-kernel data for averaging
+        # Collect per-kernel data for averaging, keyed by op_key
         all_layer_kernels.append(kernel_rows)
 
-    # Average across 10 layers — per-kernel (29 rows) table
-    print(f"\n{'='*220}")
+    # Average across 10 layers — per-kernel table keyed by op_key
+    print(f"\n{'='*260}")
     print(f"10-LAYER AVERAGED PER-KERNEL TABLE (ordered by timestamp)")
-    print(f"{'='*220}")
+    print(f"{'='*260}")
     all_dts = [dt for _, dt in selected_intervals]
     all_walls = []
     all_ksums = []
 
     if all_layer_kernels:
-        n_kernels = len(all_layer_kernels[0])
         n_layers = len(all_layer_kernels)
 
-        # Verify all layers have same kernel count
-        for li, lk in enumerate(all_layer_kernels):
-            if len(lk) != n_kernels:
-                print(f"  WARNING: Layer {li} has {len(lk)} kernels, expected {n_kernels}")
+        # Build canonical op_key order from layer 0
+        ref_keys = [kr["op_key"] for kr in all_layer_kernels[0]]
 
-        print(f"{'#':>3} {'Module':<12} {'Operator':<32} {'Raw_Kernel':<80} {'Str':>4} {'Avg_Dur':>8} {'Min':>7} {'Max':>7} {'Std':>6}")
-        print(f"{'-'*220}")
+        # Collect per op_key: durations and overlap descriptions
+        op_data = {}
+        for op_key in ref_keys:
+            op_data[op_key] = {"durs": [], "ov_descs": []}
+
+        for lk in all_layer_kernels:
+            lk_by_key = {kr["op_key"]: kr for kr in lk}
+            for op_key in ref_keys:
+                if op_key in lk_by_key:
+                    op_data[op_key]["durs"].append(lk_by_key[op_key]["dur"])
+                    op_data[op_key]["ov_descs"].append(lk_by_key[op_key].get("ov_desc", ""))
+
+        # Determine most common overlap for each op_key
+        def most_common_ov(descs):
+            """Get overlap partners that appear in >50% of layers."""
+            from collections import Counter
+            partner_counts = Counter()
+            for d in descs:
+                if not d:
+                    continue
+                for part in d.split(" | "):
+                    # Extract partner op name (before the parenthesis)
+                    paren = part.find("(")
+                    if paren > 0:
+                        partner = part[:paren]
+                        # Extract same/cross tag
+                        tag = "cross" if "cross" in part else "same"
+                        partner_counts[(partner, tag)] += 1
+            result = []
+            for (partner, tag), cnt in partner_counts.most_common():
+                if cnt >= len(descs) // 2:
+                    result.append(f"{partner}({tag})")
+            return " | ".join(result) if result else ""
+
+        print(f"{'#':>3} {'Module':<12} {'Operator':<32} {'Raw_Kernel':<80} {'Str':>4} {'Avg':>7} {'Min':>6} {'Max':>6}  {'Overlap_with':<60}")
+        print(f"{'-'*260}")
 
         total_avg_dur = 0
-        for ki in range(n_kernels):
-            durs = [all_layer_kernels[li][ki]["dur"] for li in range(n_layers) if ki < len(all_layer_kernels[li])]
+        for ki, op_key in enumerate(ref_keys):
+            durs = op_data[op_key]["durs"]
             avg_dur = sum(durs) / len(durs)
             min_dur = min(durs)
             max_dur = max(durs)
-            std_dur = (sum((d - avg_dur) ** 2 for d in durs) / len(durs)) ** 0.5
             total_avg_dur += avg_dur
 
             kr0 = all_layer_kernels[0][ki]
-            print(f"{ki+1:>3} {kr0['module']:<12} {kr0['op']:<32} {kr0['raw_short']:<80} {kr0['stream']:>4} {avg_dur:>8.1f} {min_dur:>7.1f} {max_dur:>7.1f} {std_dur:>6.1f}")
+            ov_common = most_common_ov(op_data[op_key]["ov_descs"])
+            print(f"{ki+1:>3} {kr0['module']:<12} {kr0['op']:<32} {kr0['raw_short']:<80} {kr0['stream']:>4} {avg_dur:>7.1f} {min_dur:>6.1f} {max_dur:>6.1f}  {ov_common:<60}")
 
         # Compute wall/sum stats per layer
         for lk in all_layer_kernels:
@@ -367,8 +406,8 @@ def main():
         avg_wall = sum(all_walls) / len(all_walls)
         avg_overlap = avg_ksum - avg_wall
 
-        print(f"{'-'*220}")
-        print(f"    {'':12} {'TOTAL':<32} {'':80} {'':>4} {avg_ksum:>8.1f}")
+        print(f"{'-'*260}")
+        print(f"    {'':12} {'TOTAL':<32} {'':80} {'':>4} {avg_ksum:>7.1f}")
         print(f"\n  Kernel_sum avg: {avg_ksum:.1f}μs | Walltime avg: {avg_wall:.1f}μs | Overlap avg: {avg_overlap:.1f}μs")
         print(f"  FMHA-to-FMHA avg: {sum(all_dts)/len(all_dts):.1f}μs | range: {min(all_dts):.1f} - {max(all_dts):.1f}μs")
         print(f"  × 61 layers: kernel_sum={avg_ksum*61/1000:.2f}ms | walltime={avg_wall*61/1000:.2f}ms")
@@ -376,9 +415,8 @@ def main():
         # Module subtotals
         print(f"\n  Module subtotals (avg):")
         mod_sums = {}
-        for ki in range(n_kernels):
-            durs = [all_layer_kernels[li][ki]["dur"] for li in range(n_layers)]
-            avg_d = sum(durs) / len(durs)
+        for ki, op_key in enumerate(ref_keys):
+            avg_d = sum(op_data[op_key]["durs"]) / len(op_data[op_key]["durs"])
             mod = all_layer_kernels[0][ki]["module"]
             mod_sums[mod] = mod_sums.get(mod, 0) + avg_d
         for mod, total in mod_sums.items():
