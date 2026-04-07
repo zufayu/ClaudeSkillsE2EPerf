@@ -14,10 +14,13 @@ Usage:
 """
 
 import argparse
+import csv
 import gzip
 import json
+import os
 import re
 import sys
+from collections import Counter
 from statistics import median
 
 
@@ -132,6 +135,7 @@ def get_raw_short(name):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("filepath")
+    parser.add_argument("--output-dir", default=None, help="Directory to write CSV output")
     args = parser.parse_args()
 
     events = load_trace(args.filepath)
@@ -360,7 +364,6 @@ def main():
         # Determine most common overlap for each op_key
         def most_common_ov(descs):
             """Get overlap partners that appear in >50% of layers."""
-            from collections import Counter
             partner_counts = Counter()
             for d in descs:
                 if not d:
@@ -422,6 +425,108 @@ def main():
         for mod, total in mod_sums.items():
             pct = total / avg_ksum * 100
             print(f"    {mod:<15} {total:>8.1f}μs  ({pct:>5.1f}%)")
+
+        # Write CSV output
+        if args.output_dir:
+            os.makedirs(args.output_dir, exist_ok=True)
+            csv_path = os.path.join(args.output_dir, "layer_kernel_avg.csv")
+            with open(csv_path, "w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["#", "Module", "Operator", "Raw_Kernel", "Stream", "Avg_us", "Min_us", "Max_us", "Overlap_with"])
+                for ki, op_key in enumerate(ref_keys):
+                    durs = op_data[op_key]["durs"]
+                    avg_dur = sum(durs) / len(durs)
+                    kr0 = all_layer_kernels[0][ki]
+                    ov_common = most_common_ov(op_data[op_key]["ov_descs"])
+                    w.writerow([ki + 1, kr0["module"], kr0["op"], kr0["raw_short"], kr0["stream"], f"{avg_dur:.1f}", f"{min(durs):.1f}", f"{max(durs):.1f}", ov_common])
+                w.writerow([])
+                w.writerow(["", "", "TOTAL", "", "", f"{avg_ksum:.1f}", "", "", ""])
+                w.writerow(["", "", "Walltime", "", "", f"{avg_wall:.1f}", "", "", ""])
+                w.writerow(["", "", "Overlap", "", "", f"{avg_overlap:.1f}", "", "", ""])
+                w.writerow([])
+                for mod, total in mod_sums.items():
+                    pct = total / avg_ksum * 100
+                    w.writerow(["", mod, "", "", "", f"{total:.1f}", f"{pct:.1f}%", "", ""])
+            print(f"\n  CSV written: {csv_path}")
+
+    # === allreduce_fusion_kernel distribution analysis ===
+    print(f"\n{'='*120}")
+    print(f"ALLREDUCE_FUSION_KERNEL DISTRIBUTION ANALYSIS")
+    print(f"{'='*120}")
+
+    ar_events = [k for k in gpu_kernels if re.search(r"allreduce_fusion_kernel", k.get("name", ""), re.IGNORECASE)]
+    print(f"Total allreduce_fusion_kernel events: {len(ar_events)}")
+
+    if ar_events:
+        ar_durs = [k["dur"] for k in ar_events]
+        ar_avg = sum(ar_durs) / len(ar_durs)
+        ar_med = median(ar_durs)
+        ar_min = min(ar_durs)
+        ar_max = max(ar_durs)
+        print(f"  avg={ar_avg:.1f}μs  median={ar_med:.1f}μs  min={ar_min:.1f}μs  max={ar_max:.1f}μs")
+
+        # Histogram with 2μs bins
+        bins = {}
+        for d in ar_durs:
+            b = int(d // 2) * 2
+            bins[b] = bins.get(b, 0) + 1
+        print(f"\n  Duration histogram (2μs bins):")
+        for b in sorted(bins.keys()):
+            bar = "#" * min(bins[b], 80)
+            print(f"    {b:>5}-{b+2:<5}μs: {bins[b]:>5}  {bar}")
+
+        # Check alternating pattern: look at consecutive pairs
+        # Each layer has 2 allreduce_fusion calls (#1 and #14 in the 29-kernel sequence)
+        # #1 is the "big" one (start of layer, overlaps with qkv_a_proj)
+        # #14 is the "small" one (between o_proj and MoE, overlaps with router_GEMM)
+        # Classify: <15μs = "small", >=15μs = "big"
+        threshold = 15.0
+        small_durs = [d for d in ar_durs if d < threshold]
+        big_durs = [d for d in ar_durs if d >= threshold]
+        print(f"\n  Bimodal split at {threshold}μs:")
+        print(f"    Small (<{threshold}μs): n={len(small_durs)}, avg={sum(small_durs)/len(small_durs):.1f}μs" if small_durs else f"    Small: n=0")
+        print(f"    Big   (>={threshold}μs): n={len(big_durs)}, avg={sum(big_durs)/len(big_durs):.1f}μs" if big_durs else f"    Big: n=0")
+
+        # Show pattern of consecutive events (first 40)
+        print(f"\n  Consecutive pattern (first 60 events, S=small B=big):")
+        pattern_str = ""
+        for i, d in enumerate(ar_durs[:60]):
+            pattern_str += "B" if d >= threshold else "S"
+            if (i + 1) % 20 == 0:
+                print(f"    [{i-19:>4}-{i:>4}]: {pattern_str}")
+                pattern_str = ""
+        if pattern_str:
+            start_i = (len(ar_durs[:60]) // 20) * 20
+            print(f"    [{start_i:>4}-{start_i+len(pattern_str)-1:>4}]: {pattern_str}")
+
+        # Check if pattern is strictly alternating
+        alt_bs = 0
+        alt_sb = 0
+        for i in range(1, min(len(ar_durs), 200)):
+            prev_big = ar_durs[i - 1] >= threshold
+            curr_big = ar_durs[i] >= threshold
+            if prev_big and not curr_big:
+                alt_bs += 1
+            elif not prev_big and curr_big:
+                alt_sb += 1
+        print(f"\n  Transition counts (first 200): B→S={alt_bs}  S→B={alt_sb}  (perfect alternating = equal)")
+
+        # Show detailed first 20 with timestamps
+        print(f"\n  First 20 allreduce_fusion events:")
+        print(f"  {'#':>4} {'ts':>14} {'dur':>8} {'type':>5}")
+        for i, k in enumerate(ar_events[:20]):
+            tag = "BIG" if k["dur"] >= threshold else "small"
+            print(f"  {i:>4} {k['ts']:>14.1f} {k['dur']:>8.1f} {tag:>5}")
+
+    if args.output_dir and ar_events:
+        csv_ar = os.path.join(args.output_dir, "allreduce_fusion_dist.csv")
+        with open(csv_ar, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["index", "timestamp_us", "duration_us", "type"])
+            for i, k in enumerate(ar_events):
+                tag = "big" if k["dur"] >= threshold else "small"
+                w.writerow([i, f"{k['ts']:.1f}", f"{k['dur']:.1f}", tag])
+        print(f"\n  Allreduce CSV written: {csv_ar}")
 
 
 if __name__ == "__main__":
