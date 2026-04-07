@@ -1,0 +1,27 @@
+name: "Fetch EP1 TP4 data"
+on:
+  workflow_dispatch:
+jobs:
+  fetch:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 5
+    env:
+      NODE: hungry-hippo-fin-03-2
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      SRC: /home/ubuntu/zufa/ClaudeSkillsE2EPerf/results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep1_tp4_sglang059
+      DST: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep1_tp4_sglang059
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+
+      - name: List source files
+        run: ssh $NODE "ls -lh $SRC/"
+
+      - name: Copy data
+        run: ssh $NODE "cp -r $SRC $REPO/$DST"
+
+      - name: Show JSON files
+        run: ssh $NODE "for f in $REPO/$DST/*.json; do echo '=== '$(basename $f)' ==='; cat \$f; echo; done"
+
+      - name: Commit and push
+        run: ssh $NODE "cd $REPO && git add $DST/ && git commit -m 'Add B200 EP1 TP4 SGLang FP4 results' && git push origin main"
