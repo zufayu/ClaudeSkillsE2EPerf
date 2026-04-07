@@ -1,0 +1,36 @@
+name: "Analyze B200 trace (per-layer walltime)"
+on:
+  workflow_dispatch:
+jobs:
+  analyze-trace:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 15
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_sglang
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+
+      - name: Find trace file
+        run: |
+          echo "Available trace files:"
+          ssh $NODE "docker exec $CONTAINER bash -c 'ls -lh $REPO/$RESULT_DIR/*.trace.json.gz 2>/dev/null || echo No trace files found'"
+          TRACE=$(ssh $NODE "docker exec $CONTAINER bash -c 'find $REPO/$RESULT_DIR -maxdepth 1 -name \"*.trace.json.gz\" ! -name \"*_serialized*\" -type f 2>/dev/null | head -1'")
+          echo "TRACE=$TRACE" >> $GITHUB_ENV
+          echo "Selected trace: $TRACE"
+
+      - name: Run per-layer walltime analysis
+        run: |
+          ssh $NODE "docker exec $CONTAINER python3 $REPO/scripts/analyze_layer_from_trace.py ${{ env.TRACE }} --decodes 100 --skip 10 --layer-range 5-56 --csv $REPO/$RESULT_DIR/layer_walltime.csv --json $REPO/$RESULT_DIR/layer_walltime.json"
+
+      - name: Show results
+        if: always()
+        run: |
+          echo "=== Layer Walltime JSON ==="
+          ssh $NODE "cat $REPO/$RESULT_DIR/layer_walltime.json 2>/dev/null || echo 'No JSON output'"
+          echo ""
+          echo "=== Layer Walltime CSV (first 10 rows) ==="
+          ssh $NODE "head -11 $REPO/$RESULT_DIR/layer_walltime.csv 2>/dev/null || echo 'No CSV output'"
