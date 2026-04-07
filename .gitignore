@@ -14,3 +14,6 @@ results_*/server_*.log
 traces/
 *.nsys-rep
 *.sqlite
+
+# Experimental results (exploratory runs, not for dashboard/report)
+experiments/

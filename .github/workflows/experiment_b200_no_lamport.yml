@@ -1,0 +1,69 @@
+name: "Experiment: B200 no-lamport fusion"
+on:
+  workflow_dispatch:
+jobs:
+  no-lamport-profiling:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 120
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_sglang
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      EXP_DIR: experiments/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling_no_lamport
+    steps:
+      - name: Sync repo
+        run: |
+          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+
+      - name: Verify container
+        run: |
+          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2"
+          ssh $NODE "docker exec $CONTAINER python3 -c 'import sglang; print(f\"SGLang {sglang.__version__}\")'"
+
+      - name: Clean experiment dir
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'mkdir -p $REPO/$EXP_DIR && rm -rf $REPO/$EXP_DIR/* 2>/dev/null; true'"
+
+      - name: "Run profiling WITHOUT lamport allreduce fusion"
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c '
+            cd $REPO
+
+            # 1. Remove --enable-flashinfer-allreduce-fusion from collect script
+            sed \"/--enable-flashinfer-allreduce-fusion/d\" scripts/collect_sglang_trace.sh > /tmp/collect_no_lamport.sh
+
+            # 2. Disable auto-enable: SGLang auto-enables this on Blackwell (SM100).
+            #    Patch server_args.py to force it off.
+            SGLANG_ARGS=\$(python3 -c \"import sglang.srt.server_args as m; print(m.__file__)\")
+            cp \$SGLANG_ARGS \${SGLANG_ARGS}.bak
+            sed -i \"s/self.enable_flashinfer_allreduce_fusion = True/self.enable_flashinfer_allreduce_fusion = False/g\" \$SGLANG_ARGS
+
+            bash /tmp/collect_no_lamport.sh \
+              --model $MODEL_FP4 \
+              --tp 4 --ep 4 \
+              --scenario chat \
+              --concurrency 64 \
+              --env sglang059 \
+              --result-dir ./$EXP_DIR
+
+            # 3. Restore original server_args.py
+            mv \${SGLANG_ARGS}.bak \$SGLANG_ARGS
+          '"
+
+      - name: Show results (no git commit - experiment only)
+        if: always()
+        run: |
+          echo "=== Experiment Results (NOT committed to git) ==="
+          ssh $NODE "ls -lh $REPO/$EXP_DIR/ 2>/dev/null || echo 'No results'"
+          echo ""
+          echo "=== Per-layer breakdown ==="
+          ssh $NODE "cat $REPO/$EXP_DIR/per_layer_breakdown_*.log 2>/dev/null || echo 'No per-layer log'"
+          echo ""
+          echo "=== Kernel breakdown ==="
+          ssh $NODE "cat $REPO/$EXP_DIR/kernel_breakdown_*.log 2>/dev/null || echo 'No kernel log'"
+          echo ""
+          echo "=== Summary ==="
+          ssh $NODE "cat $REPO/$EXP_DIR/summary.md 2>/dev/null || echo 'No summary'"
+          echo ""
+          echo "=== Server log (last 20 lines) ==="
+          ssh $NODE "tail -20 $REPO/$EXP_DIR/server_*.log 2>/dev/null || echo 'No server log'"
