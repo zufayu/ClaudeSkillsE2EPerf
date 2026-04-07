@@ -17,11 +17,11 @@ jobs:
       - name: List source files
         run: ssh $NODE "ls -lh $SRC/"
 
-      - name: Copy data
-        run: ssh $NODE "cp -r $SRC $REPO/$DST"
+      - name: Show JSON
+        run: ssh $NODE "cat $SRC/result_fp4_throughput_chat_tp4_ep1_c64.json"
 
-      - name: Show JSON files
-        run: ssh $NODE "for f in $REPO/$DST/*.json; do echo '=== '$(basename $f)' ==='; cat \$f; echo; done"
+      - name: Show summary
+        run: ssh $NODE "cat $SRC/summary.md"
 
-      - name: Commit and push
-        run: ssh $NODE "cd $REPO && git add $DST/ && git commit -m 'Add B200 EP1 TP4 SGLang FP4 results' && git push origin main"
+      - name: Git add and push
+        run: ssh $NODE "cd $REPO && git add $DST/ && git status && git commit -m 'Add B200 EP1 TP4 SGLang FP4 results' && git push origin main"
