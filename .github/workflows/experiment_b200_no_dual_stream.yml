@@ -1,8 +1,8 @@
-name: "Experiment: B200 no-lamport fusion"
+name: "Experiment: B200 no dual-stream (shared expert overlap)"
 on:
   workflow_dispatch:
 jobs:
-  no-lamport-profiling:
+  no-dual-stream-profiling:
     runs-on: [self-hosted, b200]
     timeout-minutes: 120
     env:
@@ -10,7 +10,7 @@ jobs:
       CONTAINER: zufa_sglang
       REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
-      EXP_DIR: experiments/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling_no_lamport
+      EXP_DIR: experiments/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling_no_dual_stream
     steps:
       - name: Sync repo
         run: |
@@ -24,23 +24,36 @@ jobs:
       - name: Clean experiment dir
         run: ssh $NODE "docker exec $CONTAINER bash -c 'mkdir -p $REPO/$EXP_DIR && rm -rf $REPO/$EXP_DIR/* 2>/dev/null; true'"
 
-      - name: "Run profiling WITHOUT lamport allreduce fusion"
+      - name: "Patch deepseek_v2.py: force alt_stream=None"
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c '
+            DEEPSEEK_PY=\$(python3 -c \"import sglang.srt.models.deepseek_v2 as m; print(m.__file__)\")
+            cp \$DEEPSEEK_PY \${DEEPSEEK_PY}.bak
+            echo \"Patching: \$DEEPSEEK_PY\"
+            python3 -c \"
+import re, sys
+path = sys.argv[1]
+with open(path) as f:
+    src = f.read()
+old = r'''self.alt_stream = (
+            torch.cuda.Stream()
+            if _is_cuda or envs.SGLANG_NPU_USE_MULTI_STREAM.get()
+            else None
+        )'''
+new = r'''self.alt_stream = None  # EXPERIMENT: disabled dual-stream overlap'''
+if old not in src:
+    print(\\\"ERROR: pattern not found in\\\", path); sys.exit(1)
+with open(path, \\\"w\\\") as f:
+    f.write(src.replace(old, new))
+print(\\\"Patched successfully\\\")
+\" \$DEEPSEEK_PY
+            grep -n \"alt_stream\" \$DEEPSEEK_PY | head -5
+          '"
+
+      - name: "Run profiling WITHOUT dual-stream"
         run: |
           ssh $NODE "docker exec $CONTAINER bash -c '
             cd $REPO
-
-            # 1. Backup collect script and server_args.py
-            cp scripts/collect_sglang_trace.sh scripts/collect_sglang_trace.sh.bak
-            SGLANG_ARGS=\$(python3 -c \"import sglang.srt.server_args as m; print(m.__file__)\")
-            cp \$SGLANG_ARGS \${SGLANG_ARGS}.bak
-
-            # 2. Patch: remove --enable-flashinfer-allreduce-fusion from collect script
-            sed -i \"/--enable-flashinfer-allreduce-fusion/d\" scripts/collect_sglang_trace.sh
-
-            # 3. Patch: disable auto-enable in server_args.py (Blackwell SM100 default)
-            sed -i \"s/self.enable_flashinfer_allreduce_fusion = True/self.enable_flashinfer_allreduce_fusion = False/g\" \$SGLANG_ARGS
-
-            # 4. Run profiling
             bash scripts/collect_sglang_trace.sh \
               --model $MODEL_FP4 \
               --tp 4 --ep 4 \
@@ -48,10 +61,14 @@ jobs:
               --concurrency 64 \
               --env sglang059 \
               --result-dir ./$EXP_DIR
+          '"
 
-            # 5. Restore originals
-            mv scripts/collect_sglang_trace.sh.bak scripts/collect_sglang_trace.sh
-            mv \${SGLANG_ARGS}.bak \$SGLANG_ARGS
+      - name: Restore deepseek_v2.py
+        if: always()
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c '
+            DEEPSEEK_PY=\$(python3 -c \"import sglang.srt.models.deepseek_v2 as m; print(m.__file__)\")
+            if [ -f \${DEEPSEEK_PY}.bak ]; then mv \${DEEPSEEK_PY}.bak \$DEEPSEEK_PY; echo \"Restored\"; fi
           '"
 
       - name: Show results (no git commit - experiment only)

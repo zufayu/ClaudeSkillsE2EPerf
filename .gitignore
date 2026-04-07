@@ -10,6 +10,9 @@ __pycache__/
 results_*/server_*.log
 !results_*/server_*.trimmed.log
 
+# Serialized traces (multi-stream fix for Perfetto, derived from originals)
+*_serialized.json.gz
+
 # Nsight Systems traces (2-3GB each)
 traces/
 *.nsys-rep

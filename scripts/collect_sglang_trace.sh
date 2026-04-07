@@ -364,10 +364,22 @@ else
     log "Copied $TRACE_COUNT trace file(s) to $RESULT_DIR/ (renamed with TAG)"
 fi
 
+# ======================== Step 7.5: Serialize Traces (fix multi-stream overlap) ==
+
+SERIALIZE_SCRIPT="$SCRIPT_DIR/serialize_trace.py"
+if [[ -f "$SERIALIZE_SCRIPT" ]] && [[ $TRACE_COUNT -gt 0 ]]; then
+    log "Serializing traces to fix multi-stream overlap for Perfetto..."
+    while IFS= read -r -d '' trace_file; do
+        log "  Serializing $(basename "$trace_file")..."
+        python3 "$SERIALIZE_SCRIPT" "$trace_file" -o "${trace_file%.json.gz}_serialized.json.gz" 2>&1 || log "WARNING: serialization failed for $(basename "$trace_file")"
+    done < <(find "$RESULT_DIR" -maxdepth 1 -name "*.trace.json.gz" -print0 2>/dev/null)
+    log "Trace serialization done. Serialized files (*_serialized.json.gz) are for Perfetto viewing."
+fi
+
 # ======================== Step 8: Kernel Breakdown ============================
 
 EXTRACT_SCRIPT="$SCRIPT_DIR/extract_cuda_kernels_torch_trace.py"
-FIRST_TRACE=$(find "$RESULT_DIR" -maxdepth 1 -name "*.json.gz" -type f 2>/dev/null | head -1)
+FIRST_TRACE=$(find "$RESULT_DIR" -maxdepth 1 -name "*.trace.json.gz" ! -name "*_serialized*" -type f 2>/dev/null | head -1)
 
 if [[ -f "$EXTRACT_SCRIPT" ]] && [[ -n "$FIRST_TRACE" ]]; then
     log "Running CUDA Graph kernel breakdown on $(basename "$FIRST_TRACE")..."
