@@ -1,9 +1,9 @@
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
-> **Last updated:** 2026-04-06 v24
+> **Last updated:** 2026-04-06 v25
 > **Model:** DeepSeek-R1-0528-NVFP4-v2, FP4
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
-> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅；**MI355X TP=8+EP 公平对标完成 ✅**；**B200 4GPU torch trace per-layer 分析完成 ✅**
+> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅；**MI355X TP=8+EP 公平对标完成 ✅**；**B200 4GPU torch trace per-layer 分析完成 ✅**；**Multi-stream overlap 分析完成 ✅**
 
 ## 端到端性能总表
 
@@ -113,9 +113,18 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 ### 4GPU Per-Layer 跨平台对比（B200 vs MI355X）
 
 > **数据来源：**
-> - B200: SGLang v0.5.9 torch profiler trace，TP=4 EP=4，chat 1K/1K c=64。FMHA 层锚点切分，position-based module 分配，第 10-40 层平均，4410 层样本。356.4μs/layer × 61 = 21.74ms ≈ kernel sum 21.69ms（拟合 0.2%）
+> - B200: SGLang v0.5.9 torch profiler trace，TP=4 EP=4，chat 1K/1K c=64。FMHA 层锚点切分，position-based module 分配，第 10-40 层平均，4410 层样本。
+>   - Kernel sum: 350.5μs/layer，Elapsed(关键路径): 283.3μs/layer，Overlap: 67.2μs (19.2%)
+>   - 验证: 283.3 × 61 = 17.28ms ≈ decode walltime 17.50ms（误差 1.3%）
 > - MI355X: ATOM rocm711 Kineto trace，TP=4 EP=4，chat 1K/1K c=64。decode_breakdown.xlsx 多层平均（avg 列），399.5μs/layer
-> **配置对齐：** 两平台均 4GPU TP=4 EP=4，per-GPU MoE 权重量相同（64 experts/GPU）
+>   - 单流串行执行（HIP Graph 单 stream capture），无 multi-stream overlap
+>   - 验证: 399.5 × 61 = 24.37ms ≈ decode walltime 23.73ms（误差 2.7%）
+> - **配置对齐：** 两平台均 4GPU TP=4 EP=4，per-GPU MoE 权重量相同（64 experts/GPU）
+>
+> **Multi-stream overlap 说明：**
+> - **B200 SGLang** 启用了 `enable_flashinfer_allreduce_fusion=True`（lamport allreduce），该机制使用对称内存在**独立 CUDA stream** 上执行 allreduce+RMSNorm。当 lamport stream 执行 allreduce 时，计算 stream 可以同时执行后续 GEMM（如 qkv_a splitK），形成 multi-stream overlap。
+> - **MI355X ATOM** 使用 RCCL fused_allreduce_rmsnorm 在**单一 HIP stream** 上串行执行所有 kernel（包括通信）。HIP Graph capture 确认所有操作在同一 stream 上，无 fork-join pattern。
+> - **公平对比原则：** B200 使用 elapsed（关键路径时间，扣除 overlap），MI355X 使用 kernel sum（等于 elapsed，因为无 overlap）。两者都代表实际 GPU 时间线上的关键路径长度。
 
 #### 算子级对比表
 
@@ -153,31 +162,67 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 | shared_exp | 30 | SiLU×Mul | act_and_mul_kernel | 3.1 | | | 0 | 3.1 | B200独有:MI355X SwiGLU融入MoeMxGemm |
 | residual | 31 | tensor_copy | direct_copy_kernel | 3.5 | | | 0 | 3.5 | |
 | residual | 32 | residual_add | CUDAFunctor_add | 2.1 | | | 0 | 2.1 | |
-| | | | **B200_SUM** | **356.4** | | **MI355X_SUM** | **399.5** | **-43.1** | **B200 kernel sum 快 10.8%** |
+| | | | **B200_SUM** | **350.5** | | **MI355X_SUM** | **399.5** | **-49.0** | **B200 kernel sum 快 12.3%** |
 
-#### 功能分组对比（4GPU 单层）
+> **注意：** B200 kernel sum (350.5μs) 含 multi-stream overlap，不等于关键路径时间。见下方 overlap 分析。
 
-| 功能块 | B200 μs | MI355X μs | B200/MI355X | 差距来源 |
-|--------|---------|-----------|-------------|---------|
-| **通信+Norm** | 34.6 | 60.2 | **0.57x** | B200 lamport 融合1次AR;MI355X pre+post两次reduce_scatter |
-| **QKV 投影** | 48.7 | 44.3 | **1.10x** | B200 qkv_a BF16 splitK 慢(28.7 vs 16.1);但 q_b FP4 快(6.3 vs 11.8) |
-| **RoPE+Attention** | 24.8 | 38.0 | **0.65x** | B200 FMHA 融合reduce;MI355X mla+reduce=32.7μs |
-| **Out Proj** | 15.4 | 28.0 | **0.55x** | B200 o_proj FP4(9.2) 大幅快于 MI355X FP8(21.4) |
-| **Shared Expert** | 27.8 | 0* | — | B200独有;MI355X融入MoeMxGemm grouped GEMM |
-| **Router** | 27.6 | 25.4 | **1.09x** | B200 router_GEMM(14.4) > MI355X(9.2);MI355X sort更多phase |
-| **MoE Expert** | 171.9 | 192.8 | **0.89x** | gate_up B200快14.6%(102 vs 119.5);down持平 |
-| **其他** | 5.6 | 11.0 | **0.51x** | MI355X triton clone 11μs |
-| **总计** | **356.4** | **399.5** | **0.89x** | **B200 快 10.8%** |
+#### B200 Multi-Stream Overlap 分析
+
+B200 SGLang 的 lamport allreduce fusion 在独立 CUDA stream 上执行，与计算 stream 形成 overlap：
+
+| 指标 | B200 | MI355X |
+|------|------|--------|
+| Kernel sum (per-layer) | 350.5 μs | 399.5 μs |
+| **Elapsed/关键路径 (per-layer)** | **283.3 μs** | **399.5 μs** |
+| Overlap | 67.2 μs (19.2%) | 0 μs (单流) |
+| × 61 层估算 | 17.28 ms | 24.37 ms |
+| 实测 decode walltime | 17.50 ms | 23.73 ms |
+| 估算误差 | 1.3% | 2.7% |
+
+**Top Overlap 对（per-layer avg）：**
+
+| Stream A (通信) | Stream B (计算) | Overlap(μs) | 位置 |
+|----------------|----------------|-------------|------|
+| LAMPORT AR+RMSNorm | qkv_a_splitK_TNT | 9.8 | comm_norm ‖ qkv_proj |
+| FP4_GEMM | FP4_block_quant | 3.5 | out_proj ‖ moe_quant |
+| FP4_GEMM | tensor_copy | 3.2 | 跨模块 |
+| FP4_GEMM | MoE_gate_up | 2.7 | shared_exp ‖ moe_expert |
+| splitK_TNT | FP4_convert | 2.5 | qkv_proj ‖ out_proj |
+| RMSNorm | RMSNorm | 1.5 | q_norm ‖ k_norm |
+
+> **Overlap 机制解释：**
+> - B200 SGLang 使用 `enable_flashinfer_allreduce_fusion=True`，lamport allreduce + RMSNorm 在**通信 stream** 上执行。当通信 stream 正在做 allreduce 时，计算 stream 可以提前开始下一步的 GEMM。
+> - 最大 overlap（9.8μs/layer）发生在 lamport AR 与 qkv_a splitK GEMM 之间——这是**层间流水线效果**：上一层的 allreduce 还没完成，当前层的 GEMM 已经开始。
+> - 此外 FP4_GEMM（out_proj/shared）与 FP4 量化/MoE GEMM 之间也有 stream overlap（各 2-3μs）。
+> - MI355X ATOM 使用 RCCL `fused_allreduce_rmsnorm` 在**单一 HIP stream** 上串行执行，HIP Graph capture 确认无 multi-stream fork-join pattern，因此无 overlap。
+
+#### 功能分组对比（4GPU 单层，关键路径）
+
+| 功能块 | B200 kernel sum | B200 elapsed | MI355X | elapsed ratio | 差距来源 |
+|--------|----------------|-------------|---------|---------------|---------|
+| **通信+Norm** | 34.7 | 34.7 | 60.2 | **0.58x** | B200 lamport 融合1次AR;MI355X pre+post两次reduce_scatter |
+| **QKV 投影** | 49.0 | 43.6 | 44.3 | **0.98x** | B200 elapsed 含 lamport overlap 5.4μs;实际几乎持平 |
+| **RoPE+Attention** | 24.7 | 24.7 | 38.0 | **0.65x** | B200 FMHA 融合reduce;MI355X mla+reduce=32.7μs |
+| **Out Proj** | 15.6 | 15.5 | 28.0 | **0.55x** | B200 o_proj FP4(9.2) 大幅快于 MI355X FP8(21.4) |
+| **Shared Expert** | 24.9 | 24.9 | 0* | — | B200独有;MI355X融入MoeMxGemm grouped GEMM |
+| **Router** | 27.3 | 23.4 | 25.4 | **0.92x** | B200 router elapsed 含 overlap 3.9μs |
+| **MoE Expert** | 168.9 | 167.8 | 192.8 | **0.87x** | gate_up B200快14.6%(102 vs 119.5);down持平 |
+| **其他** | 5.4 | 5.4 | 11.0 | **0.49x** | MI355X triton clone 11μs |
+| **模块内 elapsed 合计** | 350.5 | **339.9** | 399.5 | **0.85x** | 模块内 overlap 仅 10.5μs |
+| **跨模块 overlap** | — | **-56.6** | 0 | — | lamport 与 GEMM 跨模块并行 |
+| **总关键路径** | 350.5 | **283.3** | **399.5** | **0.71x** | **B200 关键路径快 29.1%** |
 
 > \* MI355X shared_expert 融入 MoeMxGemm grouped GEMM，gate_up/down 时间已包含 shared expert。
 >
-> **4GPU 跨平台关键发现：**
-> 1. **B200 kernel sum 快 10.8%**（356.4 vs 399.5μs）。与 8GPU 的结论一致（8GPU: B200 276.9μs vs MI355X 267.6μs，MI355X 反超），说明 **4GPU→8GPU 扩展时 MI355X 获益更大**。
-> 2. **MoE GEMM B200 领先：** gate_up 102.0 vs 119.5μs（快 14.6%），down 58.8 vs 58.0μs（持平）。4GPU per-GPU 权重相同（64 experts/GPU），差距反映纯 FP4 vs MXFP4 算子效率。**8GPU 时 MI355X 反超（66.5 vs 59.6μs gate_up），说明 MI355X MoE GEMM 在小 batch 时效率更高。**
-> 3. **通信是 MI355X 最大短板：** comm_norm 34.6 vs 60.2μs（1.74x）。B200 NVLink lamport 融合一次 AR+norm+residual，MI355X xGMI 需 pre+post 两次 reduce_scatter。
-> 4. **o_proj GEMM B200 大幅领先：** 9.2 vs 21.4μs（2.3x）。FP4 cuBLAS/CUTLASS 在小矩阵（[64×2048]×[2048×7168/4]）上效率远超 MI355X FP8 CK。
-> 5. **Attention B200 领先：** 20.4 vs 32.7μs（含 reduce）。fmhaSm100f 融合 MLA reduce，MI355X 需独立 mla_reduce (7.2μs)。
-> 6. **B200 shared_expert 独立开销 27.8μs** 是架构劣势（MI355X 融入 grouped GEMM），但被通信优势(25.6μs)和 o_proj 优势(12.2μs)抵消有余。
+> **4GPU 跨平台关键发现（v25 overlap 修正版）：**
+> 1. **B200 关键路径快 29.1%**（283.3 vs 399.5μs/layer），与 TPOT 差距（19.1 vs 26.2ms，37%）方向一致。关键路径差距（29%）小于 TPOT 差距（37%），剩余 8% 差距来自 serving overhead 和 prefill interleaving 差异。
+> 2. **Multi-stream overlap 是 B200 的重要优势：** lamport allreduce fusion 将通信隐藏在计算后面，每层节省 67.2μs（19.2%）。MI355X 单流架构无法获得此优势。
+> 3. **即使不算 overlap，B200 kernel sum 仍快 12.3%**（350.5 vs 399.5μs），说明 B200 在纯算子效率上也有优势。
+> 4. **MoE GEMM B200 领先：** gate_up 102.0 vs 119.5μs（快 14.6%），down 58.8 vs 58.0μs（持平）。4GPU per-GPU 权重相同（64 experts/GPU），差距反映纯 FP4 vs MXFP4 算子效率。
+> 5. **通信是 MI355X 最大短板：** comm_norm 34.7 vs 60.2μs（1.74x）。B200 NVLink lamport 融合一次 AR+norm+residual，MI355X xGMI 需 pre+post 两次 reduce_scatter。
+> 6. **o_proj GEMM B200 大幅领先：** 9.2 vs 21.4μs（2.3x）。FP4 cuBLAS/CUTLASS 在小矩阵上效率远超 MI355X FP8 CK。
+> 7. **QKV 投影几乎持平：** B200 elapsed 43.6μs vs MI355X 44.3μs（0.98x）。B200 qkv_a BF16 splitK 慢(28.7 vs 16.1)，但 q_b FP4 快(6.3 vs 11.8)，加上 overlap 后整体持平。
+> 8. **B200 shared_expert 独立开销 24.9μs** 是架构劣势（MI355X 融入 grouped GEMM），但被 overlap(67μs)、通信优势(25.5μs)和 o_proj 优势(12.2μs)抵消有余。
 
 ## MI355X TPOT 来源分析
 
@@ -197,13 +242,14 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 单层 kernel 时间 × 61 层 = 估算 decode walltime。与实测对比：
 
-| | Kernel/层 | × 61 层估算 | 实测 Decode | 差距 | Overhead % |
-|---|---|---|---|---|---|
-| **B200** | 251.1 μs | 15.3 ms | 15.6 ms | 0.3 ms | **1.8%** |
-| **MI355X (v21 TP8+EP)** | 267.6 μs | 16.3 ms | 17.2 ms | 0.9 ms | **5.2%** |
-| **MI355X (v20 TP4)** | 344.0 μs | 21.0 ms | 21.6 ms | 0.6 ms | 2.7% |
+| | 指标 | Kernel sum/层 | Elapsed/层 | × 61 估算 | 实测 Decode | 拟合误差 |
+|---|---|---|---|---|---|---|
+| **B200 (4GPU TP4)** | elapsed 关键路径 | 350.5 μs | **283.3 μs** | 17.28 ms | 17.50 ms | **1.3%** |
+| **MI355X (4GPU TP4)** | kernel sum=elapsed | 399.5 μs | **399.5 μs** | 24.37 ms | 23.73 ms | **2.7%** |
+| B200 (8GPU TP8) | 参考 | 251.1 μs | — | 15.3 ms | 15.6 ms | 1.8% |
+| MI355X (8GPU TP8+EP) | 参考 | 267.6 μs | — | 16.3 ms | 17.2 ms | 5.2% |
 
-**B200 和 MI355X v20 的 overhead 均 <3%。** v21 MI355X TP8+EP 的 5.2% overhead 略高，可能因为 EP 引入了额外的 All-to-All 通信开销（未被 module-level trace 捕获）或 HIP Graph replay 在 8-way TP 下效率略降。
+**B200 elapsed 与 walltime 高度吻合（1.3%误差）**，验证了 multi-stream overlap 分析的正确性。MI355X 单流执行，kernel sum ≈ elapsed ≈ walltime。
 
 ### Gap 2: L2 → L3（Decode Walltime vs Client TPOT）
 
