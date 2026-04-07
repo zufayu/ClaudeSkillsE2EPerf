@@ -22,5 +22,5 @@ jobs:
           echo "TRACE=$TRACE" >> $GITHUB_ENV
           echo "Selected trace: $TRACE"
 
-      - name: FMHA layer time analysis
-        run: ssh $NODE "docker exec $CONTAINER python3 $REPO/scripts/trace_fmha_layer_time.py ${{ env.TRACE }} --layers 2000"
+      - name: Layer detail (10 stable layers)
+        run: ssh $NODE "docker exec $CONTAINER python3 $REPO/scripts/trace_layer_detail.py ${{ env.TRACE }}"
