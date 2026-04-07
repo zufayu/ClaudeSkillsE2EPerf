@@ -38,12 +38,15 @@
 | B200 | TRT-LLM post2 | EP4 TP4 | Ours-bench | 6426.9 | 1606.7 | 3212.7 | 19.4 | 86.1 | 51.61 |
 | MI355X | ATOM | EP4 TP4 | Ours-bench | 4753.6 | 1188.4 | 2376.3 | 26.2 | 100.9 | 38.17 |
 | MI355X | ATOM | EP4 TP4 | Ours-profiling | 4435.6 | 1108.9 | 2217.3 | 28.0 | 111.5 | 35.77 |
+| B200 | SGLang | EP1 TP4 | Ours-bench | 6486.3 | 1621.6 | 3242.4 | 18.8 | 399.2 | 53.25 |
 | MI355X | ATOM | EP1 TP4 | SA CI | 4806.8 | 1201.7 | 2402.9 | 25.94 | — | 38.55 |
 | MI355X | ATOM | EP1 TP4 | Ours-bench | 4906.9 | 1226.7 | 2452.9 | 25.5 | 104.4 | 39.28 |
 
 > **Key findings:**
 > - **B200 SGLang ≈ TRT-LLM post2**（吞吐量差 <0.5%），但 TRT-LLM TTFT 4.7x 更低（86 vs 404ms）
 > - **B200 vs MI355X（EP4 TP4 bench）:** B200 SGLang 1.34x（6397 vs 4754）
+> - **B200 EP1 vs EP4:** EP1 略快（6486 vs 6397, +1.4%），与 MI355X 趋势一致
+> - **B200 vs MI355X（EP1 TP4 bench）:** B200 SGLang 1.32x（6486 vs 4907）
 > - **MI355X EP4 vs EP1:** EP4 略慢（4754 vs 4907, -3.1%），4GPU 下 EP All-to-All 通信开销超过收益
 > - **Profiling overhead:** SGLang ~3.8%, ATOM ~6.7%
 
