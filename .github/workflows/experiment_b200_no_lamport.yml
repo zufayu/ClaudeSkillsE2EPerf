@@ -29,16 +29,19 @@ jobs:
           ssh $NODE "docker exec $CONTAINER bash -c '
             cd $REPO
 
-            # 1. Remove --enable-flashinfer-allreduce-fusion from collect script
-            sed \"/--enable-flashinfer-allreduce-fusion/d\" scripts/collect_sglang_trace.sh > /tmp/collect_no_lamport.sh
-
-            # 2. Disable auto-enable: SGLang auto-enables this on Blackwell (SM100).
-            #    Patch server_args.py to force it off.
+            # 1. Backup collect script and server_args.py
+            cp scripts/collect_sglang_trace.sh scripts/collect_sglang_trace.sh.bak
             SGLANG_ARGS=\$(python3 -c \"import sglang.srt.server_args as m; print(m.__file__)\")
             cp \$SGLANG_ARGS \${SGLANG_ARGS}.bak
+
+            # 2. Patch: remove --enable-flashinfer-allreduce-fusion from collect script
+            sed -i \"/--enable-flashinfer-allreduce-fusion/d\" scripts/collect_sglang_trace.sh
+
+            # 3. Patch: disable auto-enable in server_args.py (Blackwell SM100 default)
             sed -i \"s/self.enable_flashinfer_allreduce_fusion = True/self.enable_flashinfer_allreduce_fusion = False/g\" \$SGLANG_ARGS
 
-            bash /tmp/collect_no_lamport.sh \
+            # 4. Run profiling
+            bash scripts/collect_sglang_trace.sh \
               --model $MODEL_FP4 \
               --tp 4 --ep 4 \
               --scenario chat \
@@ -46,7 +49,8 @@ jobs:
               --env sglang059 \
               --result-dir ./$EXP_DIR
 
-            # 3. Restore original server_args.py
+            # 5. Restore originals
+            mv scripts/collect_sglang_trace.sh.bak scripts/collect_sglang_trace.sh
             mv \${SGLANG_ARGS}.bak \$SGLANG_ARGS
           '"
 
