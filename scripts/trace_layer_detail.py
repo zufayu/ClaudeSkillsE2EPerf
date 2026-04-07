@@ -59,6 +59,37 @@ OPERATOR_MAP = [
     (r"memcpy|memset", "memop"),
 ]
 
+# Module classification for each operator
+MODULE_MAP = {
+    "EP_AR+residual+RMSNorm(fused)": "EP_AR",
+    "qkv_a_proj_GEMM": "Attention",
+    "qkv_a_splitK_reduce": "Attention",
+    "q/k_norm_RMSNorm": "Attention",
+    "q_b_proj_GEMM": "Attention",
+    "uk_gemm(K_expansion)": "Attention",
+    "k_concat": "Attention",
+    "RoPE+KV_cache_write": "Attention",
+    "set_mla_kv": "Attention",
+    "Attention(FMHA)": "Attention",
+    "uv_gemm(V_expansion)": "Attention",
+    "o_proj_quant(BF16→FP4)": "Proj",
+    "o_proj_GEMM": "Proj",
+    "o_proj_splitK_GEMM": "Proj",
+    "router_GEMM": "MoE_Route",
+    "router_splitK_reduce": "MoE_Route",
+    "MoE_input_quant(BF16→FP4)": "MoE_Route",
+    "tensor_copy": "MoE_Route",
+    "TopK_select": "MoE_Route",
+    "expert_sort": "MoE_Route",
+    "SiLU×Mul": "Shared_Exp",
+    "shared_quant(BF16→FP4)": "Shared_Exp",
+    "shared_GEMM(FP4)": "Shared_Exp",
+    "gate_up_GEMM(+SwiGLU)": "MoE_Expert",
+    "down_GEMM": "MoE_Expert",
+    "MoE_finalize+residual": "MoE_Expert",
+    "residual_add": "Residual",
+}
+
 
 def classify_kernel(name, before_fmha, after_moe_start):
     """Classify kernel name to operator, handling position-dependent cases."""
@@ -83,6 +114,19 @@ def classify_kernel(name, before_fmha, after_moe_start):
                 return "shared_quant(BF16→FP4)"
             return "o_proj_quant(BF16→FP4)"
     return f"other:{name[:60]}"
+
+
+def get_raw_short(name):
+    """Extract a short raw kernel name."""
+    # Remove common prefixes
+    for prefix in ("void ", "sm100_", "sm90_"):
+        name = name.replace(prefix, "")
+    # Truncate at template params if very long
+    if len(name) > 80:
+        idx = name.find("<")
+        if idx > 0:
+            name = name[:idx] + "<...>"
+    return name[:80]
 
 
 def main():
@@ -154,6 +198,8 @@ def main():
     RE_LAYER_START = re.compile(r"allreduce_fusion_kernel", re.IGNORECASE)
     RE_LAYER_END = re.compile(r"vectorized_elementwise_kernel", re.IGNORECASE)
 
+    all_layer_kernels = []  # collect per-kernel data for averaging
+
     for layer_i, (fmha_idx, interval_dt) in enumerate(selected_intervals):
         fmha_start = fmha_events[fmha_idx]
         fmha_next = fmha_events[fmha_idx + 1]
@@ -220,11 +266,15 @@ def main():
             rel_ts = k["ts"] - base_ts
             before_fmha = (k["ts"] < fmha_start["ts"])
             after_moe = (moe_start_ts is not None and rel_ts >= moe_start_ts)
-            op = classify_kernel(k.get("name", ""), before_fmha, after_moe)
+            raw_name = k.get("name", "")
+            op = classify_kernel(raw_name, before_fmha, after_moe)
+            module = MODULE_MAP.get(op, "Other")
             kernel_rows.append({
                 "idx": ki,
-                "name": k.get("name", ""),
+                "name": raw_name,
+                "raw_short": get_raw_short(raw_name),
                 "op": op,
+                "module": module,
                 "stream": k.get("tid", 0),
                 "ts": rel_ts,
                 "dur": k.get("dur", 0),
@@ -251,11 +301,11 @@ def main():
             kernel_rows[i]["overlaps"] = overlaps
 
         # Print layer table
-        print(f"\n{'='*160}")
+        print(f"\n{'='*220}")
         print(f"Layer {layer_i}: FMHA-to-FMHA={interval_dt:.1f}μs | walltime={layer_walltime:.1f}μs | kernel_sum={kernel_sum:.1f}μs | overlap={kernel_sum-layer_walltime:.1f}μs | kernels={len(layer_kernels)}")
-        print(f"{'='*160}")
-        print(f"{'#':>3} {'Operator':<32} {'Stream':>6} {'Start':>8} {'Dur':>7} {'End':>8} {'Overlap_with':<50}")
-        print(f"{'-'*160}")
+        print(f"{'='*220}")
+        print(f"{'#':>3} {'Module':<12} {'Operator':<32} {'Raw_Kernel':<80} {'Str':>4} {'Start':>8} {'Dur':>7} {'End':>8} {'Overlap_with':<50}")
+        print(f"{'-'*220}")
 
         for kr in kernel_rows:
             # Format overlap column
@@ -268,30 +318,72 @@ def main():
             else:
                 ov_str = ""
 
-            print(f"{kr['idx']+1:>3} {kr['op']:<32} {kr['stream']:>6} {kr['ts']:>8.1f} {kr['dur']:>7.1f} {kr['end']:>8.1f} {ov_str:<50}")
+            print(f"{kr['idx']+1:>3} {kr['module']:<12} {kr['op']:<32} {kr['raw_short']:<80} {kr['stream']:>4} {kr['ts']:>8.1f} {kr['dur']:>7.1f} {kr['end']:>8.1f} {ov_str:<50}")
 
-        # Module summary
-        print(f"\n  Module summary:")
-        module_map = {}
-        for kr in kernel_rows:
-            op = kr["op"]
-            if op not in module_map:
-                module_map[op] = {"count": 0, "sum_us": 0}
-            module_map[op]["count"] += 1
-            module_map[op]["sum_us"] += kr["dur"]
+        # Collect per-kernel data for averaging
+        all_layer_kernels.append(kernel_rows)
 
-        for op, stats in module_map.items():
-            print(f"    {op:<35} ×{stats['count']}  {stats['sum_us']:>8.1f}μs")
-        print(f"    {'TOTAL':<35}      {kernel_sum:>8.1f}μs (wall: {layer_walltime:.1f}μs)")
-
-    # Average across 10 layers
-    print(f"\n{'='*160}")
-    print(f"10-LAYER SUMMARY")
-    print(f"{'='*160}")
+    # Average across 10 layers — per-kernel (29 rows) table
+    print(f"\n{'='*220}")
+    print(f"10-LAYER AVERAGED PER-KERNEL TABLE (ordered by timestamp)")
+    print(f"{'='*220}")
     all_dts = [dt for _, dt in selected_intervals]
-    print(f"  FMHA-to-FMHA avg: {sum(all_dts)/len(all_dts):.1f}μs")
-    print(f"  FMHA-to-FMHA range: {min(all_dts):.1f} - {max(all_dts):.1f}μs")
-    print(f"  × 61 layers = {sum(all_dts)/len(all_dts)*61/1000:.2f} ms estimated decode")
+    all_walls = []
+    all_ksums = []
+
+    if all_layer_kernels:
+        n_kernels = len(all_layer_kernels[0])
+        n_layers = len(all_layer_kernels)
+
+        # Verify all layers have same kernel count
+        for li, lk in enumerate(all_layer_kernels):
+            if len(lk) != n_kernels:
+                print(f"  WARNING: Layer {li} has {len(lk)} kernels, expected {n_kernels}")
+
+        print(f"{'#':>3} {'Module':<12} {'Operator':<32} {'Raw_Kernel':<80} {'Str':>4} {'Avg_Dur':>8} {'Min':>7} {'Max':>7} {'Std':>6}")
+        print(f"{'-'*220}")
+
+        total_avg_dur = 0
+        for ki in range(n_kernels):
+            durs = [all_layer_kernels[li][ki]["dur"] for li in range(n_layers) if ki < len(all_layer_kernels[li])]
+            avg_dur = sum(durs) / len(durs)
+            min_dur = min(durs)
+            max_dur = max(durs)
+            std_dur = (sum((d - avg_dur) ** 2 for d in durs) / len(durs)) ** 0.5
+            total_avg_dur += avg_dur
+
+            kr0 = all_layer_kernels[0][ki]
+            print(f"{ki+1:>3} {kr0['module']:<12} {kr0['op']:<32} {kr0['raw_short']:<80} {kr0['stream']:>4} {avg_dur:>8.1f} {min_dur:>7.1f} {max_dur:>7.1f} {std_dur:>6.1f}")
+
+        # Compute wall/sum stats per layer
+        for lk in all_layer_kernels:
+            ksum = sum(k["dur"] for k in lk)
+            wall_end = max(k["end"] for k in lk)
+            wall_start = min(k["ts"] for k in lk)
+            all_ksums.append(ksum)
+            all_walls.append(wall_end - wall_start)
+
+        avg_ksum = sum(all_ksums) / len(all_ksums)
+        avg_wall = sum(all_walls) / len(all_walls)
+        avg_overlap = avg_ksum - avg_wall
+
+        print(f"{'-'*220}")
+        print(f"    {'':12} {'TOTAL':<32} {'':80} {'':>4} {avg_ksum:>8.1f}")
+        print(f"\n  Kernel_sum avg: {avg_ksum:.1f}μs | Walltime avg: {avg_wall:.1f}μs | Overlap avg: {avg_overlap:.1f}μs")
+        print(f"  FMHA-to-FMHA avg: {sum(all_dts)/len(all_dts):.1f}μs | range: {min(all_dts):.1f} - {max(all_dts):.1f}μs")
+        print(f"  × 61 layers: kernel_sum={avg_ksum*61/1000:.2f}ms | walltime={avg_wall*61/1000:.2f}ms")
+
+        # Module subtotals
+        print(f"\n  Module subtotals (avg):")
+        mod_sums = {}
+        for ki in range(n_kernels):
+            durs = [all_layer_kernels[li][ki]["dur"] for li in range(n_layers)]
+            avg_d = sum(durs) / len(durs)
+            mod = all_layer_kernels[0][ki]["module"]
+            mod_sums[mod] = mod_sums.get(mod, 0) + avg_d
+        for mod, total in mod_sums.items():
+            pct = total / avg_ksum * 100
+            print(f"    {mod:<15} {total:>8.1f}μs  ({pct:>5.1f}%)")
 
 
 if __name__ == "__main__":
