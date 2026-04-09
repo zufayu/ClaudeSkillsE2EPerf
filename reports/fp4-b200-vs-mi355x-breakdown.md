@@ -400,42 +400,6 @@ bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
 | **Output TPS (total)** | 3921 | **3247** | ~2500 | 1.21x |
 | **Output TPS/GPU** | 490.1 | **405.8** | 624.9 | 1.21x |
 
-### 功能分组算子对比（单层，绝对 GPU 时间）
-
-> v21: 两平台均为 TP=8 EP=8（MI355X 用 `--enable-expert-parallel`），GPU 数量和并行策略完全对齐。
-
-| 功能块 | B200 μs | MI355X v21 μs | MI355X v20 μs | B200/MI355X (v21) | 差距来源 |
-|--------|---------|--------------|--------------|-------------------|---------|
-| **MLA Attention** | 97.6 | **82.6** | 96.4 | **1.18x** | **MI355X 反超;TP=8 heads/GPU 减半** |
-| └ qkv_a 投影 | 42.6 | 11.5 | 11.6 | 3.70x | B200 BF16 splitK 仍慢于 MI355X FP8 CK（不变） |
-| └ q_b + k_up 投影 | 9.5 | 11.6 | 12.5 | 0.82x | v21: TP=8 维度更小，略降 |
-| └ attention (fmha/mla) | 20.7 | 26.9 | 33.2 | 0.77x | v21: TP=8 heads 16→8，mla 18.0+reduce 8.9 |
-| └ v_proj + out_proj | 12.3 | 18.2 | 24.2 | 0.68x | v21: o_proj GEMM 13.5→8.0μs |
-| └ 其他 (norm/rope/concat) | 12.5 | 14.4 | 14.9 | 0.87x | |
-| **MoE (含 router/shared)** | 161.8 | **138.1** | 197.3 | **1.17x** | **MI355X 反超;EP 对齐后纯效率差 <12%** |
-| └ router + topk + sort | 24.4 | 27.8 | — | 0.88x | MI355X 含 3-phase sort |
-| └ gate_up GEMM | 59.6 | 66.5 | 123.6 | 0.90x | **v21: 32exp/GPU 相同;MI355X 仅 1.12x** |
-| └ down GEMM | 32.8 | 34.2 | 61.5 | 0.96x | **v21: 几乎持平（1.04x）** |
-| └ quant+sort融合 | 0 | 13.4 | 14.6 | — | MI355X 独有:2×fused_mxfp4_quant_moe_sort |
-| └ shared expert | 21.4 | 0* | 9.3 | — | B200 独有 5 个 kernel;MI355X 融入 grouped GEMM |
-| └ moe_finalize/通信 | 33.1 | 0** | — | — | B200 EP AR+residual+norm;v21 MI355X 可能融入其他 |
-| **通信 + Norm** | 24.9 | **46.0** | 50.3 | **0.54x** | B200 NVLink userbuffers 仍有大优势 |
-| └ pre-attn norm | 0 (融入Row1) | 21.1 | 27.4 | — | MI355X xGMI reduce_scatter |
-| └ post-attn norm | 15.2 | 24.9 | 22.9 | 0.61x | B200 NVLink userbuffers 融合通信 |
-| └ residual allgather | 9.7 | 0 | — | — | B200 独有（MI355X EP 的 AG 可能融入其他） |
-| **总计（单层 kernel sum）** | **276.9** | **267.6** | **344.0** | **1.03x** | **MI355X kernel sum 反超 B200 3.4%** |
-
-> \* MI355X shared_expert 融入 MoeMxGemm grouped GEMM（gate_up/down 的时间已包含 shared expert）。
-> \** MI355X 的 EP AllReduce / moe_finalize 可能融入其他 module（如 layernorm），或使用不同的通信方式（All-to-All dispatch/combine 已融入 MoeMxGemm）。
->
-> **v21 关键发现：**
-> 1. **MI355X kernel sum 反超 B200**（267.6 vs 276.9μs，快 3.4%），但 decode walltime 仍慢（17.22 vs 15.6ms，1.10x）。差距主要来自 L1→L2 overhead（MI355X 5.2% vs B200 1.8%）。
-> 2. **MoE GEMM EP 对齐后差距极小：** gate_up 1.12x，down 1.04x。v20 的 2.07x/1.88x 差距 **98% 来自 GPU 数差异**，现已消除。两平台 MoE GEMM 效率几乎相同。
-> 3. **MLA Attention MI355X 反超 15μs**（82.6 vs 97.6μs）。B200 qkv_a BF16 (42.6μs) 是最大瓶颈，MI355X FP8 CK 仅 11.5μs。即使 MI355X mla_reduce (8.9μs) 是独有开销，attention 总时间仍更短。
-> 4. **通信 + Norm 仍是 MI355X 短板**（46.0 vs 24.9μs，1.85x）。B200 NVLink userbuffers 的融合 AR+norm 效率显著优于 MI355X xGMI reduce_scatter 两步式通信。
-> 5. **B200 decode walltime 快 10% 的原因：** 虽然 kernel sum MI355X 更短，但 B200 的 moefinalize_lamport (33.11μs) 与 qkv_a (25.12μs) 并行执行，关键路径只看 max(33.1, 25.1)=33.1μs 而非 sum。B200 关键路径 251.1μs × 61 = 15.3ms ≈ 实测 15.6ms。MI355X 无此并行优势。
-> 6. **Per-GPU throughput B200 仍领先 21%**（490.1 vs 405.8 tok/s/GPU），因为 B200 decode walltime 更短 + NVLink 通信优势。
-
 ## 精度说明
 
 > **Kernel 精度判断依据：**
