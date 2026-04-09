@@ -1,0 +1,35 @@
+name: "Fetch MI355X EP8 c=4 profiling data"
+on:
+  workflow_dispatch:
+jobs:
+  fetch:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 5
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711_profiling_c4
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: List files
+        run: ls -lh $REPO/$RESULT_DIR/
+
+      - name: Show summary
+        run: cat $REPO/$RESULT_DIR/summary.md
+
+      - name: Commit and push
+        run: |
+          cd $REPO
+          git config user.email "ci@github.com"
+          git config user.name "MI355X CI"
+          for ext in log csv md xlsx json; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done
+          git diff --cached --name-only
+          if ! git diff --cached --quiet; then
+            git commit -m "data: MI355X MXFP4 EP=8 TP=8 profiling (chat c=4)
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+            git push
+          else
+            echo "Nothing to commit"
+          fi
