@@ -1,0 +1,44 @@
+name: "B200 Reprocess Trace (EP8 c=4)"
+on:
+  workflow_dispatch:
+jobs:
+  reprocess:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 30
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_sglang
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_sglang059_profiling_c4
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git fetch origin && git reset --hard origin/main"
+
+      - name: Find trace file
+        run: |
+          TRACE=$(ssh $NODE "ls $REPO/$RESULT_DIR/*TP-0-EP-0*.trace.json.gz 2>/dev/null | grep -v serialized | grep -v '.fix.' | head -1")
+          echo "TRACE=$TRACE" >> $GITHUB_ENV
+          echo "Found trace: $TRACE"
+
+      - name: Fix overlapping kernels
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && python3 scripts/fix_torch_trace_pro.py ${{ env.TRACE }}'"
+
+      - name: Run trace_layer_detail.py
+        run: |
+          FIX_TRACE=$(ssh $NODE "ls $REPO/$RESULT_DIR/*TP-0-EP-0*.fix.json.gz 2>/dev/null | head -1")
+          echo "Fixed trace: $FIX_TRACE"
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && python3 scripts/trace_layer_detail.py $FIX_TRACE --output-dir ./$RESULT_DIR'" 2>&1 | tail -80
+
+      - name: Show CSV
+        if: always()
+        run: ssh $NODE "cat $REPO/$RESULT_DIR/layer_kernel_avg.csv 2>/dev/null || echo 'No CSV'"
+
+      - name: Git commit and push
+        if: always()
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
+          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; for ext in log csv md; do git add -f $RESULT_DIR/*.\$ext 2>/dev/null || true; done; git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 EP8 TP8 c=4 trace reprocessed (fix + layer_detail)
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
