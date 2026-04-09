@@ -1,0 +1,43 @@
+#,Module,Operator,Raw_Kernel,Stream,Avg_us,Min_us,Max_us,Overlap_with
+1,EP_AR,EP_AR+residual+RMSNorm(fused),flashinfer::trtllm_allreduce_fusion::allreduce_fusion_kernel_oneshot_lamport<...,27,17.0,7.5,32.9,"other:void fused_a_gemm_kernel<1, 2112, 7168, 16, 8, 256, 16>(same)"
+2,Other,"other:void fused_a_gemm_kernel<1, 2112, 7168, 16, 8, 256, 16>(__nv",fused_a_gemm_kernel<...>,27,19.9,10.5,35.6,EP_AR+residual+RMSNorm(same) | q/k_norm_RMSNorm(same)
+3,Attention,q/k_norm_RMSNorm,flashinfer::norm::RMSNormKernel<...>,27,3.6,3.2,4.3,"other:void fused_a_gemm_kernel<1, 2112, 7168, 16, 8, 256, 16>(same) | q/k_norm_RMSNorm(cross)"
+4,Attention,q/k_norm_RMSNorm,flashinfer::norm::RMSNormKernel<...>,470,2.3,2.2,2.5,q/k_norm_RMSNorm(cross)
+5,Attention,q_b_proj_GEMM,nvjet_tst_24x64_64x16_4x1_v_bz_TNN,27,6.6,6.1,7.5,uk_gemm(same)
+6,Attention,uk_gemm(K_expansion),nvjet_tst_64x8_64x16_4x1_v_bz_TNT,27,4.2,3.7,5.2,q_b_proj_GEMM(same)
+7,Attention,RoPE+KV_cache_write,flashinfer::RopeQuantizeKernel<...>,27,2.3,2.1,2.5,
+8,Attention,set_mla_kv,set_mla_kv_buffer_kernel,27,1.5,1.4,1.6,
+9,Attention,Attention(FMHA),fmhaSm100fKernel_QkvE4m3OBfloat16HQk576HV512PagedKvDenseP64MultiCtasKvVarSeqQ16K,27,12.6,11.2,13.6,q_b_proj_GEMM(same)
+10,Attention,q_b_proj_GEMM,nvjet_tst_16x64_64x16_4x1_v_bz_TNN,27,3.8,3.6,4.1,Attention(same)
+11,Residual,residual_add,at::native::vectorized_elementwise_kernel<...>,7,2.1,1.5,5.3,
+12,Proj,o_proj_quant(BF16→FP4),cvt_fp16_to_fp4<...>,27,2.1,1.8,3.9,
+13,Proj,o_proj_GEMM,_ZN7cutlass13device_kernelIN10flashinfer4gemm58DeviceGemmFp4GemmSm100___nv_bfloa,27,6.9,6.7,7.1,EP_AR+residual+RMSNorm(same)
+14,EP_AR,EP_AR+residual+RMSNorm(fused),flashinfer::trtllm_allreduce_fusion::allreduce_fusion_kernel_oneshot_lamport<...,27,10.1,8.0,14.6,"other:void router_gemm_kernel_float_output<__nv_bfloat16, 128, 8, (cross) | o_proj_GEMM(same)"
+15,Other,"other:void router_gemm_kernel_float_output<__nv_bfloat16, 128, 8, ",router_gemm_kernel_float_output<...>,470,11.7,9.6,16.1,EP_AR+residual+RMSNorm(cross) | o_proj_quant(cross) | o_proj_GEMM(cross)
+16,Proj,o_proj_quant(BF16→FP4),cvt_fp16_to_fp4<...>,27,2.5,2.3,2.7,"other:void router_gemm_kernel_float_output<__nv_bfloat16, 128, 8, (cross) | o_proj_GEMM(same)"
+17,Other,"other:void at::native::index_elementwise_kernel<128, 4, at::native",at::native::index_elementwise_kernel<...>,7,7.3,7.1,7.4,"q/k_norm_RMSNorm(cross) | EP_AR+residual+RMSNorm(cross) | other:void fused_a_gemm_kernel<1, 2112, 7168, 16, 8, 256, 16>(cross) | other:void router_gemm_kernel_float_output<__nv_bfloat16, 128, 8, (cross) | o_proj_quant(cross) | o_proj_GEMM(cross) | MoE_input_quant(cross) | TopK_select(cross)"
+18,Proj,o_proj_GEMM,_ZN7cutlass13device_kernelIN10flashinfer4gemm57DeviceGemmFp4GemmSm100___nv_bfloa,27,9.8,9.1,14.8,"MoE_input_quant(cross) | TopK_select(cross) | expert_sort(cross) | other:void router_gemm_kernel_float_output<__nv_bfloat16, 128, 8, (cross) | o_proj_quant(same)"
+19,MoE_Route,MoE_input_quant(BF16→FP4),tensorrt_llm::kernels::quantize_with_block_size<...>,470,4.9,4.1,5.6,o_proj_GEMM(cross) | TopK_select(same)
+20,MoE_Route,TopK_select,moe::dev::routing::routingDeepSeek::routingMainKernel<...>,470,4.2,3.9,4.5,o_proj_GEMM(cross) | MoE_input_quant(same) | expert_sort(same)
+21,MoE_Route,expert_sort,moe::dev::routing::routingDeepSeek::routingIndicesClusterKernel<...>,470,4.9,4.6,5.0,o_proj_GEMM(cross) | TopK_select(same) | SiLU×Mul(cross) | gate_up_GEMM(same)
+22,Residual,residual_add,at::native::vectorized_elementwise_kernel<...>,7,2.1,2.0,2.3,o_proj_GEMM(cross) | expert_sort(cross) | gate_up_GEMM(cross) | uk_gemm(cross) | Attention(cross)
+23,MoE_Expert,gate_up_GEMM(+SwiGLU),bmm_E2m1_E2m1E2m1_Fp32_bA16_bB16_bC16_t128x32x512u2_s4_et128x32_m128x32x64_cga1x,470,16.6,8.2,26.6,SiLU×Mul(cross) | shared_quant(cross) | expert_sort(same)
+24,Shared_Exp,SiLU×Mul,flashinfer::activation::act_and_mul_kernel<...>,27,2.3,1.6,4.5,gate_up_GEMM(cross) | expert_sort(cross)
+25,MoE_Expert,down_GEMM,bmm_Bfloat16_E2m1E2m1_Fp32_bA16_bB16_t128x32x256_s6_et128x32_m128x32x64_cga1x1x1,470,11.6,6.9,15.1,shared_quant(cross) | other:void moe::dev::finalize::finalizeKernel<moe::dev::finalize::(same) | shared_GEMM(cross)
+26,Shared_Exp,shared_quant(BF16→FP4),cvt_fp16_to_fp4<...>,27,2.4,1.5,3.8,down_GEMM(cross) | gate_up_GEMM(cross)
+27,Other,other:void moe::dev::finalize::finalizeKernel<moe::dev::finalize::,moe::dev::finalize::finalizeKernel<...>,470,2.7,2.0,3.1,shared_GEMM(cross) | down_GEMM(same)
+28,Shared_Exp,shared_GEMM(FP4),_ZN7cutlass13device_kernelIN10flashinfer4gemm58DeviceGemmFp4GemmSm100___nv_bfloa,27,7.7,4.4,11.3,other:void moe::dev::finalize::finalizeKernel<moe::dev::finalize::(cross) | down_GEMM(cross)
+29,Residual,residual_add,at::native::vectorized_elementwise_kernel<...>,27,1.6,1.6,1.7,
+
+,,TOTAL,,,186.9,,,
+,,Walltime,,,128.2,,,
+,,Overlap,,,58.7,,,
+
+,EP_AR,,,,27.1,14.5%,,
+,Other,,,,41.6,22.2%,,
+,Attention,,,,37.0,19.8%,,
+,Residual,,,,5.9,3.1%,,
+,Proj,,,,21.2,11.4%,,
+,MoE_Route,,,,14.0,7.5%,,
+,MoE_Expert,,,,28.2,15.1%,,
+,Shared_Exp,,,,12.3,6.6%,,
