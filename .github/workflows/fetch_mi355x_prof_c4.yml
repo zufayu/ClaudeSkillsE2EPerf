@@ -23,7 +23,7 @@ jobs:
           cd $REPO
           git config user.email "ci@github.com"
           git config user.name "MI355X CI"
-          for ext in log csv md xlsx json; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done
+          for ext in log csv md xlsx json; do git add -f $RESULT_DIR/*.$ext 2>/dev/null || true; done
           git diff --cached --name-only
           if ! git diff --cached --quiet; then
             git commit -m "data: MI355X MXFP4 EP=8 TP=8 profiling (chat c=4)
