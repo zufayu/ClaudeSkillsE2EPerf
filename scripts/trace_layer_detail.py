@@ -349,37 +349,56 @@ def main():
         # Build canonical op_key order from layer 0
         ref_keys = [kr["op_key"] for kr in all_layer_kernels[0]]
 
-        # Collect per op_key: durations and overlap descriptions
+        # Collect per op_key: durations, overlap descriptions, and overlap totals
         op_data = {}
         for op_key in ref_keys:
-            op_data[op_key] = {"durs": [], "ov_descs": []}
+            op_data[op_key] = {"durs": [], "ov_descs": [], "ov_totals": []}
 
         for lk in all_layer_kernels:
             lk_by_key = {kr["op_key"]: kr for kr in lk}
             for op_key in ref_keys:
                 if op_key in lk_by_key:
-                    op_data[op_key]["durs"].append(lk_by_key[op_key]["dur"])
-                    op_data[op_key]["ov_descs"].append(lk_by_key[op_key].get("ov_desc", ""))
+                    kr = lk_by_key[op_key]
+                    op_data[op_key]["durs"].append(kr["dur"])
+                    op_data[op_key]["ov_descs"].append(kr.get("ov_desc", ""))
+                    op_data[op_key]["ov_totals"].append(sum(ov["us"] for ov in kr.get("overlaps", [])))
 
         # Determine most common overlap for each op_key
         def most_common_ov(descs):
-            """Get overlap partners that appear in >50% of layers."""
+            """Get overlap partners that appear in >50% of layers (names only)."""
             partner_counts = Counter()
             for d in descs:
                 if not d:
                     continue
                 for part in d.split(" | "):
-                    # Extract partner op name (before the parenthesis)
                     paren = part.find("(")
                     if paren > 0:
                         partner = part[:paren]
-                        # Extract same/cross tag
                         tag = "cross" if "cross" in part else "same"
                         partner_counts[(partner, tag)] += 1
             result = []
             for (partner, tag), cnt in partner_counts.most_common():
                 if cnt >= len(descs) // 2:
                     result.append(f"{partner}({tag})")
+            return " | ".join(result) if result else ""
+
+        def most_common_ov_with_us(descs):
+            """Get overlap partners with avg μs, appearing in >50% of layers."""
+            from collections import defaultdict
+            partner_us = defaultdict(list)
+            for d in descs:
+                if not d:
+                    continue
+                for part in d.split(" | "):
+                    m = re.match(r'(.+?)\(([\d.]+)μs,(same|cross)\)', part.strip())
+                    if m:
+                        key = (m.group(1), m.group(3))
+                        partner_us[key].append(float(m.group(2)))
+            result = []
+            for (partner, tag), vals in sorted(partner_us.items(), key=lambda x: -sum(x[1]) / len(x[1])):
+                if len(vals) >= len(descs) // 2:
+                    avg_us = sum(vals) / len(vals)
+                    result.append(f"{partner}({tag}):{avg_us:.1f}μs")
             return " | ".join(result) if result else ""
 
         print(f"{'#':>3} {'Module':<12} {'Operator':<32} {'Raw_Kernel':<80} {'Str':>4} {'Avg':>7} {'Min':>6} {'Max':>6}  {'Overlap_with':<60}")
@@ -426,27 +445,103 @@ def main():
             pct = total / avg_ksum * 100
             print(f"    {mod:<15} {total:>8.1f}μs  ({pct:>5.1f}%)")
 
-        # Write CSV output
+        # Write CSV output — kernel map format with overlap and MI355X placeholder columns
         if args.output_dir:
             os.makedirs(args.output_dir, exist_ok=True)
             csv_path = os.path.join(args.output_dir, "layer_kernel_avg.csv")
+
+            # Pass-level grouping: map each operator to a pass
+            PASS_MAP = {
+                "EP_AR+residual+RMSNorm(fused)": None,  # assigned by occurrence #
+                "qkv_a_proj_GEMM": "MHA",
+                "qkv_a_splitK_reduce": "MHA",
+                "q/k_norm_RMSNorm": "MHA",
+                "q_b_proj_GEMM": "MHA",
+                "uk_gemm(K_expansion)": "MHA",
+                "k_concat": "MHA",
+                "RoPE+KV_cache_write": "MHA",
+                "set_mla_kv": "MHA",
+                "Attention(FMHA)": "MHA",
+                "uv_gemm(V_expansion)": "MHA",
+                "o_proj_quant(BF16→FP4)": "O_proj",
+                "o_proj_GEMM": "O_proj",
+                "o_proj_splitK_GEMM": "O_proj",
+                "router_GEMM": "MOE",
+                "router_splitK_reduce": "MOE",
+                "Moe_Expert_quant(BF16→FP4)": "MOE",
+                "MoE_input_quant(BF16→FP4)": "MOE",
+                "tensor_copy": "MOE",
+                "TopK_select": "MOE",
+                "expert_sort": "MOE",
+                "SiLU×Mul": "MOE",
+                "shared_quant(BF16→FP4)": "MOE",
+                "shared_GEMM(FP4)": "MOE",
+                "gate_up_GEMM(+SwiGLU)": "MOE",
+                "down_GEMM": "MOE",
+                "MoE_finalize+residual": "MOE",
+                "residual_add": "MOE",
+            }
+
+            # Collect rows and compute pass sums
+            pass_sums = {}
+            csv_rows = []
+
+            for ki, op_key in enumerate(ref_keys):
+                durs = op_data[op_key]["durs"]
+                avg_dur = sum(durs) / len(durs)
+                ov_tots = op_data[op_key]["ov_totals"]
+                avg_ov = sum(ov_tots) / len(ov_tots) if ov_tots else 0
+                kr0 = all_layer_kernels[0][ki]
+                ov_with = most_common_ov_with_us(op_data[op_key]["ov_descs"])
+
+                # Determine pass
+                op = kr0["op"]
+                pass_name = PASS_MAP.get(op, "MOE")
+                if pass_name is None:
+                    # EP_AR: #1 → EP_AR_before_MHA, #2 → EP_AR_before_MOE
+                    if op_key.endswith("#1"):
+                        pass_name = "EP_AR_before_MHA"
+                    else:
+                        pass_name = "EP_AR_before_MOE"
+                # o_proj_GEMM #2 goes to O_proj pass
+                if op == "o_proj_GEMM" or op == "o_proj_quant(BF16→FP4)":
+                    pass_name = "O_proj"
+
+                pass_sums[pass_name] = pass_sums.get(pass_name, 0) + avg_dur
+
+                csv_rows.append([
+                    ki + 1,
+                    kr0["module"],
+                    kr0["op"],
+                    kr0["raw_short"],
+                    kr0["stream"],
+                    f"{avg_dur:.1f}",
+                    f"{avg_ov:.1f}" if avg_ov > 0.05 else "0",
+                    ov_with,
+                    "",  # MI355X_Module placeholder
+                    "",  # MI355X_Kernel placeholder
+                    "",  # MI355X_Avg_us placeholder
+                    "",  # Notes placeholder
+                ])
+
             with open(csv_path, "w", newline="") as f:
                 w = csv.writer(f)
-                w.writerow(["#", "Module", "Operator", "Raw_Kernel", "Stream", "Avg_us", "Min_us", "Max_us", "Overlap_with"])
-                for ki, op_key in enumerate(ref_keys):
-                    durs = op_data[op_key]["durs"]
-                    avg_dur = sum(durs) / len(durs)
-                    kr0 = all_layer_kernels[0][ki]
-                    ov_common = most_common_ov(op_data[op_key]["ov_descs"])
-                    w.writerow([ki + 1, kr0["module"], kr0["op"], kr0["raw_short"], kr0["stream"], f"{avg_dur:.1f}", f"{min(durs):.1f}", f"{max(durs):.1f}", ov_common])
+                w.writerow(["#", "B200_Module", "B200_Operator", "B200_Raw_Kernel", "B200_Stream",
+                             "B200_Avg_us", "B200_Overlap_us", "B200_Overlap_With",
+                             "MI355X_Module", "MI355X_Kernel", "MI355X_Avg_us", "Notes"])
+                for row in csv_rows:
+                    w.writerow(row)
                 w.writerow([])
-                w.writerow(["", "", "TOTAL", "", "", f"{avg_ksum:.1f}", "", "", ""])
-                w.writerow(["", "", "Walltime", "", "", f"{avg_wall:.1f}", "", "", ""])
-                w.writerow(["", "", "Overlap", "", "", f"{avg_overlap:.1f}", "", "", ""])
+                w.writerow(["", "", "B200 TOTAL (kernel_sum)", "", "", f"{avg_ksum:.1f}", "", "", "", "MI355X TOTAL", "", ""])
+                w.writerow(["", "", "B200 Walltime", "", "", f"{avg_wall:.1f}", "", "", "", "", "", ""])
+                w.writerow(["", "", "B200 Overlap", "", "", f"{avg_overlap:.1f}", "", "", "", "", "", ""])
                 w.writerow([])
-                for mod, total in mod_sums.items():
-                    pct = total / avg_ksum * 100
-                    w.writerow(["", mod, "", "", "", f"{total:.1f}", f"{pct:.1f}%", "", ""])
+                # Pass-level summary
+                w.writerow(["", "", "PASS", "", "B200", "MI355X", "gap", "", "NV_Kernels", "AMD_Kernels", "", ""])
+                pass_order = ["MOE", "MHA", "O_proj", "EP_AR_before_MHA", "EP_AR_before_MOE"]
+                for pname in pass_order:
+                    b200_val = pass_sums.get(pname, 0)
+                    w.writerow(["", "", pname, "", f"{b200_val:.1f}", "", "", "", "", "", "", ""])
             print(f"\n  CSV written: {csv_path}")
 
     # === allreduce_fusion_kernel distribution analysis ===

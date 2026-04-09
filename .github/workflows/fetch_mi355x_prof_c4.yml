@@ -16,7 +16,7 @@ jobs:
         run: ls -lh $REPO/$RESULT_DIR/
 
       - name: Show summary
-        run: cat $REPO/$RESULT_DIR/summary.md
+        run: cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo "No summary.md found"
 
       - name: Commit and push
         run: |
