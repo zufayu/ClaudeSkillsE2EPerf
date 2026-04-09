@@ -35,14 +35,24 @@ jobs:
           ssh $NODE "ls -lh $REPO/$RESULT_DIR/*.json.gz 2>/dev/null | head -10 || echo 'No trace files'"
           ssh $NODE "cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'"
 
+      - name: "Fix overlapping kernels in trace"
+        if: always()
+        run: |
+          TRACE=$(ssh $NODE "ls $REPO/$RESULT_DIR/*TP-0-EP-0*.trace.json.gz 2>/dev/null | grep -v serialized | grep -v '.fix.' | head -1")
+          if [ -n "$TRACE" ]; then
+            ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && python3 scripts/fix_torch_trace_pro.py $TRACE'"
+          else
+            echo "No trace file found"
+          fi
+
       - name: "Run trace_layer_detail.py analysis"
         if: always()
         run: |
-          TRACE=$(ssh $NODE "ls $REPO/$RESULT_DIR/*TP-0-EP-0*.trace.json.gz 2>/dev/null | grep -v serialized | head -1")
+          TRACE=$(ssh $NODE "ls $REPO/$RESULT_DIR/*TP-0-EP-0*.fix.json.gz 2>/dev/null | head -1")
           if [ -n "$TRACE" ]; then
             ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && python3 scripts/trace_layer_detail.py $TRACE --output-dir ./$RESULT_DIR'"
           else
-            echo "No trace file found for analysis"
+            echo "No fixed trace file found for analysis"
           fi
 
       - name: Show CSV
