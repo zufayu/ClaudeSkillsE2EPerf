@@ -1,0 +1,66 @@
+name: "B200 SGLang FP4 EP8 TP8 c=4 Profiling"
+on:
+  workflow_dispatch:
+jobs:
+  sglang-fp4-tp8-ep8-c4-profiling:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 180
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_sglang
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_sglang059_profiling_c4
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+
+      - name: Verify container
+        run: |
+          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2"
+          ssh $NODE "docker exec $CONTAINER python3 -c 'import sglang; print(f\"SGLang {sglang.__version__}\")'"
+
+      - name: Get container image name
+        run: echo "IMAGE=$(ssh $NODE "docker inspect $CONTAINER --format '{{.Config.Image}}'" 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: Clean old results
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true' && rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true"
+
+      - name: "Torch trace capture (chat c=4, TP8 EP8)"
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_trace.sh --model $MODEL_FP4 --tp 8 --ep 8 --scenario chat --concurrency 4 --env sglang059 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'"
+
+      - name: Show trace results
+        if: always()
+        run: |
+          ssh $NODE "ls -lh $REPO/$RESULT_DIR/*.json.gz 2>/dev/null | head -10 || echo 'No trace files'"
+          ssh $NODE "cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'"
+
+      - name: "Run trace_layer_detail.py analysis"
+        if: always()
+        run: |
+          TRACE=$(ssh $NODE "ls $REPO/$RESULT_DIR/*TP-0-EP-0*.trace.json.gz 2>/dev/null | grep -v serialized | head -1")
+          if [ -n "$TRACE" ]; then
+            ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && python3 scripts/trace_layer_detail.py $TRACE --output-dir ./$RESULT_DIR'"
+          else
+            echo "No trace file found for analysis"
+          fi
+
+      - name: Show CSV
+        if: always()
+        run: |
+          ssh $NODE "cat $REPO/$RESULT_DIR/layer_kernel_avg.csv 2>/dev/null || echo 'No CSV'"
+          ssh $NODE "cat $REPO/$RESULT_DIR/allreduce_fusion_dist.csv 2>/dev/null | head -20 || echo 'No allreduce CSV'"
+
+      - name: Git commit and push results
+        if: always()
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
+          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; for ext in log yml jsonl json md csv; do git add -f $RESULT_DIR/*.\$ext 2>/dev/null; done; git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 SGLang FP4 TP=8 EP=8 profiling (chat c=4)
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
+
+      - name: Show final state
+        if: always()
+        run: ssh $NODE "cd $REPO && git log --oneline -3"

@@ -1,0 +1,50 @@
+name: "MI355X MXFP4 EP8 TP8 c=4 Profiling"
+on:
+  workflow_dispatch:
+jobs:
+  mxfp4-ep8-tp8-c4-profiling:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 120
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
+      RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711_profiling_c4
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Clean old results
+        run: podman exec $CONTAINER bash -c "rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true"
+
+      - name: Run MXFP4 EP8 TP8 profiling (chat c=4)
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/collect_atom_trace.sh --model $MODEL --scenario chat --concurrency 4 --tp 8 --ep --profile-prompts 40 --roctracer-max-events 20000000 --env rocm711 --result-dir ./$RESULT_DIR"
+
+      - name: Show profiling results
+        if: always()
+        run: |
+          ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'
+          cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'
+
+      - name: Git commit and push results
+        if: always()
+        run: |
+          cd $REPO
+          git config user.email "ci@github.com"
+          git config user.name "MI355X CI"
+          git pull --rebase origin main || true
+          for ext in log csv md xlsx; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done
+          git add -f $RESULT_DIR/result_profiled_*.json 2>/dev/null || true
+          git diff --cached --name-only
+          if ! git diff --cached --quiet; then
+            git commit -m "data: MI355X MXFP4 EP=8 TP=8 profiling (chat c=4)
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+            git push
+          else
+            echo "Nothing to commit"
+          fi
+
+      - name: Show final state
+        if: always()
+        run: cd $REPO && git log --oneline -3
