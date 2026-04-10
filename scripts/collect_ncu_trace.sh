@@ -32,6 +32,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ======================== Defaults ============================================
 MODEL=""
+BACKEND="sglang"  # sglang | trtllm
 TP=4
 EP=4
 QUANTIZATION=""
@@ -58,9 +59,10 @@ Nsight Compute trace capture for offline LLM inference (SGLang/TRT-LLM).
 
 Required:
   --model PATH            Model path
-  --result-dir DIR        Output directory for .ncu-rep
+  --result-dir DIR        Output directory (ncu/ subfolder created automatically)
 
 Options:
+  --backend BACKEND       sglang | trtllm (default: sglang)
   --tp N                  Tensor parallel size (default: 4)
   --ep N                  Expert parallel size (default: 4)
   --quantization Q        Quantization method (e.g. modelopt_fp4)
@@ -84,6 +86,7 @@ EOF
 while [[ $# -gt 0 ]]; do
     case $1 in
         --model)            MODEL="$2"; shift 2 ;;
+        --backend)          BACKEND="$2"; shift 2 ;;
         --tp)               TP="$2"; shift 2 ;;
         --ep)               EP="$2"; shift 2 ;;
         --quantization)     QUANTIZATION="$2"; shift 2 ;;
@@ -104,13 +107,15 @@ done
 
 # ======================== Setup ===============================================
 
-mkdir -p "$RESULT_DIR"
+NCU_DIR="$RESULT_DIR/ncu"
+mkdir -p "$NCU_DIR"
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
 log "============================================================"
 log "  Nsight Compute Trace Capture"
 log "============================================================"
+log "  Backend:     $BACKEND"
 log "  Model:       $MODEL"
 log "  TP=$TP  EP=$EP  quant=${QUANTIZATION:-none}"
 log "  ISL=$ISL  OSL=$OSL  warmup=$WARMUP"
@@ -131,7 +136,7 @@ NCU_OPTS=(
     --target-processes all
     --pm-sampling-interval 1000
     -f                         # force overwrite
-    -o "$RESULT_DIR/$REPORT_NAME"
+    -o "$NCU_DIR/$REPORT_NAME"
 )
 
 # Section set
@@ -148,6 +153,7 @@ fi
 
 # Build inference script args
 INFER_ARGS=(
+    --backend "$BACKEND"
     --model "$MODEL"
     --tp "$TP"
     --ep "$EP"
@@ -171,11 +177,11 @@ log "Command:"
 log "  $FULL_CMD"
 log ""
 
-ncu "${NCU_OPTS[@]}" python3 "$SCRIPT_DIR/ncu_infer.py" "${INFER_ARGS[@]}" 2>&1 | tee "$RESULT_DIR/${REPORT_NAME}.log"
+ncu "${NCU_OPTS[@]}" python3 "$SCRIPT_DIR/ncu_infer.py" "${INFER_ARGS[@]}" 2>&1 | tee "$NCU_DIR/${REPORT_NAME}.log"
 
 # ======================== Results =============================================
 
-REPORT_FILE="$RESULT_DIR/${REPORT_NAME}.ncu-rep"
+REPORT_FILE="$NCU_DIR/${REPORT_NAME}.ncu-rep"
 if [[ -f "$REPORT_FILE" ]]; then
     REPORT_SIZE=$(du -h "$REPORT_FILE" | cut -f1)
     log ""
@@ -183,7 +189,7 @@ if [[ -f "$REPORT_FILE" ]]; then
     log "  NCU CAPTURE COMPLETE"
     log "============================================================"
     log "  Report:  $REPORT_FILE ($REPORT_SIZE)"
-    log "  Log:     $RESULT_DIR/${REPORT_NAME}.log"
+    log "  Log:     $NCU_DIR/${REPORT_NAME}.log"
     log ""
     log "  Open in GUI: ncu-ui $REPORT_FILE"
     log "  Export CSV:  ncu -i $REPORT_FILE --page details --csv > details.csv"
@@ -191,5 +197,5 @@ if [[ -f "$REPORT_FILE" ]]; then
     log "============================================================"
 else
     log "ERROR: No .ncu-rep file generated"
-    ls -la "$RESULT_DIR/" 2>/dev/null
+    ls -la "$NCU_DIR/" 2>/dev/null
 fi

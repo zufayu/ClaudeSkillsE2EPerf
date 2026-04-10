@@ -2,14 +2,15 @@
 """
 Offline inference script for ncu profiling.
 
-Loads model via SGLang offline engine, warms up to steady state,
-then uses cudaProfilerStart/Stop to precisely capture one decode
-iteration for ncu analysis.
+Loads model via offline engine (SGLang or TRT-LLM), warms up to
+steady state, then uses cudaProfilerStart/Stop to precisely capture
+one decode iteration for ncu analysis.
 
 Usage with ncu:
     ncu --profile-from-start off --set full --graph-profiling node \
         --target-processes all -o ncu_report \
         python scripts/ncu_infer.py \
+        --backend sglang \
         --model /path/to/model --tp 8 --ep 8 \
         --quantization modelopt_fp4 \
         --warmup-prompts 5 --isl 1024 --osl 64
@@ -24,6 +25,8 @@ import time
 
 def main():
     parser = argparse.ArgumentParser(description="Offline inference for ncu profiling")
+    parser.add_argument("--backend", default="sglang", choices=["sglang", "trtllm"],
+                        help="Inference backend (default: sglang)")
     parser.add_argument("--model", required=True, help="Model path")
     parser.add_argument("--tp", type=int, default=4, help="Tensor parallel size")
     parser.add_argument("--ep", type=int, default=4, help="Expert parallel size")
@@ -39,18 +42,45 @@ def main():
     args = parser.parse_args()
 
     import torch
-    import sglang as sgl
 
     # Build prompt of target ISL length (approximate with repeated text)
     base_text = "Explain the architecture of modern large language models in detail. "
     prompt_text = (base_text * (args.isl // 10 + 1))[:args.isl * 4]  # ~4 chars/token
 
-    sampling_params = {
-        "max_new_tokens": args.osl,
-        "temperature": 0,
-    }
+    if args.backend == "sglang":
+        engine, generate_fn, shutdown_fn = _init_sglang(args, prompt_text)
+    elif args.backend == "trtllm":
+        engine, generate_fn, shutdown_fn = _init_trtllm(args, prompt_text)
 
-    # Build engine kwargs
+    # Warmup: run several prompts to reach steady state (CUDA graph capture + warm caches)
+    print(f"\nWarmup: {args.warmup_prompts} prompts (ISL~{args.isl}, OSL={args.osl})...")
+    for i in range(args.warmup_prompts):
+        n_tokens = generate_fn()
+        print(f"  warmup {i+1}/{args.warmup_prompts}: {n_tokens} tokens")
+
+    torch.cuda.synchronize()
+
+    # Profile: one inference pass
+    print(f"\n=== cudaProfilerStart === (ncu capture begins)")
+    torch.cuda.cudart().cudaProfilerStart()
+
+    n_tokens = generate_fn()
+
+    torch.cuda.synchronize()
+    torch.cuda.cudart().cudaProfilerStop()
+    print(f"=== cudaProfilerStop === (ncu capture ends)")
+    print(f"  Profiled: {n_tokens} tokens generated")
+
+    shutdown_fn()
+    print("Done.")
+
+
+def _init_sglang(args, prompt_text):
+    """Initialize SGLang offline engine."""
+    import sglang as sgl
+
+    sampling_params = {"max_new_tokens": args.osl, "temperature": 0}
+
     engine_kwargs = {
         "model_path": args.model,
         "tp_size": args.tp,
@@ -68,36 +98,42 @@ def main():
     if args.quantization:
         engine_kwargs["quantization"] = args.quantization
 
-    print(f"Loading model: {args.model}")
+    print(f"Loading SGLang model: {args.model}")
     print(f"  TP={args.tp} EP={args.ep} quant={args.quantization}")
     t0 = time.time()
     engine = sgl.Engine(**engine_kwargs)
     print(f"  Model loaded in {time.time() - t0:.1f}s")
 
-    # Warmup: run several prompts to reach steady state (CUDA graph capture + warm caches)
-    print(f"\nWarmup: {args.warmup_prompts} prompts (ISL≈{args.isl}, OSL={args.osl})...")
-    for i in range(args.warmup_prompts):
+    def generate_fn():
         out = engine.generate(prompt_text, sampling_params)
-        tokens = len(out.get("text", "").split())
-        print(f"  warmup {i+1}/{args.warmup_prompts}: {tokens} tokens")
+        return len(out.get("text", "").split())
 
-    torch.cuda.synchronize()
+    return engine, generate_fn, engine.shutdown
 
-    # Profile: one inference pass
-    print(f"\n=== cudaProfilerStart === (ncu capture begins)")
-    torch.cuda.cudart().cudaProfilerStart()
 
-    out = engine.generate(prompt_text, sampling_params)
+def _init_trtllm(args, prompt_text):
+    """Initialize TRT-LLM offline engine."""
+    from tensorrt_llm import LLM, SamplingParams
 
-    torch.cuda.synchronize()
-    torch.cuda.cudart().cudaProfilerStop()
-    print(f"=== cudaProfilerStop === (ncu capture ends)")
+    llm = LLM(
+        model=args.model,
+        tensor_parallel_size=args.tp,
+        trust_remote_code=True,
+    )
 
-    tokens = len(out.get("text", "").split())
-    print(f"  Profiled: {tokens} tokens generated")
+    sampling_params = SamplingParams(max_tokens=args.osl, temperature=0)
 
-    engine.shutdown()
-    print("Done.")
+    print(f"Loading TRT-LLM model: {args.model}")
+    print(f"  TP={args.tp} quant={args.quantization}")
+
+    def generate_fn():
+        outputs = llm.generate([prompt_text], sampling_params=sampling_params)
+        return sum(len(o.outputs[0].token_ids) for o in outputs)
+
+    def shutdown_fn():
+        pass  # TRT-LLM LLM cleans up on del
+
+    return llm, generate_fn, shutdown_fn
 
 
 if __name__ == "__main__":
