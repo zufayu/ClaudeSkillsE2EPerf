@@ -15,12 +15,31 @@ jobs:
       - name: Sync repo
         run: ssh $NODE "cd $REPO && git fetch origin && git reset --hard origin/main"
 
-      - name: Check ncu version
-        run: ssh $NODE "docker exec $CONTAINER ncu --version"
+      - name: Ensure container is running
+        run: |
+          ssh $NODE "docker start $CONTAINER 2>/dev/null || echo 'Container not found or already running'"
+          ssh $NODE "docker exec $CONTAINER python3 -c 'import sglang; print(f\"SGLang {sglang.__version__}\")'"
+
+      - name: Find or install ncu in container
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c '
+            if which ncu 2>/dev/null; then ncu --version; exit 0; fi
+            echo \"ncu not in PATH, searching...\"
+            NCU_PATH=\$(find /usr/local/cuda /opt/nvidia 2>/dev/null -name ncu -type f | head -1)
+            if [ -n \"\$NCU_PATH\" ]; then
+              echo \"Found: \$NCU_PATH\"
+              ln -sf \$NCU_PATH /usr/local/bin/ncu
+              ncu --version
+              exit 0
+            fi
+            echo \"Not found, installing nsight-compute-2025.3.1...\"
+            apt-get update -qq && apt-get install -y -qq nsight-compute-2025.3.1 || apt-get install -y -qq nsight-compute
+            which ncu && ncu --version
+          '"
 
       - name: Run ncu profiling (pmsampling only, fast test)
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_ncu_trace.sh --backend sglang --model $MODEL_FP4 --tp 8 --ep 8 --quantization modelopt_fp4 --osl 32 --warmup 3 --ncu-set pmsampling --result-dir ./$RESULT_DIR'" 2>&1 | tail -40
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_ncu_trace.sh --backend sglang --model $MODEL_FP4 --tp 8 --ep 8 --quantization modelopt_fp4 --osl 32 --warmup 3 --ncu-set pmsampling --result-dir ./$RESULT_DIR'" 2>&1 | tail -60
 
       - name: Show results
         if: always()
