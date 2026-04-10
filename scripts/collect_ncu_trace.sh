@@ -131,13 +131,18 @@ log "ncu: $NCU_VERSION"
 # ======================== Build ncu Command ====================================
 
 NCU_OPTS=(
-    --profile-from-start off
     --graph-profiling node
     --target-processes all
     --pm-sampling-interval 1000
     -f                         # force overwrite
     -o "$NCU_DIR/$REPORT_NAME"
 )
+
+# cudaProfilerStart/Stop works for in-process engines (SGLang) but not for
+# TRT-LLM which spawns worker subprocesses. For TRT-LLM, capture everything.
+if [[ "$BACKEND" != "trtllm" ]]; then
+    NCU_OPTS+=(--profile-from-start off)
+fi
 
 # Section set
 if [[ "$NCU_SET" == "pmsampling" ]]; then

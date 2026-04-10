@@ -61,14 +61,25 @@ def main():
     torch.cuda.synchronize()
 
     # Profile: one inference pass
-    print(f"\n=== cudaProfilerStart === (ncu capture begins)")
-    torch.cuda.cudart().cudaProfilerStart()
+    # Note: cudaProfilerStart/Stop works for in-process engines (SGLang).
+    # For TRT-LLM (multi-process workers), profiler calls don't propagate
+    # to worker processes — use ncu without --profile-from-start off instead.
+    use_profiler_api = (args.backend != "trtllm")
+
+    if use_profiler_api:
+        print(f"\n=== cudaProfilerStart === (ncu capture begins)")
+        torch.cuda.cudart().cudaProfilerStart()
 
     n_tokens = generate_fn()
 
-    torch.cuda.synchronize()
-    torch.cuda.cudart().cudaProfilerStop()
-    print(f"=== cudaProfilerStop === (ncu capture ends)")
+    if use_profiler_api:
+        torch.cuda.synchronize()
+        torch.cuda.cudart().cudaProfilerStop()
+        print(f"=== cudaProfilerStop === (ncu capture ends)")
+    else:
+        torch.cuda.synchronize()
+        print(f"\n=== TRT-LLM profiled pass complete ===")
+
     print(f"  Profiled: {n_tokens} tokens generated")
 
     shutdown_fn()
