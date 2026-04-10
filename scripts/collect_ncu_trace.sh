@@ -138,11 +138,10 @@ NCU_OPTS=(
     -o "$NCU_DIR/$REPORT_NAME"
 )
 
-# cudaProfilerStart/Stop works for in-process engines (SGLang) but not for
-# TRT-LLM which spawns worker subprocesses. For TRT-LLM, capture everything.
-if [[ "$BACKEND" != "trtllm" ]]; then
-    NCU_OPTS+=(--profile-from-start off)
-fi
+# Both SGLang and TRT-LLM use multi-process execution. ncu with
+# --profile-from-start off + cudaProfilerStart doesn't propagate to
+# worker subprocesses, causing hangs or empty captures. Instead, we
+# capture all kernels and rely on warmup being short.
 
 # Section set
 if [[ "$NCU_SET" == "pmsampling" ]]; then
