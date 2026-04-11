@@ -1,0 +1,67 @@
+name: B200 Docker Diagnostic
+on:
+  workflow_dispatch:
+jobs:
+  diagnose:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 10
+    env:
+      NODE: hungry-hippo-fin-03-2
+    steps:
+      - name: Check Docker daemon
+        run: |
+          echo "=== Docker version ==="
+          ssh $NODE "docker version 2>&1 || echo 'Docker not accessible'"
+          echo ""
+          echo "=== Docker info ==="
+          ssh $NODE "docker info 2>&1 | head -30 || echo 'Docker info failed'"
+
+      - name: List all containers (running + stopped)
+        run: |
+          echo "=== All containers ==="
+          ssh $NODE "docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.CreatedAt}}' 2>&1"
+
+      - name: List Docker images
+        run: |
+          echo "=== Docker images ==="
+          ssh $NODE "docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}' 2>&1"
+
+      - name: Check Docker events (last 24h)
+        run: |
+          echo "=== Docker events (container destroy/die/kill in last 24h) ==="
+          ssh $NODE "docker events --since 24h --until 0s --filter 'type=container' --filter 'event=destroy' --format '{{.Time}} {{.Action}} {{.Actor.Attributes.name}}' 2>/dev/null || echo 'No events or not supported'"
+          echo ""
+          echo "=== Docker events (die) ==="
+          ssh $NODE "docker events --since 24h --until 0s --filter 'type=container' --filter 'event=die' --format '{{.Time}} {{.Action}} {{.Actor.Attributes.name}}' 2>/dev/null || echo 'No events'"
+
+      - name: Check disk space
+        run: |
+          echo "=== Disk usage ==="
+          ssh $NODE "df -h / /SFS-aGqda6ct 2>/dev/null || df -h /"
+          echo ""
+          echo "=== Docker disk usage ==="
+          ssh $NODE "docker system df 2>&1"
+
+      - name: Check system logs for Docker issues
+        run: |
+          echo "=== Recent Docker-related syslog ==="
+          ssh $NODE "sudo journalctl -u docker --since '24 hours ago' --no-pager | tail -50 2>/dev/null || echo 'journalctl not available'"
+          echo ""
+          echo "=== dmesg OOM killer ==="
+          ssh $NODE "dmesg | grep -i 'oom\|killed process' | tail -20 2>/dev/null || echo 'no OOM events'"
+
+      - name: Check GPU status
+        run: |
+          echo "=== nvidia-smi ==="
+          ssh $NODE "nvidia-smi 2>&1 | head -20"
+
+      - name: Check model files
+        run: |
+          echo "=== Model directory ==="
+          ssh $NODE "ls -la /home/models/ 2>/dev/null || echo '/home/models not found'"
+          ssh $NODE "ls -la /home/models/DeepSeek-R1-0528-NVFP4-v2/ 2>/dev/null | head -5 || echo 'FP4 model not found'"
+
+      - name: Check repo state
+        run: |
+          echo "=== Repo ==="
+          ssh $NODE "cd /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf && git log --oneline -3 && echo --- && ls results/ 2>/dev/null | head -20"
