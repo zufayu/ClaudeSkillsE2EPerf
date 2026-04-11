@@ -262,6 +262,9 @@ else
     NCU_OPTS+=(--set "$NCU_SET")
 fi
 
+# Always add NVLink sections for multi-GPU configurations
+NCU_OPTS+=(--section Nvlink --section Nvlink_Tables --section Nvlink_Topology)
+
 log "Command:"
 log "  ncu ${NCU_OPTS[*]} $INFER_CMD"
 log ""
