@@ -133,16 +133,16 @@ log "ncu: $NCU_VERSION"
 NCU_OPTS=(
     --graph-profiling node
     --target-processes all
+    --replay-mode application
     --pm-sampling-interval 1000
     -f                         # force overwrite
     -o "$NCU_DIR/$REPORT_NAME"
 )
 
-# Both SGLang and TRT-LLM use multi-process execution. cudaProfilerStart
-# in the main process doesn't propagate to GPU worker subprocesses, so we
-# cannot use --profile-from-start off. Instead, we rely on --kernel-filter
-# to skip loading kernels (CatArrayBatchedCopy, memcpy, etc.) and only
-# profile inference kernels (gemm, fmha, allreduce, moe, etc.).
+# --replay-mode application: replay the whole app instead of per-kernel.
+#   Avoids GPU memory backup/restore (~60s/kernel) — single pass captures
+#   PM Sampling for all matched kernels. Combined with kernel filter to
+#   skip loading kernels (CatArrayBatchedCopy, memcpy, etc.).
 
 # Section set
 if [[ "$NCU_SET" == "pmsampling" ]]; then
