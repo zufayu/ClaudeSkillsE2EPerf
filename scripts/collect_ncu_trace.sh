@@ -46,7 +46,7 @@ KV_CACHE_DTYPE="fp8_e4m3"
 CUDA_GRAPH_MAX_BS=256
 MAX_RUNNING_REQUESTS=256
 NCU_SET="full"  # full | detailed | basic | pmsampling
-KERNEL_FILTER="gemm|fmha|allreduce|moe|norm|silu|activation|softmax|elementwise|routing|quantize|cvt_fp"  # default: inference kernels only (skips loading kernels like CatArrayBatchedCopy/memcpy)
+KERNEL_FILTER="gemm|fmha|allreduce|moe|Norm|silu|routing|quantize|cvt_fp|allgather|reduce_scatter"  # default: inference kernels only (skips loading kernels like CatArrayBatchedCopy/vectorized_elementwise/memcpy)
 REPORT_NAME="ncu_decode"
 
 # ======================== CLI Parsing =========================================
