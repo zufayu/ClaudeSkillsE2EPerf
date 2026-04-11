@@ -46,7 +46,7 @@ KV_CACHE_DTYPE="fp8_e4m3"
 CUDA_GRAPH_MAX_BS=256
 MAX_RUNNING_REQUESTS=256
 NCU_SET="full"  # full | detailed | basic | pmsampling
-KERNEL_FILTER="" # regex filter for -k, empty = all kernels
+KERNEL_FILTER="gemm|fmha|allreduce|moe|norm|silu|activation|softmax|elementwise|routing|quantize|cvt_fp"  # default: inference kernels only (skips loading kernels like CatArrayBatchedCopy/memcpy)
 REPORT_NAME="ncu_decode"
 
 # ======================== CLI Parsing =========================================
@@ -138,10 +138,11 @@ NCU_OPTS=(
     -o "$NCU_DIR/$REPORT_NAME"
 )
 
-# Both SGLang and TRT-LLM use multi-process execution. ncu with
-# --profile-from-start off + cudaProfilerStart doesn't propagate to
-# worker subprocesses, causing hangs or empty captures. Instead, we
-# capture all kernels and rely on warmup being short.
+# Both SGLang and TRT-LLM use multi-process execution. cudaProfilerStart
+# in the main process doesn't propagate to GPU worker subprocesses, so we
+# cannot use --profile-from-start off. Instead, we rely on --kernel-filter
+# to skip loading kernels (CatArrayBatchedCopy, memcpy, etc.) and only
+# profile inference kernels (gemm, fmha, allreduce, moe, etc.).
 
 # Section set
 if [[ "$NCU_SET" == "pmsampling" ]]; then
