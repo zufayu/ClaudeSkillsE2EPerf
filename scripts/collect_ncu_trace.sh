@@ -283,7 +283,6 @@ NCU_OPTS=(
     --pm-sampling-interval 1000
     --launch-skip "$LAUNCH_SKIP"
     --launch-count "$LAUNCH_COUNT"
-    --force-launch
     -f
     -o "$NCU_DIR/$REPORT_NAME"
 )
