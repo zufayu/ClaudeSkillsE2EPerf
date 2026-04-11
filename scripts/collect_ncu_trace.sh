@@ -135,8 +135,8 @@ build_server_cmd() {
         if [[ $EP -gt 1 ]]; then CMD="$CMD --ep-size $EP"; fi
         if [[ -n "${QUANTIZATION:-}" ]]; then CMD="$CMD --quantization $QUANTIZATION"; fi
     elif [[ "$BACKEND" == "trtllm" ]]; then
-        local CMD="python3 -m tensorrt_llm.commands.serve --model $MODEL --tp_size $TP --port $PORT --trust_remote_code"
-        if [[ -n "${QUANTIZATION:-}" ]]; then CMD="$CMD --quantization $QUANTIZATION"; fi
+        local CMD="python3 -m tensorrt_llm.commands.serve serve $MODEL --tp_size $TP --port $PORT"
+        if [[ $EP -gt 1 ]]; then CMD="$CMD --ep_size $EP"; fi
     fi
     echo "$CMD"
 }
