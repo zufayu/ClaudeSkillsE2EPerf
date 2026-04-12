@@ -7,60 +7,88 @@ jobs:
     timeout-minutes: 30
     env:
       NODE: hungry-hippo-fin-03-2
+      SFS: /SFS-aGqda6ct
+      MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      MODEL_BF16: /SFS-aGqda6ct/models/models--DeepSeek-R1-0528
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
     steps:
-      - name: Find model files
+      - name: Cleanup old containers
         run: |
-          echo "=== Check SFS for models ==="
-          ssh $NODE "ls /SFS-aGqda6ct/ubuntu/ 2>/dev/null | head -20"
-          echo "=== Find DeepSeek models ==="
-          ssh $NODE "find /SFS-aGqda6ct -maxdepth 4 -name 'config.json' -path '*DeepSeek*' 2>/dev/null | head -10"
-          ssh $NODE "find /SFS-aGqda6ct -maxdepth 4 -name 'config.json' -path '*NVFP4*' 2>/dev/null | head -10"
-          echo "=== Check /home ==="
-          ssh $NODE "ls -la /home/ 2>/dev/null"
-          echo "=== Check common model paths ==="
-          ssh $NODE "ls /models/ 2>/dev/null; ls /data/models/ 2>/dev/null; ls /workspace/models/ 2>/dev/null" || true
-          echo "=== Find any large model dirs ==="
-          ssh $NODE "find / -maxdepth 3 -name 'DeepSeek*' -type d 2>/dev/null | head -10" || true
+          echo "=== Remove old containers if any ==="
+          ssh $NODE "docker rm -f zufa_trt zufa_sglang zufa_trt_rc10 2>/dev/null || true"
 
-      - name: Check available Docker images
+      - name: Check driver and CUDA version
         run: |
-          echo "=== Docker images ==="
-          ssh $NODE "docker images --format '{{.Repository}}:{{.Tag}}  {{.Size}}'"
+          echo "=== nvidia-smi ==="
+          ssh $NODE "nvidia-smi | head -5"
+          echo "=== CUDA version from nvidia-smi ==="
+          ssh $NODE "nvidia-smi | grep 'CUDA Version'"
 
-      - name: Create TRT-LLM container (rc6.post3)
+      - name: Create TRT-LLM container (rc10 for CUDA 13.0)
         run: |
-          echo "=== Creating zufa_trt container ==="
-          ssh $NODE "docker run -d --name zufa_trt --gpus all --privileged --network host --ipc host -v /SFS-aGqda6ct:/SFS-aGqda6ct -v /home:/home -e NVIDIA_VISIBLE_DEVICES=all nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post3 sleep infinity" || echo "Failed to create zufa_trt"
-          echo "=== Verify zufa_trt ==="
-          ssh $NODE "docker exec zufa_trt nvidia-smi -L 2>&1 | head -5"
-          ssh $NODE "docker exec zufa_trt python3 -c 'import tensorrt_llm; print(tensorrt_llm.__version__)' 2>&1"
+          echo "=== Creating zufa_trt from rc10 (CUDA 13.0 compatible) ==="
+          ssh $NODE "docker run -d --name zufa_trt \
+            --gpus all --privileged --network host --ipc host \
+            -v $SFS:$SFS \
+            -v /home:/home \
+            -e NVIDIA_VISIBLE_DEVICES=all \
+            nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc10 sleep infinity"
+          echo "=== Verify GPU access ==="
+          ssh $NODE "docker exec zufa_trt nvidia-smi -L"
+          echo "=== Verify TRT-LLM ==="
+          ssh $NODE "docker exec zufa_trt python3 -c 'import tensorrt_llm; print(\"TRT-LLM:\", tensorrt_llm.__version__)'"
+          echo "=== Verify model access ==="
+          ssh $NODE "docker exec zufa_trt ls $MODEL_FP4/config.json"
+          ssh $NODE "docker exec zufa_trt ls $MODEL_BF16/config.json"
 
       - name: Create SGLang container
         run: |
-          echo "=== Creating zufa_sglang container ==="
-          ssh $NODE "docker run -d --name zufa_sglang --gpus all --privileged --network host --ipc host -v /SFS-aGqda6ct:/SFS-aGqda6ct -v /home:/home -e NVIDIA_VISIBLE_DEVICES=all lmsysorg/sglang:v0.5.9-cu130 sleep infinity" || echo "Failed to create zufa_sglang"
-          echo "=== Verify zufa_sglang ==="
-          ssh $NODE "docker exec zufa_sglang nvidia-smi -L 2>&1 | head -5"
-          ssh $NODE "docker exec zufa_sglang python3 -c 'import sglang; print(sglang.__version__)' 2>&1"
+          echo "=== Creating zufa_sglang from v0.5.9-cu130 ==="
+          ssh $NODE "docker run -d --name zufa_sglang \
+            --gpus all --privileged --network host --ipc host \
+            -v $SFS:$SFS \
+            -v /home:/home \
+            -e NVIDIA_VISIBLE_DEVICES=all \
+            lmsysorg/sglang:v0.5.9-cu130 sleep infinity"
+          echo "=== Verify GPU access ==="
+          ssh $NODE "docker exec zufa_sglang nvidia-smi -L"
+          echo "=== Verify SGLang ==="
+          ssh $NODE "docker exec zufa_sglang python3 -c 'import sglang; print(\"SGLang:\", sglang.__version__)'"
+          echo "=== Verify model access ==="
+          ssh $NODE "docker exec zufa_sglang ls $MODEL_FP4/config.json"
 
-      - name: Find and symlink models
+      - name: Install ncu in TRT-LLM container
         run: |
-          echo "=== Search for FP4 model on SFS ==="
-          ssh $NODE "find /SFS-aGqda6ct -maxdepth 5 -name 'DeepSeek-R1-0528-NVFP4*' -type d 2>/dev/null | head -5"
-          ssh $NODE "find /SFS-aGqda6ct -maxdepth 5 -name 'DeepSeek-R1-0528' -type d 2>/dev/null | head -5"
-          echo "=== Search for any DeepSeek dir ==="
-          ssh $NODE "find /SFS-aGqda6ct -maxdepth 5 -type d -name '*eepSeek*' 2>/dev/null | head -20"
-          echo "=== Check if /home/models was on SFS ==="
-          ssh $NODE "ls -la /SFS-aGqda6ct/ubuntu/zufa/ 2>/dev/null | head -20"
+          echo "=== Check if ncu available ==="
+          ssh $NODE "docker exec zufa_trt bash -c 'which ncu 2>/dev/null && ncu --version | head -1 || echo ncu not found'"
+          echo "=== Check nsys ==="
+          ssh $NODE "docker exec zufa_trt bash -c 'which nsys 2>/dev/null && nsys --version | head -1 || echo nsys not found'"
 
-      - name: List all containers
-        run: |
-          ssh $NODE "docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'"
-
-      - name: Sync repo in containers
+      - name: Sync repo
         run: |
           echo "=== Sync host repo ==="
-          ssh $NODE "cd /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf && git fetch origin && git reset --hard origin/main && git log --oneline -3"
-          echo "=== Check repo accessible from containers ==="
-          ssh $NODE "docker exec zufa_trt ls /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf/scripts/ 2>/dev/null | head -5" || true
-          ssh $NODE "docker exec zufa_sglang ls /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf/scripts/ 2>/dev/null | head -5" || true
+          ssh $NODE "cd $REPO && git fetch origin && git reset --hard origin/main && git log --oneline -3"
+          echo "=== Verify repo in containers ==="
+          ssh $NODE "docker exec zufa_trt ls $REPO/scripts/collect_ncu_trace.sh"
+          ssh $NODE "docker exec zufa_sglang ls $REPO/scripts/collect_ncu_trace.sh"
+
+      - name: Quick smoke test - TRT-LLM model load
+        run: |
+          echo "=== Quick TRT-LLM import test ==="
+          ssh $NODE "docker exec zufa_trt python3 -c '
+          from tensorrt_llm import LLM
+          print(\"TRT-LLM LLM class imported successfully\")
+          '"
+
+      - name: Show final state
+        if: always()
+        run: |
+          echo "=== All containers ==="
+          ssh $NODE "docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'"
+          echo ""
+          echo "=== Model paths ==="
+          echo "FP4: $MODEL_FP4"
+          echo "BF16: $MODEL_BF16"
+          echo ""
+          echo "=== GPU count ==="
+          ssh $NODE "nvidia-smi -L | wc -l"
