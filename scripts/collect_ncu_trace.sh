@@ -1,32 +1,32 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Nsight Compute (ncu) Trace Capture — Offline Engine Mode
+# Nsight Compute (ncu) Trace Capture
 #
 # Captures decode-phase GPU kernels with full hardware metrics
 # including PM Sampling (SM utilization over time) for PDL analysis.
 #
-# Approach:
-#   Uses kernel-name regex filter to skip loading kernels entirely,
-#   then --launch-skip to skip warmup inference kernels,
-#   and --launch-count to capture exactly N decode kernels.
+# Supports two modes:
+#   - offline: ncu wraps offline inference (BS=1, single prompt)
+#   - serve:   ncu wraps server + concurrent benchmark requests
 #
 # Two-phase approach:
 #   Phase 1 (nsys dry-run): quick nsys trace to count inference kernels
 #                           during warmup, determining --launch-skip value
 #   Phase 2 (ncu capture):  full ncu metrics for decode iteration(s)
 #
-# Flow:
-#   1. ncu wraps the offline inference script (ncu_infer.py)
-#   2. Kernel-name filter (-k regex) skips all loading kernels
-#   3. --launch-skip skips warmup inference kernels
-#   4. --launch-count captures decode kernel(s)
-#   5. Output: .ncu-rep for GUI inspection
-#
-# Usage:
+# Usage (offline):
 #   bash scripts/collect_ncu_trace.sh \
 #     --model /path/to/model \
 #     --backend sglang --tp 8 --ep 8 \
 #     --quantization modelopt_fp4 \
+#     --result-dir ./results/ncu_profiling
+#
+# Usage (serve, concurrent):
+#   bash scripts/collect_ncu_trace.sh \
+#     --model /path/to/model \
+#     --backend sglang --tp 8 --ep 8 \
+#     --quantization modelopt_fp4 \
+#     --mode serve --concurrency 64 --scenario chat \
 #     --result-dir ./results/ncu_profiling
 #
 # Then open in Nsight Compute GUI:
@@ -40,6 +40,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ======================== Defaults ============================================
 MODEL=""
 BACKEND="sglang"  # sglang | trtllm
+MODE="offline"    # offline | serve
 TP=4
 EP=4
 QUANTIZATION=""
@@ -53,6 +54,12 @@ NSYS_REP=""               # reuse existing nsys-rep for decode region detection
 WARMUP_PROMPTS=1
 ISL=64
 OSL=4
+
+# Serve mode defaults
+CONCURRENCY=64
+SCENARIO="chat"
+PORT=8888
+NUM_PROMPTS=0              # 0 = auto (concurrency * 10)
 
 # Kernel name regex — matches inference kernels, skips loading kernels
 # Covers: GEMM (nvjet/cutlass), attention (fmha/flash), MoE, comm (nccl/allreduce)
@@ -79,6 +86,7 @@ Required:
 
 Options:
   --backend BACKEND       sglang | trtllm (default: sglang)
+  --mode MODE             offline | serve (default: offline)
   --tp N                  Tensor parallel size (default: 4)
   --ep N                  Expert parallel size (default: 4)
   --quantization Q        Quantization method (e.g. modelopt_fp4)
@@ -92,6 +100,10 @@ Options:
   --isl N                 Input sequence length (default: 64)
   --osl N                 Output sequence length (default: 4)
   --kernel-regex REGEX    Kernel name filter regex (default: built-in)
+  --concurrency N         Request concurrency for serve mode (default: 64)
+  --scenario SCENARIO     chat|reasoning|summarize for serve mode (default: chat)
+  --port N                Server port for serve mode (default: 8888)
+  --num-prompts N         Benchmark prompts for serve mode (default: concurrency*10)
   -h, --help              Show this help
 
 Section sets:
@@ -107,6 +119,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --model)            MODEL="$2"; shift 2 ;;
         --backend)          BACKEND="$2"; shift 2 ;;
+        --mode)             MODE="$2"; shift 2 ;;
         --tp)               TP="$2"; shift 2 ;;
         --ep)               EP="$2"; shift 2 ;;
         --quantization)     QUANTIZATION="$2"; shift 2 ;;
@@ -121,6 +134,10 @@ while [[ $# -gt 0 ]]; do
         --isl)              ISL="$2"; shift 2 ;;
         --osl)              OSL="$2"; shift 2 ;;
         --kernel-regex)     KERNEL_REGEX="$2"; shift 2 ;;
+        --concurrency)      CONCURRENCY="$2"; shift 2 ;;
+        --scenario)         SCENARIO="$2"; shift 2 ;;
+        --port)             PORT="$2"; shift 2 ;;
+        --num-prompts)      NUM_PROMPTS="$2"; shift 2 ;;
         -h|--help)          usage ;;
         *)                  echo "Unknown option: $1"; usage ;;
     esac
@@ -140,9 +157,15 @@ log "============================================================"
 log "  Nsight Compute Trace Capture"
 log "============================================================"
 log "  Backend:       $BACKEND"
+log "  Mode:          $MODE"
 log "  Model:         $MODEL"
 log "  TP=$TP  EP=$EP  quant=${QUANTIZATION:-none}"
-log "  ISL=$ISL  OSL=$OSL  warmup=$WARMUP_PROMPTS"
+if [[ "$MODE" == "serve" ]]; then
+    log "  Scenario=$SCENARIO  Concurrency=$CONCURRENCY  Port=$PORT"
+    log "  Warmup=$WARMUP_PROMPTS  NumPrompts=${NUM_PROMPTS:-auto}"
+else
+    log "  ISL=$ISL  OSL=$OSL  warmup=$WARMUP_PROMPTS"
+fi
 log "  ncu set:       $NCU_SET"
 log "  kernel:        $KERNEL_REGEX"
 log "  launch-skip:   ${LAUNCH_SKIP:-auto}"
@@ -156,7 +179,13 @@ log "ncu: $NCU_VERSION"
 # ======================== Build inference command ==============================
 
 build_infer_cmd() {
-    local CMD="python3 $SCRIPT_DIR/ncu_infer.py --backend $BACKEND --model $MODEL --tp $TP --ep $EP --warmup-prompts $WARMUP_PROMPTS --isl $ISL --osl $OSL"
+    local CMD="python3 $SCRIPT_DIR/ncu_infer.py --backend $BACKEND --mode $MODE --model $MODEL --tp $TP --ep $EP --warmup-prompts $WARMUP_PROMPTS"
+    if [[ "$MODE" == "serve" ]]; then
+        CMD="$CMD --concurrency $CONCURRENCY --scenario $SCENARIO --port $PORT"
+        if [[ "$NUM_PROMPTS" -gt 0 ]] 2>/dev/null; then CMD="$CMD --num-prompts $NUM_PROMPTS"; fi
+    else
+        CMD="$CMD --isl $ISL --osl $OSL"
+    fi
     if [[ -n "${QUANTIZATION:-}" ]]; then CMD="$CMD --quantization $QUANTIZATION"; fi
     if [[ "$BACKEND" == "sglang" ]]; then
         CMD="$CMD --mem-fraction-static $MEM_FRACTION --chunked-prefill-size $CHUNKED_PREFILL --kv-cache-dtype $KV_CACHE_DTYPE --cuda-graph-max-bs $CUDA_GRAPH_MAX_BS --max-running-requests $MAX_RUNNING_REQUESTS"

@@ -1,39 +1,54 @@
 #!/usr/bin/env python3
 """
-Offline inference script for ncu profiling.
+Inference script for ncu/nsys profiling.
 
-Loads model via offline engine (SGLang or TRT-LLM), warms up to
-steady state, then uses cudaProfilerStart/Stop to precisely capture
-one decode iteration for ncu analysis.
+Supports two modes:
+  - offline: Load model via offline engine, run warmup + inference (BS=1)
+  - serve:   Launch server, warmup with concurrent requests, run benchmark
 
-Usage with ncu:
-    ncu --profile-from-start off --set full --graph-profiling node \
-        --target-processes all -o ncu_report \
+Usage with ncu (offline):
+    ncu --set full --graph-profiling node --target-processes all \
+        -o ncu_report \
         python scripts/ncu_infer.py \
-        --backend sglang \
+        --backend sglang --mode offline \
         --model /path/to/model --tp 8 --ep 8 \
-        --quantization modelopt_fp4 \
         --warmup-prompts 5 --isl 1024 --osl 64
 
-Then open ncu_report.ncu-rep in Nsight Compute GUI.
+Usage with ncu (serve, concurrent):
+    ncu --set full --graph-profiling node --target-processes all \
+        -o ncu_report \
+        python scripts/ncu_infer.py \
+        --backend sglang --mode serve \
+        --model /path/to/model --tp 8 --ep 8 \
+        --concurrency 64 --scenario chat \
+        --warmup-prompts 128 --num-prompts 640
 """
 
 import argparse
+import os
+import signal
+import subprocess
 import sys
 import time
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Offline inference for ncu profiling")
-    parser.add_argument("--backend", default="sglang", choices=["sglang", "trtllm"],
-                        help="Inference backend (default: sglang)")
+    parser = argparse.ArgumentParser(description="Inference for ncu/nsys profiling")
+    parser.add_argument("--backend", default="sglang", choices=["sglang", "trtllm"])
+    parser.add_argument("--mode", default="offline", choices=["offline", "serve"])
     parser.add_argument("--model", required=True, help="Model path")
-    parser.add_argument("--tp", type=int, default=4, help="Tensor parallel size")
-    parser.add_argument("--ep", type=int, default=4, help="Expert parallel size")
-    parser.add_argument("--quantization", default=None, help="Quantization (e.g. modelopt_fp4)")
-    parser.add_argument("--warmup-prompts", type=int, default=5, help="Number of warmup prompts")
-    parser.add_argument("--isl", type=int, default=1024, help="Input sequence length")
-    parser.add_argument("--osl", type=int, default=64, help="Output sequence length (keep short for ncu)")
+    parser.add_argument("--tp", type=int, default=4)
+    parser.add_argument("--ep", type=int, default=4)
+    parser.add_argument("--quantization", default=None)
+    parser.add_argument("--warmup-prompts", type=int, default=5)
+    parser.add_argument("--isl", type=int, default=1024)
+    parser.add_argument("--osl", type=int, default=64)
+    # Serve mode args
+    parser.add_argument("--concurrency", type=int, default=64)
+    parser.add_argument("--scenario", default="chat", choices=["chat", "reasoning", "summarize"])
+    parser.add_argument("--port", type=int, default=8888)
+    parser.add_argument("--num-prompts", type=int, default=0, help="Benchmark prompts (default: concurrency*10)")
+    # SGLang server params
     parser.add_argument("--mem-fraction-static", type=float, default=0.85)
     parser.add_argument("--chunked-prefill-size", type=int, default=16384)
     parser.add_argument("--kv-cache-dtype", default="fp8_e4m3")
@@ -41,18 +56,24 @@ def main():
     parser.add_argument("--max-running-requests", type=int, default=256)
     args = parser.parse_args()
 
+    if args.mode == "offline":
+        run_offline(args)
+    elif args.mode == "serve":
+        run_serve(args)
+
+
+def run_offline(args):
+    """Offline mode: load model, warmup, inference (original behavior)."""
     import torch
 
-    # Build prompt of target ISL length (approximate with repeated text)
     base_text = "Explain the architecture of modern large language models in detail. "
-    prompt_text = (base_text * (args.isl // 10 + 1))[:args.isl * 4]  # ~4 chars/token
+    prompt_text = (base_text * (args.isl // 10 + 1))[:args.isl * 4]
 
     if args.backend == "sglang":
         engine, generate_fn, shutdown_fn = _init_sglang(args, prompt_text)
     elif args.backend == "trtllm":
         engine, generate_fn, shutdown_fn = _init_trtllm(args, prompt_text)
 
-    # Warmup: run several prompts to reach steady state (CUDA graph capture + warm caches)
     print(f"\nWarmup: {args.warmup_prompts} prompts (ISL~{args.isl}, OSL={args.osl})...")
     for i in range(args.warmup_prompts):
         n_tokens = generate_fn()
@@ -60,11 +81,6 @@ def main():
 
     torch.cuda.synchronize()
 
-    # Profile: one inference pass
-    # Note: Both SGLang and TRT-LLM use multi-process execution (scheduler/
-    # worker subprocesses). cudaProfilerStart/Stop in the main process doesn't
-    # propagate to workers, so we don't use --profile-from-start off. Instead,
-    # ncu captures all kernels (warmup + profiled pass). Keep warmup short.
     print(f"\n=== Profiled inference pass ===")
     n_tokens = generate_fn()
     torch.cuda.synchronize()
@@ -73,6 +89,166 @@ def main():
     shutdown_fn()
     print("Done.")
 
+
+def run_serve(args):
+    """Serve mode: launch server, warmup + benchmark with concurrent requests."""
+    scenario_map = {
+        "chat": (1024, 1024),
+        "reasoning": (1024, 8192),
+        "summarize": (8192, 1024),
+    }
+    isl, osl = scenario_map[args.scenario]
+    num_prompts = args.num_prompts if args.num_prompts > 0 else args.concurrency * 10
+    warmup_prompts = args.warmup_prompts if args.warmup_prompts > 0 else args.concurrency * 2
+
+    print(f"=== Serve mode: {args.backend} ===")
+    print(f"  Scenario: {args.scenario} (ISL={isl}, OSL={osl})")
+    print(f"  Concurrency: {args.concurrency}")
+    print(f"  Warmup: {warmup_prompts} prompts")
+    print(f"  Benchmark: {num_prompts} prompts")
+
+    # Launch server
+    server_proc = _launch_server(args)
+
+    try:
+        # Wait for server ready
+        _wait_for_server(args.port, timeout=1200)
+
+        # Warmup
+        print(f"\n=== Warmup ({warmup_prompts} prompts, c={args.concurrency}) ===")
+        _run_benchmark_serving(args, isl, osl, warmup_prompts, tag="warmup")
+
+        # Benchmark (this is what ncu captures during steady state)
+        print(f"\n=== Benchmark ({num_prompts} prompts, c={args.concurrency}) ===")
+        _run_benchmark_serving(args, isl, osl, num_prompts, tag="profiled")
+
+        print("\n=== Benchmark complete, shutting down ===")
+    finally:
+        # Kill server
+        if server_proc.poll() is None:
+            server_proc.terminate()
+            try:
+                server_proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                server_proc.kill()
+                server_proc.wait()
+        # Kill any remaining server processes
+        subprocess.run(["pkill", "-f", "sglang.launch_server"], capture_output=True)
+        subprocess.run(["pkill", "-f", "trtllm-serve"], capture_output=True)
+        time.sleep(3)
+
+    print("Done.")
+
+
+def _launch_server(args):
+    """Launch SGLang or TRT-LLM server as subprocess."""
+    if args.backend == "sglang":
+        cmd = [
+            sys.executable, "-m", "sglang.launch_server",
+            "--model-path", args.model,
+            "--host", "0.0.0.0",
+            "--port", str(args.port),
+            "--trust-remote-code",
+            "--tensor-parallel-size", str(args.tp),
+            "--data-parallel-size", "1",
+            "--cuda-graph-max-bs", str(args.cuda_graph_max_bs),
+            "--max-running-requests", str(args.max_running_requests),
+            "--mem-fraction-static", str(args.mem_fraction_static),
+            "--kv-cache-dtype", args.kv_cache_dtype,
+            "--chunked-prefill-size", str(args.chunked_prefill_size),
+            "--ep-size", str(args.ep),
+            "--enable-flashinfer-allreduce-fusion",
+            "--enable-symm-mem",
+            "--disable-radix-cache",
+            "--attention-backend", "trtllm_mla",
+            "--moe-runner-backend", "flashinfer_trtllm",
+            "--stream-interval", "10",
+        ]
+        if args.quantization:
+            cmd += ["--quantization", args.quantization]
+    elif args.backend == "trtllm":
+        cmd = [
+            "trtllm-serve", args.model,
+            "--port", str(args.port),
+            "--trust_remote_code",
+            "--backend", "pytorch",
+            "--tp_size", str(args.tp),
+            "--ep_size", str(args.ep),
+        ]
+
+    env = os.environ.copy()
+    env["PYTHONNOUSERSITE"] = "1"
+
+    print(f"Launching server: {' '.join(cmd[:6])}...")
+    server_proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    return server_proc
+
+
+def _wait_for_server(port, timeout=1200):
+    """Wait for server to be ready via health endpoint."""
+    import urllib.request
+    import urllib.error
+
+    url = f"http://localhost:{port}/health"
+    start = time.time()
+    last_print = 0
+
+    while time.time() - start < timeout:
+        try:
+            resp = urllib.request.urlopen(url, timeout=5)
+            if resp.status == 200:
+                elapsed = time.time() - start
+                print(f"  Server ready in {elapsed:.0f}s")
+                return
+        except (urllib.error.URLError, ConnectionRefusedError, OSError):
+            pass
+
+        elapsed = time.time() - start
+        if elapsed - last_print >= 30:
+            print(f"  Waiting for server... ({elapsed:.0f}s)")
+            last_print = elapsed
+        time.sleep(5)
+
+    raise TimeoutError(f"Server not ready after {timeout}s")
+
+
+def _run_benchmark_serving(args, isl, osl, num_prompts, tag="bench"):
+    """Run benchmark_serving.py as subprocess."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Use benchmark_serving from the repo or from PATH
+    bench_script = os.path.join(script_dir, "benchmark_serving.py")
+    if not os.path.exists(bench_script):
+        # Try sglang's benchmark_serving
+        bench_script = None
+        for candidate in [
+            "python3 -m sglang.bench_serving",
+        ]:
+            bench_script = candidate
+            break
+
+    cmd = [
+        sys.executable, bench_script,
+        "--model", args.model,
+        "--port", str(args.port),
+        "--backend", "vllm" if args.backend == "sglang" else "openai",
+        "--input-len", str(isl),
+        "--output-len", str(osl),
+        "--random-range-ratio", "0.8",
+        "--num-prompts", str(num_prompts),
+        "--max-concurrency", str(args.concurrency),
+        "--num-warmups", "0",
+        "--result-filename", f"ncu_{tag}",
+        "--result-dir", "/tmp",
+    ]
+
+    print(f"  Running: {os.path.basename(bench_script)} --num-prompts {num_prompts} --max-concurrency {args.concurrency}")
+    result = subprocess.run(cmd, capture_output=False, timeout=3600)
+    if result.returncode != 0:
+        print(f"  WARNING: benchmark_serving exited with rc={result.returncode}")
+
+
+# ======================== Offline backends ====================================
 
 def _init_sglang(args, prompt_text):
     """Initialize SGLang offline engine."""
@@ -130,7 +306,7 @@ def _init_trtllm(args, prompt_text):
         return sum(len(o.outputs[0].token_ids) for o in outputs)
 
     def shutdown_fn():
-        pass  # TRT-LLM LLM cleans up on del
+        pass
 
     return llm, generate_fn, shutdown_fn
 

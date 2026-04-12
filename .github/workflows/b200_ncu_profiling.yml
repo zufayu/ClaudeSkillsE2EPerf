@@ -1,16 +1,36 @@
-name: "B200 NCU Profiling (EP8 c=4)"
+name: "B200 NCU Profiling (SGLang FP4 EP8)"
 on:
   workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Benchmark scenario"
+        required: true
+        default: "chat"
+        type: choice
+        options: [chat, reasoning, summarize]
+      concurrency:
+        description: "Request concurrency"
+        required: true
+        default: "64"
+      ncu_set:
+        description: "NCU section set"
+        required: true
+        default: "full"
+        type: choice
+        options: [full, detailed, basic, pmsampling]
+      launch_count:
+        description: "Kernel launches to capture"
+        required: true
+        default: "140"
 jobs:
   ncu-profiling:
     runs-on: [self-hosted, b200]
-    timeout-minutes: 120
+    timeout-minutes: 240
     env:
       NODE: hungry-hippo-fin-03-2
       CONTAINER: zufa_sglang
       REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
-      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_sglang059_profiling_c4
     steps:
       - name: Sync repo
         run: ssh $NODE "cd $REPO && git fetch origin && git reset --hard origin/main"
@@ -37,22 +57,28 @@ jobs:
             which ncu && ncu --version
           '"
 
-      - name: Run ncu profiling (pmsampling only, fast test)
+      - name: Set result dir
+        id: vars
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_ncu_trace.sh --backend sglang --model $MODEL_FP4 --tp 8 --ep 8 --quantization modelopt_fp4 --osl 32 --warmup 3 --ncu-set pmsampling --result-dir ./$RESULT_DIR'" 2>&1 | tail -60
+          RESULT_DIR="results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_sglang_ncu_${{ inputs.scenario }}_c${{ inputs.concurrency }}"
+          echo "result_dir=$RESULT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Run ncu profiling (serve mode, ${{ inputs.scenario }} c=${{ inputs.concurrency }})
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_ncu_trace.sh --backend sglang --mode serve --model $MODEL_FP4 --tp 8 --ep 8 --quantization modelopt_fp4 --concurrency ${{ inputs.concurrency }} --scenario ${{ inputs.scenario }} --warmup-prompts $(( ${{ inputs.concurrency }} * 2 )) --ncu-set ${{ inputs.ncu_set }} --launch-count ${{ inputs.launch_count }} --result-dir ./${{ steps.vars.outputs.result_dir }}'" 2>&1 | tail -80
 
       - name: Show results
         if: always()
         run: |
-          ssh $NODE "ls -lh $REPO/$RESULT_DIR/ncu/ 2>/dev/null || echo 'No ncu dir'"
-          ssh $NODE "tail -20 $REPO/$RESULT_DIR/ncu/ncu_decode.log 2>/dev/null || echo 'No log'"
+          ssh $NODE "ls -lh $REPO/${{ steps.vars.outputs.result_dir }}/ncu/ 2>/dev/null || echo 'No ncu dir'"
+          ssh $NODE "tail -30 $REPO/${{ steps.vars.outputs.result_dir }}/ncu/ncu_decode.log 2>/dev/null || echo 'No log'"
 
       - name: Git commit and push
         if: always()
         run: |
           ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
-          ssh $NODE "cd $REPO && git add -f $RESULT_DIR/ncu/*.log $RESULT_DIR/ncu/*.csv 2>/dev/null || true; git diff --cached --name-only"
-          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 EP8 TP8 ncu profiling test (pmsampling)
+          ssh $NODE "cd $REPO && git add -f ${{ steps.vars.outputs.result_dir }}/ncu/*.log ${{ steps.vars.outputs.result_dir }}/ncu/*.csv 2>/dev/null || true; git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 SGLang FP4 EP8 ncu profiling (${{ inputs.scenario }} c=${{ inputs.concurrency }}, ${{ inputs.ncu_set }})
 
           Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
