@@ -170,64 +170,33 @@ log "  $INFER_CMD"
 if [[ -z "$LAUNCH_SKIP" ]] && [[ "$SKIP_DRY_RUN" != "true" ]]; then
     log ""
     log "============================================================"
-    log "  Phase 1: nsys dry-run (count warmup inference kernels)"
+    log "  Phase 1: nsys dry-run → find steady-state decode region"
     log "============================================================"
 
     NSYS_REPORT="$NCU_DIR/dry_run"
 
-    log "Running nsys trace to count kernel launches..."
+    log "Running nsys trace..."
     nsys profile --trace cuda -o "$NSYS_REPORT" --force-overwrite true $INFER_CMD > "$NCU_DIR/dry_run_stdout.log" 2>&1 || true
 
     if [[ -f "${NSYS_REPORT}.nsys-rep" ]]; then
-        log "nsys trace captured. Exporting to sqlite..."
-        nsys stats "${NSYS_REPORT}.nsys-rep" --report cuda_gpu_kern_sum --format csv > "$NCU_DIR/dry_run_kern_sum.csv" 2>/dev/null || true
+        log "nsys trace captured. Finding steady-state decode region..."
+        FIND_RESULT=$(python3 "$SCRIPT_DIR/find_decode_region.py" --nsys-rep "${NSYS_REPORT}.nsys-rep" --kernel-regex "$KERNEL_REGEX" --launch-count "$LAUNCH_COUNT" --json 2>/dev/null | tail -1)
 
-        log "Analyzing kernel launches..."
-        # Count inference-type kernels that occur during warmup
-        LAUNCH_SKIP=$(python3 -c "
-import sqlite3, os
+        if [[ -n "$FIND_RESULT" ]]; then
+            LAUNCH_SKIP=$(echo "$FIND_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['launch_skip'])" 2>/dev/null || echo "0")
+            DETECTED_COUNT=$(echo "$FIND_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['launch_count'])" 2>/dev/null || echo "$LAUNCH_COUNT")
+            DECODE_DUR=$(echo "$FIND_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(f\"{d.get('decode_duration_ms',0):.3f}\")" 2>/dev/null || echo "0")
+            log "Steady-state decode found:"
+            log "  launch-skip:  $LAUNCH_SKIP"
+            log "  launch-count: $DETECTED_COUNT"
+            log "  decode kernel time: ${DECODE_DUR}ms"
+        else
+            log "WARNING: find_decode_region.py failed, using launch-skip=0"
+            LAUNCH_SKIP=0
+        fi
 
-db_path = '${NSYS_REPORT}.sqlite'
-if not os.path.exists(db_path):
-    # nsys stats may have generated it
-    print(0)
-    exit()
-
-conn = sqlite3.connect(db_path)
-
-# Count total inference-type kernels
-regex_parts = '${KERNEL_REGEX}'.split('|')
-like_clauses = ' OR '.join([f\"s.value LIKE '%{p}%'\" for p in regex_parts])
-
-cur = conn.execute(f'''
-    SELECT count(*) FROM CUPTI_ACTIVITY_KIND_KERNEL k
-    JOIN StringIds s ON k.demangledName = s.id
-    WHERE {like_clauses}
-''')
-total_inf = cur.fetchone()[0]
-
-# For warmup=W prompts with ISL tokens prefill + OSL decode each:
-# Each prompt has (1 prefill + OSL decode) forward passes
-# We want to skip all warmup inference kernels
-# Use a heuristic: divide total by (warmup + 1) and skip that many
-warmup = ${WARMUP_PROMPTS}
-total_passes = warmup + 1
-kernels_per_pass = total_inf // total_passes if total_passes > 0 else total_inf
-
-# Skip warmup kernels (all warmup prompts)
-skip = kernels_per_pass * warmup
-
-# Add margin for prefill of the profiled request
-# Prefill is ~1/(OSL+1) of a full request's kernels
-osl = ${OSL}
-prefill_kernels = kernels_per_pass // (osl + 1) if osl > 0 else 0
-skip += prefill_kernels
-
-print(max(0, skip))
-conn.close()
-" 2>/dev/null || echo "0")
-        log "Calculated launch-skip: $LAUNCH_SKIP"
-        log "  (skips warmup + prefill, captures decode only)"
+        # Also run full analysis for logging
+        python3 "$SCRIPT_DIR/find_decode_region.py" --nsys-rep "${NSYS_REPORT}.nsys-rep" --kernel-regex "$KERNEL_REGEX" --launch-count "$LAUNCH_COUNT" > "$NCU_DIR/decode_region.log" 2>&1 || true
     else
         log "WARNING: nsys trace failed, using launch-skip=0"
         LAUNCH_SKIP=0
