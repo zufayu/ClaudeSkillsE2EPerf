@@ -49,6 +49,7 @@ LAUNCH_SKIP=""             # auto-detect from nsys dry-run if empty
 LAUNCH_COUNT=50            # kernels to capture
 REPORT_NAME="ncu_decode"
 SKIP_DRY_RUN=false
+NSYS_REP=""               # reuse existing nsys-rep for decode region detection
 WARMUP_PROMPTS=1
 ISL=64
 OSL=4
@@ -85,6 +86,7 @@ Options:
   --launch-skip N         Skip first N matching kernel launches (auto if omitted)
   --launch-count N        Number of kernel launches to capture (default: 50)
   --skip-dry-run          Skip nsys dry-run, requires --launch-skip to be set
+  --nsys-rep PATH         Reuse existing .nsys-rep for decode region detection
   --report-name NAME      Output report name (default: ncu_decode)
   --warmup-prompts N      Number of warmup prompts (default: 1)
   --isl N                 Input sequence length (default: 64)
@@ -113,6 +115,7 @@ while [[ $# -gt 0 ]]; do
         --launch-skip)      LAUNCH_SKIP="$2"; shift 2 ;;
         --launch-count)     LAUNCH_COUNT="$2"; shift 2 ;;
         --skip-dry-run)     SKIP_DRY_RUN=true; shift ;;
+        --nsys-rep)         NSYS_REP="$2"; shift 2 ;;
         --report-name)      REPORT_NAME="$2"; shift 2 ;;
         --warmup-prompts)   WARMUP_PROMPTS="$2"; shift 2 ;;
         --isl)              ISL="$2"; shift 2 ;;
@@ -173,14 +176,20 @@ if [[ -z "$LAUNCH_SKIP" ]] && [[ "$SKIP_DRY_RUN" != "true" ]]; then
     log "  Phase 1: nsys dry-run → find steady-state decode region"
     log "============================================================"
 
-    NSYS_REPORT="$NCU_DIR/dry_run"
+    # Reuse existing nsys-rep if provided, otherwise run a fresh dry-run
+    if [[ -n "$NSYS_REP" ]] && [[ -f "$NSYS_REP" ]]; then
+        log "Reusing existing nsys trace: $NSYS_REP"
+        NSYS_REP_FILE="$NSYS_REP"
+    else
+        NSYS_REPORT="$NCU_DIR/dry_run"
+        log "Running nsys trace..."
+        nsys profile --trace cuda -o "$NSYS_REPORT" --force-overwrite true $INFER_CMD > "$NCU_DIR/dry_run_stdout.log" 2>&1 || true
+        NSYS_REP_FILE="${NSYS_REPORT}.nsys-rep"
+    fi
 
-    log "Running nsys trace..."
-    nsys profile --trace cuda -o "$NSYS_REPORT" --force-overwrite true $INFER_CMD > "$NCU_DIR/dry_run_stdout.log" 2>&1 || true
-
-    if [[ -f "${NSYS_REPORT}.nsys-rep" ]]; then
+    if [[ -f "$NSYS_REP_FILE" ]]; then
         log "nsys trace captured. Finding steady-state decode region..."
-        FIND_RESULT=$(python3 "$SCRIPT_DIR/find_decode_region.py" --nsys-rep "${NSYS_REPORT}.nsys-rep" --kernel-regex "$KERNEL_REGEX" --launch-count "$LAUNCH_COUNT" --json 2>/dev/null | tail -1)
+        FIND_RESULT=$(python3 "$SCRIPT_DIR/find_decode_region.py" --nsys-rep "$NSYS_REP_FILE" --kernel-regex "$KERNEL_REGEX" --launch-count "$LAUNCH_COUNT" --json 2>/dev/null | tail -1)
 
         if [[ -n "$FIND_RESULT" ]]; then
             LAUNCH_SKIP=$(echo "$FIND_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['launch_skip'])" 2>/dev/null || echo "0")
@@ -196,7 +205,7 @@ if [[ -z "$LAUNCH_SKIP" ]] && [[ "$SKIP_DRY_RUN" != "true" ]]; then
         fi
 
         # Also run full analysis for logging
-        python3 "$SCRIPT_DIR/find_decode_region.py" --nsys-rep "${NSYS_REPORT}.nsys-rep" --kernel-regex "$KERNEL_REGEX" --launch-count "$LAUNCH_COUNT" > "$NCU_DIR/decode_region.log" 2>&1 || true
+        python3 "$SCRIPT_DIR/find_decode_region.py" --nsys-rep "$NSYS_REP_FILE" --kernel-regex "$KERNEL_REGEX" --launch-count "$LAUNCH_COUNT" > "$NCU_DIR/decode_region.log" 2>&1 || true
     else
         log "WARNING: nsys trace failed, using launch-skip=0"
         LAUNCH_SKIP=0

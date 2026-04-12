@@ -40,6 +40,9 @@ SKIP_EXPORT=false
 EXTRA_NSYS_ARGS=""
 MODEL_NAME="dsr1"
 ENV=""
+ENABLE_NCU=false
+NCU_SET="pmsampling"
+NCU_LAUNCH_COUNT=50
 
 # ======================== Argument Parsing ====================================
 usage() {
@@ -67,6 +70,9 @@ Options:
   --port PORT               Server port (serve mode) [default: 8888]
   --skip-export             Skip post-processing (just capture .nsys-rep)
   --extra-nsys-args ARGS    Additional nsys profile arguments
+  --enable-ncu              Run ncu profiling after nsys capture (reuses nsys trace)
+  --ncu-set SET             ncu section set: full|detailed|basic|pmsampling [default: pmsampling]
+  --ncu-launch-count N      ncu kernel launch count [default: 50]
   -h, --help                Show this help message
 
 Examples:
@@ -103,6 +109,9 @@ while [[ $# -gt 0 ]]; do
         --port)            PORT="$2"; shift 2 ;;
         --skip-export)     SKIP_EXPORT=true; shift ;;
         --extra-nsys-args) EXTRA_NSYS_ARGS="$2"; shift 2 ;;
+        --enable-ncu)      ENABLE_NCU=true; shift ;;
+        --ncu-set)         NCU_SET="$2"; shift 2 ;;
+        --ncu-launch-count) NCU_LAUNCH_COUNT="$2"; shift 2 ;;
         --model-name)      MODEL_NAME="$2"; shift 2 ;;
         --env)             ENV="$2"; shift 2 ;;
         -h|--help)         usage ;;
@@ -578,9 +587,29 @@ else
     log "Skipping post-processing (--skip-export)"
 fi
 
+# ======================== Optional NCU Profiling =============================
+if [[ "$ENABLE_NCU" == "true" ]]; then
+    log ""
+    log "============================================================"
+    log "  NCU Profiling (--enable-ncu)"
+    log "============================================================"
+    NSYS_REP_FILE="$TRACE_DIR/${TAG}.nsys-rep"
+    if [[ -f "$NSYS_REP_FILE" ]]; then
+        NCU_CMD="bash $SCRIPT_DIR/collect_ncu_trace.sh --model $MODEL --backend trtllm --tp $TP --ep $EP --isl $ISL --osl $OSL --warmup-prompts 1 --ncu-set $NCU_SET --launch-count $NCU_LAUNCH_COUNT --nsys-rep $NSYS_REP_FILE --result-dir $TRACE_DIR"
+        if [[ "$QUANT" == "fp4" ]]; then NCU_CMD="$NCU_CMD --quantization modelopt_fp4"; fi
+        log "  Running: $NCU_CMD"
+        eval "$NCU_CMD" || log "WARNING: ncu profiling failed"
+    else
+        log "WARNING: nsys-rep not found at $NSYS_REP_FILE, skipping ncu"
+    fi
+fi
+
 log "============================================================"
 log "  TRACE CAPTURE COMPLETE"
 log "  Output: $TRACE_DIR/${TAG}.nsys-rep"
+if [[ "$ENABLE_NCU" == "true" ]]; then
+    log "  NCU:    $TRACE_DIR/ncu/ncu_decode.ncu-rep"
+fi
 log "============================================================"
 
 # Generate summary.md from result JSONs (if serve mode produced them)
