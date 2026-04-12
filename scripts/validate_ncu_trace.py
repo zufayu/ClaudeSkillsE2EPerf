@@ -124,51 +124,70 @@ def extract_nsys_kernels(nsys_rep, kernel_regex):
 
 def extract_ncu_kernels(ncu_rep):
     """Extract kernel info from ncu report via CSV export."""
-    csv_path = ncu_rep.replace('.ncu-rep', '_details.csv')
-
     print(f"  Exporting ncu to CSV...")
     result = subprocess.run(
-        ["ncu", "-i", ncu_rep, "--csv", "--page", "raw"],
+        ["ncu", "-i", ncu_rep, "--csv"],
         capture_output=True, text=True, timeout=120
     )
-
-    if result.returncode != 0:
-        # Try simpler export
-        result = subprocess.run(
-            ["ncu", "-i", ncu_rep, "--csv"],
-            capture_output=True, text=True, timeout=120
-        )
 
     if not result.stdout.strip():
         print(f"ERROR: ncu CSV export produced no output")
         return []
 
-    # Parse CSV
     lines = result.stdout.strip().split('\n')
-    # Find header line (starts with "ID" or has "Kernel Name")
+    # Find header line
     header_idx = 0
     for i, line in enumerate(lines):
-        if '"ID"' in line or 'Kernel Name' in line or line.startswith('"ID"'):
+        if '"ID"' in line or line.startswith('"ID"'):
             header_idx = i
             break
 
     kernels = []
     reader = csv.DictReader(lines[header_idx:])
-    seen_ids = set()
+
+    # ncu CSV has one row per (kernel, metric). Deduplicate by ID.
+    # Also look for gpu__time_duration metric to get duration.
+    kernel_info = {}  # id -> {name, duration_ns}
     for row in reader:
         kid = row.get('ID', '')
-        if kid in seen_ids:
-            continue  # Skip duplicate metric rows for same kernel
-        seen_ids.add(kid)
+        name = row.get('Kernel Name', '')
+        if kid not in kernel_info:
+            kernel_info[kid] = {"name": name, "duration_ns": 0}
 
-        name = row.get('Kernel Name', row.get('Function Name', ''))
-        duration = row.get('gpu__time_duration.sum', '')
+        # Check for duration metric (may be in Metric Name/Value columns
+        # or in a flat gpu__time_duration.sum column)
+        metric_name = row.get('Metric Name', '')
+        if 'gpu__time_duration' in metric_name:
+            val = row.get('Metric Value', '')
+            unit = row.get('Metric Unit', '')
+            try:
+                dur = float(val)
+                # Convert to ns based on unit
+                if unit == 'ms':
+                    dur *= 1_000_000
+                elif unit == 'us' or unit == 'usecond':
+                    dur *= 1_000
+                elif unit == 'sec' or unit == 's':
+                    dur *= 1_000_000_000
+                kernel_info[kid]["duration_ns"] = dur
+            except (ValueError, TypeError):
+                pass
 
+        # Also check flat column format
+        flat_dur = row.get('gpu__time_duration.sum', '')
+        if flat_dur:
+            try:
+                kernel_info[kid]["duration_ns"] = float(flat_dur)
+            except (ValueError, TypeError):
+                pass
+
+    for kid in sorted(kernel_info, key=lambda x: int(x) if x.isdigit() else 0):
+        info = kernel_info[kid]
         kernels.append({
             "id": kid,
-            "name": name,
-            "short_name": shorten_kernel_name(name),
-            "duration_ns": float(duration) if duration else 0,
+            "name": info["name"],
+            "short_name": shorten_kernel_name(info["name"]),
+            "duration_ns": info["duration_ns"],
         })
 
     return kernels

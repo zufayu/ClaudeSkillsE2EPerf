@@ -1,0 +1,41 @@
+name: B200 Validate NCU Trace
+on:
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 60
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_trt
+      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      MODEL_BF16: /SFS-aGqda6ct/models/models--DeepSeek-R1-0528
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git fetch origin && git reset --hard origin/main"
+
+      - name: Ensure container is running
+        run: ssh $NODE "docker start $CONTAINER 2>/dev/null || echo 'already running'"
+
+      - name: Check TRT-LLM works
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'ldconfig && python3 -c \"import tensorrt_llm; print(tensorrt_llm.__version__)\"'"
+
+      - name: Check GPU access in container
+        run: ssh $NODE "docker exec $CONTAINER nvidia-smi -L | head -4"
+
+      - name: Run nsys trace (TP=4 EP=4)
+        run: |
+          ssh $NODE "docker exec -w $REPO $CONTAINER bash -c 'ldconfig && mkdir -p results/ncu_validation && CUDA_VISIBLE_DEVICES=0,1,2,3 nsys profile --trace cuda -o results/ncu_validation/nsys_validation --force-overwrite true python3 scripts/ncu_infer.py --backend trtllm --model $MODEL_BF16 --tp 4 --ep 4 --warmup-prompts 0 --isl 16 --osl 2'" 2>&1 | tail -30
+
+      - name: Run ncu trace (same workload)
+        run: |
+          ssh $NODE "docker exec -w $REPO $CONTAINER bash -c 'ldconfig && CUDA_VISIBLE_DEVICES=0,1,2,3 ncu --target-processes all --graph-profiling node -k \"regex:nvjet|fmha|cutlass|flash_attn|kernel_mha|allreduce|nccl|deep_gemm\" --launch-skip 0 --launch-count 50 -f -o results/ncu_validation/ncu_validation --section PmSampling --section PmSampling_WarpStates python3 scripts/ncu_infer.py --backend trtllm --model $MODEL_BF16 --tp 4 --ep 4 --warmup-prompts 0 --isl 16 --osl 2'" 2>&1 | tail -30
+
+      - name: Run validation script
+        run: |
+          ssh $NODE "docker exec -w $REPO $CONTAINER python3 scripts/validate_ncu_trace.py --nsys-rep results/ncu_validation/nsys_validation.nsys-rep --ncu-rep results/ncu_validation/ncu_validation.ncu-rep --result-dir results/ncu_validation"
+
+      - name: Show validation results
+        if: always()
+        run: |
+          ssh $NODE "docker exec -w $REPO $CONTAINER cat results/ncu_validation/validation_results.json 2>/dev/null || echo 'No results file'"
