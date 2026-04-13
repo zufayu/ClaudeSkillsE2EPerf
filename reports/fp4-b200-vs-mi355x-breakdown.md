@@ -56,9 +56,9 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 **ATOM 不支持 DP Attention**，原始 SA 对标配置（EP=4, DP=true）无法公平对比。选择 **EP=8, DP=false, c=64** 作为公平对标基准：DP=false 消除 DP Attention 差异；EP=8 是 B200 8GPU 的自然 EP 配置；c=64 是 SA 原始测试点。
 
-## 跨平台对齐算子表TP8-C64
+## 跨平台对齐算子表
 
-### 跨平台对齐算子表（35 行，按逻辑功能对齐）
+### TP8-C64（35 行，按逻辑功能对齐）
 
 > **数据来源：** B200 nsys trace 10 层平均 / MI355X Kineto trace 全层平均（v21: TP=8+EP, bs=64）
 > **对齐原则：** 按逻辑功能（非执行时序）逐行对齐，同一行的 B200 和 MI355X kernel 做同一件事。一端独有的算子另一端留空。
@@ -104,7 +104,7 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 | moe_finalize | 35 | moe_finalize(=Row1) | moefinalize_lamport | (=Row1) | | | 0 | 0 | 同Row1:层尾=下一层层首;仅计一次不重复 |
 | | | | **B200_SUM** | **276.91** | | **MI355X_SUM** | **267.58** | **9.33** | **v21:MI355X TP=8+EP 反超 B200！** |
 
-### 跨平台对齐算子表TP4-C64
+### TP4-C64
 
 > **数据来源：**
 > - B200: SGLang v0.5.9 torch profiler trace，TP=4 EP=4，chat 1K/1K c=64。FMHA 层锚点切分，position-based module 分配，第 10-40 层平均，4410 层样本。
