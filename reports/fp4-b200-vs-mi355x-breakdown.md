@@ -170,25 +170,6 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 | EP_AR+residual+RMSNorm(fused) before MOE | 11 | 31.2 | -20.2 | allreduce_fusion_kernel_oneshot_lamport | reduce_scatter + triton_fused_clone ×2 |
 | sum | 353.4 | 399.6 | -46.2 | | |
 
-#### B200 Multi-Stream Overlap 分析
-
-**Top Overlap 对（per-layer avg）：**
-
-| Stream A (通信) | Stream B (计算) | Overlap(μs) | 位置 |
-|----------------|----------------|-------------|------|
-| LAMPORT AR+RMSNorm | qkv_a_splitK_TNT | 9.8 | comm_norm ‖ qkv_proj |
-| FP4_GEMM | FP4_block_quant | 3.5 | out_proj ‖ moe_quant |
-| FP4_GEMM | tensor_copy | 3.2 | 跨模块 |
-| FP4_GEMM | MoE_gate_up | 2.7 | shared_exp ‖ moe_expert |
-| splitK_TNT | FP4_convert | 2.5 | qkv_proj ‖ out_proj |
-| RMSNorm | RMSNorm | 1.5 | q_norm ‖ k_norm |
-
-> **Overlap 机制解释：**
-> - B200 SGLang 使用 `enable_flashinfer_allreduce_fusion=True`，lamport allreduce + RMSNorm 在**通信 stream** 上执行。当通信 stream 正在做 allreduce 时，计算 stream 可以提前开始下一步的 GEMM。
-> - 最大 overlap（9.8μs/layer）发生在 lamport AR 与 qkv_a splitK GEMM 之间——这是**层间流水线效果**：上一层的 allreduce 还没完成，当前层的 GEMM 已经开始。
-> - 此外 FP4_GEMM（out_proj/shared）与 FP4 量化/MoE GEMM 之间也有 stream overlap（各 2-3μs）。
-> - MI355X ATOM 使用 RCCL `fused_allreduce_rmsnorm` 在**单一 HIP stream** 上串行执行，HIP Graph capture 确认无 multi-stream fork-join pattern，因此无 overlap。
-
 
 #### TP=4 单层分段执行分析
 
@@ -448,47 +429,7 @@ bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
 
 此外 B200 TRT-LLM 默认 `stream_interval: 10`（每 10 个 token 发一次 SSE chunk），导致 ITL = 10 × TPOT ≈ 170ms，这是 token batching 而非性能问题。
 
-### MI355X Kernel 级 Breakdown（bs=64, --mark-trace, 全层平均）
 
-> **数据来源：** MI355X Kineto trace，MXFP4, **TP=8+EP (v21)**, c=64, chat 1K/1K
-> **工具：** `run_parse_trace.py --target-bs 64` → `decode_breakdown.xlsx`
-> **统计口径：** 全层平均值（avg sum per module），bs=64 稳态 decode 事件
-
-| Module | v21 TP8+EP μs | v20 TP4 EP1 μs | 变化 | % | Kernel(s) | 精度 |
-|--------|--------------|----------------|------|---|-----------|------|
-| **mxfp4_moe** | **129.0** | 188.0 | **-31%** | **48.2%** | topk_sort + MoeSorting ×2 + mxfp4_quant ×2 + MoeMxGemm ×2 | MXFP4 |
-| mla_decode | 26.9 | 33.2 | -19% | 10.1% | mla_a8w8 + mla_reduce_v1 | FP8 |
-| post_attn_layernorm | 24.9 | 22.9 | +9% | 9.3% | reduce_scatter + rmsnorm | BF16 |
-| input_layernorm | 21.1 | 27.4 | -23% | 7.9% | reduce_scatter + rmsnorm | BF16 |
-| v_up_proj_and_o_proj | 18.2 | 24.2 | -25% | 6.8% | batched_gemm_a8w8 + per_token_quant + gemm_preshuffle | FP8 |
-| q_proj_and_k_up_proj | 11.6 | 12.5 | -7% | 4.3% | gemm_preshuffle (q_b) + batched_gemm_a8w8 (k_up) | FP8 |
-| gemm_a8w8_bpreshuffle | 11.5 | 11.6 | -1% | 4.3% | gemm_xdl_cshuffle_v3 (qkv_a) | FP8 |
-| gemm_a16w16 | 9.1 | 9.3 | -2% | 3.4% | bf16gemm_splitk (router) | BF16 |
-| per_token_quant_hip | 5.5 | 5.0 | +10% | 2.0% | dynamic_per_token_scaled_quant | BF16→FP8 |
-| rope_and_kv_cache | 5.1 | 5.1 | 0% | 1.9% | fuse_qk_rope_concat_and_cache_mla | BF16 |
-| _fused_rms_fp8_group_quant | 4.6 | 4.8 | -4% | 1.7% | fused RMSNorm + FP8 group quantize | BF16→FP8 |
-| **TOTAL** | **267.6** | **344.0** | **-22%** | **100%** | | |
-
-> **验证：** 267.6 × 61 = 16.32ms ≈ 实测 decode walltime 17.22ms（偏差 5.2%），kernel breakdown 覆盖了主要 GPU 执行时间。
->
-> **TP=8+EP vs TP=4 EP=1 变化分析：**
-> - **MoE GEMM -31% (188→129μs)：** EP 后每 GPU 仅 32 experts（全宽度），vs TP=4 时 256 experts（1/4 宽度）。gate_up 从 123.6→66.5μs，down 从 61.5→34.2μs。
-> - **MLA attention -19% (33.2→26.9μs)：** TP=8 每 GPU 16 heads（vs TP=4 的 32 heads），mla_a8w8 从 24.1→18.0μs。
-> - **v_up/o_proj -25% (24.2→18.2μs)：** TP=8 维度更小，o_proj GEMM 从 13.5→8.0μs。
-> - **post_attn_layernorm +9% (22.9→24.9μs)：** 8-way xGMI 通信略慢于 4-way（更多 hops）。
-> - **整体 -22%（344→267.6μs）：** EP 的 MoE 分片优势远大于 8-way 通信的额外开销。
-
-### 跨平台 Per-GPU 时间栈总结
-
-| 层级 | B200 (8×GPU, TP8 EP8) | MI355X TP8+EP (v21) | MI355X TP4 EP1 (旧) | B200/MI355X (v21) |
-|------|----------------------|---------------------|---------------------|-------------------|
-| **L1: Kernel/层** | 251.1 μs (关键路径) / 276.9 (sum) | **267.6 μs** | 344.0 μs | 0.94x (sum) |
-| **L2: Decode step** | 15.6 ms | **17.22 ms** | 21.6 ms | 0.91x |
-| **L3: Client TPOT** | 17.8 ms | **18.9 ms** | 24.9 ms | 0.94x |
-| **L1→L2 overhead** | 1.8% | **5.2%** | 2.7% | — |
-| **L2→L3 overhead** | +2.2 ms (prefill) | **+1.7 ms** | +3.3 ms | — |
-| **Output TPS (total)** | 3921 | **3247** | ~2500 | 1.21x |
-| **Output TPS/GPU** | 490.1 | **405.8** | 624.9 | 1.21x |
 
 ## 精度说明
 
