@@ -32,7 +32,7 @@ jobs:
       - name: Step 6 - wait for health
         run: |
           for i in $(seq 1 180); do
-            if docker exec $CONTAINER curl -s http://localhost:8888/health 2>/dev/null | grep -q ok; then
+            if docker exec $CONTAINER curl -sf http://localhost:8888/health 2>/dev/null; then
               echo "Server ready in $((i*5))s"
               exit 0
             fi
