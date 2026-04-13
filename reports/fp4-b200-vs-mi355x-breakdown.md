@@ -5,11 +5,26 @@
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
 > **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅；**MI355X TP=8+EP 公平对标完成 ✅**；**B200 4GPU torch trace per-layer 分析完成 ✅**；**Multi-stream overlap 分析完成 ✅**；**TP=4 分段执行分析+优化方向完成 ✅**
 
+## 目录
+
+- [端到端性能总表](#端到端性能总表)
+- [端到端性能TP=4跨框架对比表](#端到端性能tp4跨框架对比表)
+- [问题背景](#问题背景)
+- [跨平台对齐算子表](#跨平台对齐算子表)
+  - [TP8-C64（35 行）](#tp8-c6435-行按逻辑功能对齐)
+  - [TP4-C64](#tp4-c64)
+    - [算子级对比表（29行）](#算子级对比表29行按执行时序对齐)
+    - [PASS 功能分组汇总](#pass-功能分组汇总)
+    - [TP=4 单层分段执行分析](#tp4-单层分段执行分析)
+- [MI355X TPOT 来源分析](#mi355x-tpot-来源分析)
+- [精度说明](#精度说明)
+- [迭代日志](#迭代日志)
+
 ## 端到端性能总表
 
 > MTP=0, chat 1K/1K, c=64, DP=false
 
-| Platform | Quant | EP | TP | Env | Mode | Total Tput | Output Tput | Interac. | TPOT (ms) | TTFT (ms) |
+| Platform&emsp; | Quant&emsp; | EP | TP | Env&emsp;&emsp; | Mode&emsp;&emsp; | Total&nbsp;Tput | Output&nbsp;Tput | Interac. | TPOT&nbsp;(ms) | TTFT&nbsp;(ms) |
 |----------|-------|----|----|-----|------|------------|-------------|----------|-----------|-----------|
 | B200 | NVFP4 | 8 | 8 | post2 | bench | 7577.9 | 3788.1 | 60.96 | 16.4 | 72 |
 | B200 | NVFP4 | 1 | 8 | post2 | bench | 7602.5 | 3800.4 | 60.61 | 16.5 | 83 |
@@ -30,7 +45,7 @@
 > B200: SGLang v0.5.9 (SA InferenceX 同版) vs TRT-LLM rc6.post2
 > MI355X: ATOM rocm7.1.1 (EP=4 vs EP=1)
 
-| Platform | Framework | Config | Source | Total Tput | Per-GPU | Output Tput | TPOT p50 (ms) | TTFT p50 (ms) | Interactivity |
+| Platform&emsp; | Framework&emsp;&emsp; | Config&emsp; | Source&emsp;&emsp;&emsp; | Total&nbsp;Tput | Per‑GPU | Output&nbsp;Tput | TPOT&nbsp;p50&nbsp;(ms) | TTFT&nbsp;p50&nbsp;(ms) | Interactivity |
 |----------|-----------|--------|--------|------------|---------|-------------|---------------|---------------|---------------|
 | B200 | SGLang | EP4 TP4 | SA InferenceX | 6000.8 | 1500.2 | 2999.7 | 20.05 | 471.1 | 49.87 |
 | B200 | SGLang | EP4 TP4 | Ours-bench | 6397.3 | 1599.3 | 3197.9 | 19.04 | 403.5 | 52.52 |
@@ -65,7 +80,7 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 > **GAP(B-M)：** 正值 = B200 更慢，负值 = MI355X 更慢
 > **v21 更新：** MI355X 从 TP=4 EP=1 (4GPU) 改为 **TP=8+EP (8GPU)**，与 B200 TP=8 EP=8 **完全对齐**。MoE GEMM per-GPU 权重量相同，差距反映纯算子效率。
 
-| block | ID | 逻辑算子 | B200 kernel | B200 μs | MI355X module | MI355X kernel | MI355X μs | GAP(B-M) | 备注 |
+| block&emsp;&emsp;&emsp; | ID | 逻辑算子&emsp;&emsp;&emsp;&emsp;&emsp; | B200 kernel&emsp;&emsp;&emsp;&emsp;&emsp; | B200&nbsp;μs | MI355X module&emsp;&emsp;&emsp; | MI355X kernel&emsp;&emsp;&emsp;&emsp;&emsp; | MI355X&nbsp;μs | GAP(B‑M) | 备注&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp; |
 |-------|-----|---------|-------------|---------|---------------|---------------|-----------|----------|------|
 | pre_attn_comm | 1 | TP_AR+residual+RMSNorm(融合) | moefinalize_lamport | 33.11 | | | 0 | 33.11 | B200独有:EP_AR+加权求和+residual+pre-attn_RMSNorm全融合;与下行qkv_a并行 |
 | pre_attn_comm | 2 | TP_reduce_scatter+RMSNorm | | 0 | input_layernorm | reduce_scatter + rmsnorm | 21.12 | -21.12 | MI355X:TP=8 xGMI通信+RMSNorm（v21:从25.08降至21.12,8-way TP） |
@@ -124,8 +139,8 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 #### 算子级对比表（29行，按执行时序对齐）
 
-| # | B200_Module | B200_Operator | B200_Raw_Kernel | B200_Stream | B200_Avg_us | B200_Overlap_us | B200_Overlap_With | MI355X_Module | MI355X_Kernel | MI355X_Avg_us | Notes |
-|---|-------------|---------------|-----------------|-------------|-------------|-----------------|-------------------|---------------|---------------|---------------|-------|
+| # | B200_Module&emsp; | B200_Operator&emsp;&emsp;&emsp;&emsp; | B200_Raw_Kernel&emsp;&emsp;&emsp;&emsp;&emsp; | Stream | B200_us | Overlap_us | B200_Overlap_With&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp; | MI355X_Module&emsp;&emsp; | MI355X_Kernel&emsp;&emsp;&emsp;&emsp; | MI355X_us | Notes&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp; |
+|---|-------------|---------------|-----------------|--------|---------|------------|-------------------|---------------|---------------|-----------|-------|
 | 1 | EP_AR | EP_AR+residual+RMSNorm(fused) | allreduce_fusion_kernel_oneshot_lamport | 23 | 25.9 | 24.1 | qkv_a_proj_GEMM(same):24.1μs | input_layernorm | reduce_scatter + load_rmsnorm | 29 | B200 fuses AR+residual+RMSNorm; B200 value inflated by same-stream overlap (true ~11μs) |
 | 2 | Attention | qkv_a_proj_GEMM | nvjet_splitK_TNT | 23 | 31.9 | 25.5 | EP_AR+residual+RMSNorm(same):24.1μs \| qkv_a_splitK_reduce(same):1.4μs | input_layernorm | add_rmsnorm_quant ×2 | 5.5 | MI355X only: additional quant after norm |
 | 3 | Attention | qkv_a_splitK_reduce | splitKreduce_kernel | 23 | 3.7 | 2.5 | qkv_a_proj_GEMM(same):1.4μs \| q/k_norm_RMSNorm(same):1.1μs | gemm_a16w16 | bf16gemm_splitk (qkv_a) | 16.1 | MI355X qkv_a GEMM maps here in strict timeline |
