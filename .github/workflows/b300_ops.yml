@@ -1,0 +1,30 @@
+name: B300 Ops
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "Command to run (in container or host)"
+        required: true
+        default: "nvidia-smi"
+      in_container:
+        description: "Run inside zufa_sglang container?"
+        type: boolean
+        default: true
+jobs:
+  run:
+    runs-on: [self-hosted, b300]
+    timeout-minutes: 15
+    env:
+      CONTAINER: zufa_sglang
+      REPO: /home/zufayu/ClaudeSkillsE2EPerf
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Run command
+        run: |
+          if [ "${{ inputs.in_container }}" = "true" ]; then
+            docker exec $CONTAINER bash -c 'cd /home/zufayu/ClaudeSkillsE2EPerf && ${{ inputs.command }}'
+          else
+            cd $REPO && ${{ inputs.command }}
+          fi
