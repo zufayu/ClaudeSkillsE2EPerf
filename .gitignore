@@ -20,3 +20,4 @@ traces/
 
 # Experimental results (exploratory runs, not for dashboard/report)
 experiments/
+results/h20_ncu_full_test/
