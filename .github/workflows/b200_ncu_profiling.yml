@@ -60,7 +60,7 @@ jobs:
       - name: Set result dir
         id: vars
         run: |
-          RESULT_DIR="results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_sglang059_ncu"
+          RESULT_DIR="results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_sglang059_profiling"
           echo "result_dir=$RESULT_DIR" >> "$GITHUB_OUTPUT"
 
       - name: Run ncu profiling (serve mode, ${{ inputs.scenario }} c=${{ inputs.concurrency }})
