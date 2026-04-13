@@ -1,0 +1,87 @@
+name: B300 SGLang Smoke Test
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: [self-hosted, b300]
+    timeout-minutes: 30
+    env:
+      CONTAINER: zufa_sglang
+      MODEL_FP4: /models/DeepSeek-R1-0528-NVFP4-v2
+      REPO: /home/zufayu/ClaudeSkillsE2EPerf
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Verify model + SGLang
+        run: |
+          docker exec $CONTAINER python3 -c "
+          import sglang; print(f'SGLang {sglang.__version__}')
+          import torch; print(f'CUDA {torch.version.cuda}, PyTorch {torch.__version__}')
+          from transformers import AutoConfig
+          c = AutoConfig.from_pretrained('$MODEL_FP4', trust_remote_code=True)
+          print(f'Model: {c.model_type}, layers: {c.num_hidden_layers}, vocab: {c.vocab_size}')
+          "
+
+      - name: Launch server + smoke test
+        run: |
+          # Kill any leftover server
+          docker exec $CONTAINER bash -c 'pkill -f sglang.launch_server 2>/dev/null; sleep 2; true'
+
+          # Launch server in background
+          docker exec -d $CONTAINER python3 -m sglang.launch_server \
+            --model-path $MODEL_FP4 \
+            --host 0.0.0.0 --port 8888 \
+            --tp 8 --ep 8 \
+            --trust-remote-code \
+            --mem-fraction-static 0.85 \
+            --kv-cache-dtype fp8_e4m3 \
+            --chunked-prefill-size 16384 \
+            --quantization modelopt_fp4 \
+            --disable-radix-cache \
+            --attention-backend trtllm_mla \
+            --moe-runner-backend flashinfer_trtllm \
+            --max-running-requests 256 \
+            --cuda-graph-max-bs 256 \
+            --enable-flashinfer-allreduce-fusion \
+            --enable-symm-mem \
+            --stream-interval 10
+
+          echo "Server launching..."
+
+          # Wait for ready
+          for i in $(seq 1 120); do
+            if docker exec $CONTAINER curl -s http://localhost:8888/health 2>/dev/null | grep -q ok; then
+              echo "Server ready in $((i*5))s"
+              break
+            fi
+            if [ $i -eq 120 ]; then echo "TIMEOUT waiting for server"; exit 1; fi
+            sleep 5
+          done
+
+          # Smoke test: single request
+          echo "=== Smoke test ==="
+          docker exec $CONTAINER curl -s http://localhost:8888/v1/completions \
+            -H "Content-Type: application/json" \
+            -d '{"model": "/models/DeepSeek-R1-0528-NVFP4-v2", "prompt": "What is 2+2?", "max_tokens": 64, "temperature": 0}' \
+            | python3 -c "import sys,json; r=json.load(sys.stdin); print(f'Output: {r[\"choices\"][0][\"text\"][:200]}'); print(f'Usage: {r[\"usage\"]}')"
+
+      - name: Quick benchmark (c=4, 40 prompts)
+        run: |
+          docker exec $CONTAINER python3 -m sglang.bench_serving \
+            --model $MODEL_FP4 \
+            --port 8888 \
+            --backend vllm \
+            --input-len 1024 --output-len 1024 \
+            --random-range-ratio 0.8 \
+            --num-prompts 40 \
+            --max-concurrency 4 \
+            --num-warmups 8 \
+            --result-filename b300_smoke \
+            --result-dir /tmp 2>&1 | tail -30
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker exec $CONTAINER bash -c 'pkill -f sglang.launch_server 2>/dev/null; sleep 3; true'
+          echo "Server stopped"
