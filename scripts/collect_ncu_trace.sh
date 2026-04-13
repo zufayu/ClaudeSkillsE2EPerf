@@ -298,61 +298,33 @@ fi
 NCU_OPTS+=(--section Nvlink --section Nvlink_Tables --section Nvlink_Topology)
 
 if [[ "$MODE" == "serve" ]]; then
-    # Serve mode: launch server + warmup OUTSIDE ncu to avoid massive overhead.
-    # ncu wraps only the benchmark client (--bench-only --skip-warmup).
-    # Key insight: ncu --target-processes all captures GPU kernels from ALL
-    # processes, so even though ncu wraps the client, it profiles the server's
-    # GPU kernels because they run on the same CUDA context.
-    log "Serve mode: launching server outside ncu..."
+    # Serve mode: ncu must wrap the server process (or its parent) because
+    # --target-processes all only profiles CHILD processes of the wrapped command.
+    # ncu_infer.py launches the server as a subprocess, so ncu sees server GPU kernels.
+    #
+    # Server startup under ncu is slow (ncu counts each kernel launch for --launch-skip)
+    # but the counting overhead is modest. Set NCU_SERVER_TIMEOUT=3600 to allow enough time.
+    #
+    # Phase 1 nsys dry-run already determined the steady-state decode region
+    # (launch-skip), so ncu skips startup+warmup kernels and profiles decode only.
 
     # Kill any leftover server (avoid pkill -f which can kill the calling shell)
     pids=$(pgrep -f "python3.*sglang.launch_server" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
     pids=$(pgrep -f "trtllm-serve" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
     sleep 2
 
-    # Launch server directly (not through ncu_infer.py)
-    if [[ "$BACKEND" == "sglang" ]]; then
-        python3 -m sglang.launch_server --model-path "$MODEL" --host 0.0.0.0 --port "$PORT" --trust-remote-code --tensor-parallel-size "$TP" --data-parallel-size 1 --ep-size "$EP" --mem-fraction-static "$MEM_FRACTION" --kv-cache-dtype "$KV_CACHE_DTYPE" --chunked-prefill-size "$CHUNKED_PREFILL" --cuda-graph-max-bs "$CUDA_GRAPH_MAX_BS" --max-running-requests "$MAX_RUNNING_REQUESTS" --enable-flashinfer-allreduce-fusion --enable-symm-mem --disable-radix-cache --attention-backend trtllm_mla --moe-runner-backend flashinfer_trtllm --stream-interval 10 $(if [[ -n "${QUANTIZATION:-}" ]]; then echo "--quantization $QUANTIZATION"; fi) > "$NCU_DIR/phase2_server.log" 2>&1 &
-        SERVER_PID=$!
-    else
-        trtllm-serve "$MODEL" --port "$PORT" --trust_remote_code --backend pytorch --tp_size "$TP" --ep_size "$EP" > "$NCU_DIR/phase2_server.log" 2>&1 &
-        SERVER_PID=$!
-    fi
-    log "  Server PID: $SERVER_PID"
-
-    # Wait for server to be ready
-    for i in $(seq 1 720); do
-        if curl -sf "http://localhost:$PORT/health" >/dev/null 2>&1; then
-            log "  Server ready in $((i*5))s"
-            break
-        fi
-        if [[ $i -eq 720 ]]; then
-            log "ERROR: Server not ready after 3600s"
-            log "  Server log tail:"
-            tail -30 "$NCU_DIR/phase2_server.log" 2>/dev/null
-            kill $SERVER_PID 2>/dev/null; pids=$(pgrep -f "python3.*sglang.launch_server" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null
-            exit 1
-        fi
-        sleep 5
-    done
-
-    # Warmup (outside ncu, fills CUDA graphs etc)
-    WARMUP_NUM=$((CONCURRENCY * 2))
-    log "  Running warmup ($WARMUP_NUM prompts, c=$CONCURRENCY) outside ncu..."
-    python3 -m sglang.bench_serving --model "$MODEL" --port "$PORT" --backend vllm --dataset-name random --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 --num-prompts "$WARMUP_NUM" --max-concurrency "$CONCURRENCY" --warmup-requests 0 --output-file /tmp/ncu_ext_warmup.jsonl > "$NCU_DIR/phase2_warmup.log" 2>&1 || true
-    log "  Warmup done. Starting ncu capture..."
-
-    # ncu wraps benchmark client only — server already running and warm
-    NCU_CMD="$INFER_CMD --bench-only --skip-warmup"
+    export NCU_SERVER_TIMEOUT=3600
+    log "Serve mode: ncu wraps full ncu_infer.py (server + warmup + benchmark)"
+    log "  NCU_SERVER_TIMEOUT=${NCU_SERVER_TIMEOUT}s for server startup under ncu"
+    NCU_CMD="$INFER_CMD"
     log "Command:"
     log "  ncu ${NCU_OPTS[*]} $NCU_CMD"
     log ""
     ncu "${NCU_OPTS[@]}" $NCU_CMD > "$NCU_DIR/${REPORT_NAME}.log" 2>&1
     NCU_EXIT=$?
 
-    # Cleanup server (avoid pkill -f which can kill the calling shell)
+    # Cleanup any remaining server processes
     log "Stopping server..."
-    kill $SERVER_PID 2>/dev/null || true
     pids=$(pgrep -f "python3.*sglang.launch_server" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
     pids=$(pgrep -f "trtllm-serve" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
     sleep 3
