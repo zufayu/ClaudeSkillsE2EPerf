@@ -23,44 +23,32 @@ jobs:
           print(f'Model: {c.model_type}, layers: {c.num_hidden_layers}, vocab: {c.vocab_size}')
           "
 
-      - name: Launch server + smoke test
+      - name: Launch server
         run: |
           # Kill any leftover server
           docker exec $CONTAINER bash -c 'pkill -f sglang.launch_server 2>/dev/null; sleep 2; true'
 
-          # Launch server in background
-          docker exec -d $CONTAINER python3 -m sglang.launch_server \
-            --model-path $MODEL_FP4 \
-            --host 0.0.0.0 --port 8888 \
-            --tp 8 --ep 8 \
-            --trust-remote-code \
-            --mem-fraction-static 0.85 \
-            --kv-cache-dtype fp8_e4m3 \
-            --chunked-prefill-size 16384 \
-            --quantization modelopt_fp4 \
-            --disable-radix-cache \
-            --attention-backend trtllm_mla \
-            --moe-runner-backend flashinfer_trtllm \
-            --max-running-requests 256 \
-            --cuda-graph-max-bs 256 \
-            --enable-flashinfer-allreduce-fusion \
-            --enable-symm-mem \
-            --stream-interval 10
+          # Launch server in background using nohup inside container
+          docker exec $CONTAINER bash -c 'nohup python3 -m sglang.launch_server --model-path /models/DeepSeek-R1-0528-NVFP4-v2 --host 0.0.0.0 --port 8888 --tp 8 --ep 8 --trust-remote-code --mem-fraction-static 0.85 --kv-cache-dtype fp8_e4m3 --chunked-prefill-size 16384 --quantization modelopt_fp4 --disable-radix-cache --attention-backend trtllm_mla --moe-runner-backend flashinfer_trtllm --max-running-requests 256 --cuda-graph-max-bs 256 --enable-flashinfer-allreduce-fusion --enable-symm-mem --stream-interval 10 > /tmp/sglang_server.log 2>&1 &'
+          echo "Server launching (PID started in container)..."
 
-          echo "Server launching..."
-
-          # Wait for ready
-          for i in $(seq 1 120); do
+      - name: Wait for server ready
+        run: |
+          for i in $(seq 1 180); do
             if docker exec $CONTAINER curl -s http://localhost:8888/health 2>/dev/null | grep -q ok; then
               echo "Server ready in $((i*5))s"
-              break
+              exit 0
             fi
-            if [ $i -eq 120 ]; then echo "TIMEOUT waiting for server"; exit 1; fi
+            if [ $((i % 12)) -eq 0 ]; then echo "Still waiting... ($((i*5))s)"; fi
             sleep 5
           done
+          echo "TIMEOUT waiting for server after 900s"
+          docker exec $CONTAINER tail -50 /tmp/sglang_server.log 2>/dev/null || true
+          exit 1
 
-          # Smoke test: single request
-          echo "=== Smoke test ==="
+      - name: Smoke test
+        run: |
+          echo "=== Smoke test: single request ==="
           docker exec $CONTAINER curl -s http://localhost:8888/v1/completions \
             -H "Content-Type: application/json" \
             -d '{"model": "/models/DeepSeek-R1-0528-NVFP4-v2", "prompt": "What is 2+2?", "max_tokens": 64, "temperature": 0}' \
