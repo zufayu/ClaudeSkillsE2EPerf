@@ -240,31 +240,44 @@ def _run_benchmark_serving(args, isl, osl, num_prompts, tag="bench"):
     """Run benchmark_serving.py as subprocess."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # Use benchmark_serving from the repo or from PATH
+    # Use benchmark_serving from the repo (InferenceX version) or sglang built-in
     bench_script = os.path.join(script_dir, "benchmark_serving.py")
-    if not os.path.exists(bench_script):
-        # Try sglang's benchmark_serving
-        bench_script = None
-        for candidate in [
-            "python3 -m sglang.bench_serving",
-        ]:
-            bench_script = candidate
-            break
+    use_sglang_builtin = not os.path.exists(bench_script)
+    if use_sglang_builtin:
+        bench_script = "-m"  # will use sys.executable -m sglang.bench_serving
 
-    cmd = [
-        sys.executable, bench_script,
-        "--model", args.model,
-        "--port", str(args.port),
-        "--backend", "vllm" if args.backend == "sglang" else "openai",
-        "--input-len", str(isl),
-        "--output-len", str(osl),
-        "--random-range-ratio", "0.8",
-        "--num-prompts", str(num_prompts),
-        "--max-concurrency", str(args.concurrency),
-        "--num-warmups", "0",
-        "--result-filename", f"ncu_{tag}",
-        "--result-dir", "/tmp",
-    ]
+    if use_sglang_builtin:
+        # SGLang built-in bench_serving uses different arg names
+        cmd = [
+            sys.executable, "-m", "sglang.bench_serving",
+            "--model", args.model,
+            "--port", str(args.port),
+            "--backend", "vllm" if args.backend == "sglang" else "openai",
+            "--dataset-name", "random",
+            "--random-input-len", str(isl),
+            "--random-output-len", str(osl),
+            "--random-range-ratio", "0.8",
+            "--num-prompts", str(num_prompts),
+            "--max-concurrency", str(args.concurrency),
+            "--warmup-requests", "0",
+            "--output-file", f"/tmp/ncu_{tag}.jsonl",
+        ]
+    else:
+        # InferenceX benchmark_serving.py
+        cmd = [
+            sys.executable, bench_script,
+            "--model", args.model,
+            "--port", str(args.port),
+            "--backend", "vllm" if args.backend == "sglang" else "openai",
+            "--input-len", str(isl),
+            "--output-len", str(osl),
+            "--random-range-ratio", "0.8",
+            "--num-prompts", str(num_prompts),
+            "--max-concurrency", str(args.concurrency),
+            "--num-warmups", "0",
+            "--result-filename", f"ncu_{tag}",
+            "--result-dir", "/tmp",
+        ]
 
     print(f"  Running: {os.path.basename(bench_script)} --num-prompts {num_prompts} --max-concurrency {args.concurrency}")
     result = subprocess.run(cmd, capture_output=False, timeout=3600)

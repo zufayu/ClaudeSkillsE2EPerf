@@ -339,7 +339,7 @@ if [[ "$MODE" == "serve" ]]; then
     # Warmup (outside ncu, fills CUDA graphs etc)
     WARMUP_NUM=$((CONCURRENCY * 2))
     log "  Running warmup ($WARMUP_NUM prompts, c=$CONCURRENCY) outside ncu..."
-    python3 -m sglang.bench_serving --model "$MODEL" --port "$PORT" --backend vllm --input-len 1024 --output-len 1024 --random-range-ratio 0.8 --num-prompts "$WARMUP_NUM" --max-concurrency "$CONCURRENCY" --num-warmups 0 --result-filename ncu_ext_warmup --result-dir /tmp > "$NCU_DIR/phase2_warmup.log" 2>&1 || true
+    python3 -m sglang.bench_serving --model "$MODEL" --port "$PORT" --backend vllm --dataset-name random --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 --num-prompts "$WARMUP_NUM" --max-concurrency "$CONCURRENCY" --warmup-requests 0 --output-file /tmp/ncu_ext_warmup.jsonl > "$NCU_DIR/phase2_warmup.log" 2>&1 || true
     log "  Warmup done. Starting ncu capture..."
 
     # ncu wraps benchmark client only — server already running and warm
