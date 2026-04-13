@@ -17,8 +17,12 @@ jobs:
       - name: Step 3 - docker exec bash
         run: docker exec $CONTAINER bash -c 'echo "step 3 ok"; sleep 2; echo "step 3 done"'
 
-      - name: Step 4 - docker exec pkill
-        run: docker exec $CONTAINER bash -c 'pkill -f sglang.launch_server 2>/dev/null; sleep 2; true'
+      - name: Step 4 - docker exec pkill (fixed)
+        run: |
+          # pkill -f matches cmdline of ALL processes including docker exec itself
+          # Use killall or pgrep with --exact, or kill by pidfile
+          docker exec $CONTAINER bash -c 'pids=$(pgrep -f "python3.*sglang.launch_server" 2>/dev/null | grep -v $$); if [ -n "$pids" ]; then kill $pids 2>/dev/null; fi; sleep 2; true'
+          echo "step 4 ok"
 
       - name: Step 5 - docker exec nohup server
         run: |
