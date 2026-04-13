@@ -48,6 +48,8 @@ def main():
     parser.add_argument("--scenario", default="chat", choices=["chat", "reasoning", "summarize"])
     parser.add_argument("--port", type=int, default=8888)
     parser.add_argument("--num-prompts", type=int, default=0, help="Benchmark prompts (default: concurrency*10)")
+    parser.add_argument("--bench-only", action="store_true", help="Serve mode: skip server launch, assume server is already running")
+    parser.add_argument("--skip-warmup", action="store_true", help="Serve mode: skip warmup phase")
     # SGLang server params
     parser.add_argument("--mem-fraction-static", type=float, default=0.85)
     parser.add_argument("--chunked-prefill-size", type=int, default=16384)
@@ -91,7 +93,14 @@ def run_offline(args):
 
 
 def run_serve(args):
-    """Serve mode: launch server, warmup + benchmark with concurrent requests."""
+    """Serve mode: launch server, warmup + benchmark with concurrent requests.
+
+    With --bench-only: assume server is already running, skip launch/shutdown.
+    This is critical for ncu profiling — ncu wraps only the benchmark client
+    while the server runs outside ncu (avoiding massive startup overhead).
+
+    With --skip-warmup: skip warmup phase (server already warmed up externally).
+    """
     scenario_map = {
         "chat": (1024, 1024),
         "reasoning": (1024, 8192),
@@ -104,38 +113,47 @@ def run_serve(args):
     print(f"=== Serve mode: {args.backend} ===")
     print(f"  Scenario: {args.scenario} (ISL={isl}, OSL={osl})")
     print(f"  Concurrency: {args.concurrency}")
+    print(f"  Bench-only: {args.bench_only}")
+    print(f"  Skip-warmup: {args.skip_warmup}")
     print(f"  Warmup: {warmup_prompts} prompts")
     print(f"  Benchmark: {num_prompts} prompts")
 
-    # Launch server
-    server_proc = _launch_server(args)
+    server_proc = None
 
-    try:
-        # Wait for server ready
+    if args.bench_only:
+        # Server already running externally — just verify it's healthy
+        print(f"\n=== bench-only mode: checking server on port {args.port} ===")
+        _wait_for_server(args.port, timeout=60)
+    else:
+        # Launch server (may be under ncu — slow!)
+        server_proc = _launch_server(args)
         _wait_for_server(args.port, timeout=1200)
 
-        # Warmup
-        print(f"\n=== Warmup ({warmup_prompts} prompts, c={args.concurrency}) ===")
-        _run_benchmark_serving(args, isl, osl, warmup_prompts, tag="warmup")
+    try:
+        if not args.skip_warmup:
+            print(f"\n=== Warmup ({warmup_prompts} prompts, c={args.concurrency}) ===")
+            _run_benchmark_serving(args, isl, osl, warmup_prompts, tag="warmup")
 
         # Benchmark (this is what ncu captures during steady state)
         print(f"\n=== Benchmark ({num_prompts} prompts, c={args.concurrency}) ===")
         _run_benchmark_serving(args, isl, osl, num_prompts, tag="profiled")
 
-        print("\n=== Benchmark complete, shutting down ===")
+        print("\n=== Benchmark complete ===")
     finally:
-        # Kill server
-        if server_proc.poll() is None:
-            server_proc.terminate()
-            try:
-                server_proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                server_proc.kill()
-                server_proc.wait()
-        # Kill any remaining server processes
-        subprocess.run(["pkill", "-f", "sglang.launch_server"], capture_output=True)
-        subprocess.run(["pkill", "-f", "trtllm-serve"], capture_output=True)
-        time.sleep(3)
+        if server_proc is not None:
+            # Kill server only if we launched it
+            if server_proc.poll() is None:
+                server_proc.terminate()
+                try:
+                    server_proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    server_proc.kill()
+                    server_proc.wait()
+            subprocess.run(["pkill", "-f", "sglang.launch_server"], capture_output=True)
+            subprocess.run(["pkill", "-f", "trtllm-serve"], capture_output=True)
+            time.sleep(3)
+        else:
+            print("  (bench-only mode: server left running)")
 
     print("Done.")
 
@@ -185,10 +203,16 @@ def _launch_server(args):
 
 
 def _wait_for_server(port, timeout=1200):
-    """Wait for server to be ready via health endpoint."""
+    """Wait for server to be ready via health endpoint.
+
+    Under ncu/nsys profiling, server startup takes 10-20x longer
+    due to instrumentation overhead. Default timeout is 1200s (20min)
+    but can be overridden via NCU_SERVER_TIMEOUT env var.
+    """
     import urllib.request
     import urllib.error
 
+    timeout = int(os.environ.get("NCU_SERVER_TIMEOUT", timeout))
     url = f"http://localhost:{port}/health"
     start = time.time()
     last_print = 0

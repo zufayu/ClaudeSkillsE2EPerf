@@ -228,11 +228,55 @@ def main():
 
     if best_pattern is None:
         print("WARNING: no repeating pattern found at middle")
-        print("  Falling back to launch-skip = mid")
-        launch_skip = mid + global_offset
-        kernels_per_layer = 0
-        kernels_per_decode = 0
-        n_layers = 0
+        print("  Using duration-based approach (common for concurrent serving)")
+
+        # For concurrent serving (c>1), kernels from multiple requests
+        # interleave — no clean repeating pattern. Instead, use duration
+        # to find steady-state decode: decode kernels are short and
+        # consistent, prefill/ramp-up kernels are longer and variable.
+        #
+        # Strategy: bucket kernels into windows, find region with
+        # stable mean duration (= steady-state decode).
+        window_size = 500  # kernels per bucket
+        n_windows = local_N // window_size
+        if n_windows >= 5:
+            window_means = []
+            for w in range(n_windows):
+                start_idx = w * window_size
+                w_durs = durs_ns[start_idx:start_idx + window_size]
+                window_means.append((start_idx, sum(w_durs) / len(w_durs)))
+
+            # Median window duration = steady-state decode
+            sorted_means = sorted(m for _, m in window_means)
+            median_mean = sorted_means[len(sorted_means) // 2]
+
+            # Steady windows: within 50% of median
+            steady_windows = [(idx, m) for idx, m in window_means
+                              if abs(m - median_mean) / max(median_mean, 1) < 0.5]
+
+            if steady_windows:
+                # Pick center of steady region
+                center_idx = len(steady_windows) // 2
+                launch_skip = steady_windows[center_idx][0] + global_offset
+                decode_dur_ms = median_mean * window_size / 1e6  # per-window total
+                print(f"  Duration-based: {len(steady_windows)}/{n_windows} steady windows")
+                print(f"  Median kernel duration: {median_mean/1e3:.1f} us")
+                print(f"  Selected window at local index {steady_windows[center_idx][0]}")
+                kernels_per_layer = 0
+                kernels_per_decode = 0
+                n_layers = 0
+            else:
+                print("  WARNING: no steady windows found, falling back to mid")
+                launch_skip = mid + global_offset
+                kernels_per_layer = 0
+                kernels_per_decode = 0
+                n_layers = 0
+        else:
+            print(f"  Too few windows ({n_windows}), falling back to mid")
+            launch_skip = mid + global_offset
+            kernels_per_layer = 0
+            kernels_per_decode = 0
+            n_layers = 0
     else:
         kernels_per_layer = best_plen
         print(f"Layer pattern: {kernels_per_layer} kernels/layer, "

@@ -4,7 +4,7 @@ on:
 jobs:
   test:
     runs-on: [self-hosted, b300]
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       CONTAINER: zufa_sglang
       MODEL_FP4: /models/DeepSeek-R1-0528-NVFP4-v2
