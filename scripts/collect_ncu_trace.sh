@@ -322,7 +322,7 @@ if [[ "$MODE" == "serve" ]]; then
 
     # Wait for server to be ready
     for i in $(seq 1 720); do
-        if curl -s "http://localhost:$PORT/health" 2>/dev/null | grep -q ok; then
+        if curl -sf "http://localhost:$PORT/health" >/dev/null 2>&1; then
             log "  Server ready in $((i*5))s"
             break
         fi
