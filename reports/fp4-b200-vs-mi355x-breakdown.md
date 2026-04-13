@@ -1,9 +1,9 @@
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
-> **Last updated:** 2026-04-06 v25
+> **Last updated:** 2026-04-13 v26
 > **Model:** DeepSeek-R1-0528-NVFP4-v2, FP4
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
-> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅；**MI355X TP=8+EP 公平对标完成 ✅**；**B200 4GPU torch trace per-layer 分析完成 ✅**；**Multi-stream overlap 分析完成 ✅**
+> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅；**MI355X TP=8+EP 公平对标完成 ✅**；**B200 4GPU torch trace per-layer 分析完成 ✅**；**Multi-stream overlap 分析完成 ✅**；**TP=4 分段执行分析+优化方向完成 ✅**
 
 ## 端到端性能总表
 
@@ -199,6 +199,156 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 > - 最大 overlap（9.8μs/layer）发生在 lamport AR 与 qkv_a splitK GEMM 之间——这是**层间流水线效果**：上一层的 allreduce 还没完成，当前层的 GEMM 已经开始。
 > - 此外 FP4_GEMM（out_proj/shared）与 FP4 量化/MoE GEMM 之间也有 stream overlap（各 2-3μs）。
 > - MI355X ATOM 使用 RCCL `fused_allreduce_rmsnorm` 在**单一 HIP stream** 上串行执行，HIP Graph capture 确认无 multi-stream fork-join pattern，因此无 overlap。
+
+
+#### TP=4 单层分段执行分析
+
+> 基于 29 行时序表原始 Torch Trace 数据，将单层 Transformer 按执行阶段分为 7 段，逐段对比两平台关键路径。
+> 数据为统计平均值，可能与精确值存在细微偏差。
+
+##### 总览
+
+| 段 | 功能 | B200 μs | MI355X μs | GAP μs | GAP 主因 |
+|----|------|---------|-----------|--------|---------|
+| 1 | AR+RMSNorm+qkv_a | ~32 | ~45 | 13 | PDL overlap 隐藏 AR |
+| 2 | q/k Norm+q_b+k_up | ~14 | ~22.8 | 8.8 | 双 stream norm 并行 + q_b GEMM |
+| 3 | RoPE+KV cache | 4.4 | 5.3 | 0.9 | — |
+| 4 | MLA Decode+uv | ~24 | ~39.3 | 15.3 | mla_reduce 独立开销 |
+| 5 | O_proj | ~11.5(+10.2‖AR) | 21.4 | ~10 | GEMM#2 与下段 AR 重叠 |
+| 6 | MoE routing+shared | ~34 | ~71 | 37 | 双 stream 并行 vs 串行 |
+| 7 | MoE GEMM+finalize | ~167 | ~183 | 16 | GEMM 效率 + 中间 quant |
+| **合计** | | **~283** | **~388** | **~105** | |
+
+##### 段 1：AR + RMSNorm + qkv_a 投影（GAP 13μs）
+
+B200 将 AllReduce+residual+RMSNorm 融合为单个 lamport kernel，利用 PDL 在同一 Stream 上提前发射 qkv_a_proj_GEMM，两者重叠执行。含后续 splitKreduce 共 ~32μs。MI355X 两个算子串行执行，合计 ~45μs。
+
+| B200 算子 | μs | MI355X 算子 | μs |
+|-----------|------|-------------|------|
+| AR+residual+RMSNorm(fused) ‖ qkv_a(PDL) | 25.9 | reduce_scatter+load_rmsnorm | 29 |
+| qkv_a_proj_GEMM | 31.9(overlap) | bf16gemm_splitk (qkv_a) | 16.1 |
+| splitKreduce | 3.7 | — | — |
+| **关键路径** | **~32** | **串行合计** | **~45** |
+
+##### 段 2：q/k Norm + q_b + k_up 投影（GAP 8.8μs）
+
+B200 串行执行 q/k_norm + q_b_proj + uk_gemm，另一 Stream 并行执行第二个 RMSNorm，整体 ~14μs。MI355X 四个算子串行 ~22.8μs。
+
+| B200 算子 | μs | Stream | MI355X 算子 | μs |
+|-----------|------|--------|-------------|------|
+| q/k_norm_RMSNorm | 3.2 | 23 | add_rmsnorm_quant ×2 | 5.5 |
+| q/k_norm_RMSNorm(并行) | 2.4 | 385 | — | — |
+| q_b_proj_GEMM | 6.3 | 23 | gemm_xdl (q_b) | 11.8 |
+| uk_gemm(K_expansion) | 4.4 | 23 | batched_gemm_a8w8 | 5.5 |
+| **关键路径** | **~14** | | **串行合计** | **~22.8** |
+
+##### 段 3：RoPE + KV cache（GAP 0.9μs）
+
+B200 通过 RoPE+KV_cache_write 与 set_mla_kv 串行实现 4.4μs；MI355X 单个融合算子 5.3μs。
+
+| B200 算子 | μs | MI355X 算子 | μs |
+|-----------|------|-------------|------|
+| RoPE+KV_cache_write | 2.7 | fuse_qk_rope_concat_cache | 5.3 |
+| set_mla_kv | 1.7 | — | — |
+| **合计** | **4.4** | | **5.3** |
+
+##### 段 4：MLA Decode + uv_gemm（GAP 15.3μs）
+
+B200 串行执行 FMHA + uv_gemm ~24μs。MI355X 需额外 mla_reduce 步骤，三算子串行 ~39.3μs。
+
+| B200 算子 | μs | MI355X 算子 | μs |
+|-----------|------|-------------|------|
+| fmhaSm100f (FMHA) | 20.3 | mla_a8w8_qh16 | 25.5 |
+| nvjet_h_bz_TNT (uv_gemm) | 4.0 | mla_reduce_v1 | 7.2 |
+| — | — | batched_gemm_a8w8 (uv) | 6.6 |
+| **合计** | **~24** | **合计** | **~39.3** |
+
+##### 段 5：输出投影（GAP ~10μs）
+
+B200 执行 o_proj_quant + o_proj_GEMM#1 合计 11.5μs，GEMM#2 (10.2μs) 执行期间同步启动另一 Stream 的融合 Reduce-RMSNorm，成功隐藏约 10μs 延迟。MI355X 单个 GEMM 完成 21.4μs。表面耗时相近，但 B200 利用 GEMM#2 与下段 AR 的重叠，有效缩短了关键路径。
+
+| B200 算子 | μs | MI355X 算子 | μs |
+|-----------|------|-------------|------|
+| o_proj_quant(BF16→FP4) | 2.1 | — | — |
+| o_proj_GEMM #1 | 9.4 | gemm_xdl (o_proj) | 21.4 |
+| o_proj_GEMM #2（与段 6 AR 重叠） | 10.2 | — | — |
+| **kernel sum** | **21.7** | **合计** | **21.4** |
+
+##### 段 6：MoE Routing + Shared Expert（GAP 37μs）
+
+B200 双 Stream 交错执行，关键路径 max(34.4, 33.9) ≈ 34μs。MI355X 全部串行 ~71μs。
+
+**B200 双 Stream：**
+
+| Stream A（计算, 34.4μs） | μs | Stream B（路由, 33.9μs） | μs |
+|--------------------------|------|--------------------------|------|
+| reduce-fused-rms | 11.0 | router_GEMM | 13.5 |
+| MoE_Expert_quant(BF16→FP4) | 2.5 | router_splitK_reduce | 3.6 |
+| o_proj_GEMM #2 | 10.2 | MoE_input_quant(BF16→FP4) | 3.8 |
+| SiLU×Mul | 3.2 | tensor_copy | 3.2 |
+| shared_quant(BF16→FP4) | 1.7 | TopK_select | 4.5 |
+| shared_GEMM(FP4) | 5.8 | expert_sort | 5.3 |
+| **合计** | **34.4** | **合计** | **33.9** |
+
+**MI355X（串行, ~71μs）：**
+
+| # | 算子 | μs |
+|---|------|------|
+| 1 | reduce_scatter + triton_fused_clone ×2 | 31.2 |
+| 2 | bf16gemm_splitk (router) | 9.2 |
+| 3 | triton_fused_clone | 5.5 |
+| 4 | grouped_topk_opt_sort | 5.4 |
+| 5 | MoeSorting_P0+P23 | 10.8 |
+| 6 | fused_mxfp4_quant_sort | 9.5 |
+| | **合计** | **~71.6** |
+
+##### 段 7：MoE GEMM + Finalize（GAP 16μs）
+
+B200 单 Stream 串行 ~167μs。MI355X 三步串行 ~183μs。注意 MI355X 在 gate_up 与 down 之间有独立的 `fused_mxfp4_quant_sort` (5.8μs)，而 B200 无此步骤——cuBLAS bmm 在 gate_up epilogue 中直接完成 SwiGLU + FP4 quantize。
+
+| B200 算子 | μs | MI355X 算子 | μs |
+|-----------|-------|-------------|-------|
+| gate_up_GEMM(+SwiGLU) | 101.7 | moe_mxgemm(gate_up) | 119.5 |
+| — | — | fused_mxfp4_quant_sort | 5.8 |
+| down_GEMM | 55.8 | moe_mxgemm(down) | 58.0 |
+| MoE_finalize+residual | 7.5 | — | — |
+| residual_add | 2.1 | — | — |
+| **合计** | **~167** | **合计** | **~183** |
+
+##### MI355X 优化方向（不含双 stream / PDL）
+
+> MI355X 无法使用 B200 的 PDL（Programmatic Dependent Launch）和双 stream 并行。以下仅聚焦单 stream 架构下的算子效率优化空间。
+
+**方向 1：gate_up GEMM 效率（段 7，预估 6-12μs）**
+
+119.5 vs 101.7μs = 1.17x。bs=64 top-8 routing 下每 expert 平均 M≈2，极度 bandwidth-bound，两平台 HBM BW 均 8 TB/s。MI355X 慢 17% 指向 CK `moe_mxgemm_2lds` 的 achieved BW 偏低（wavefront scheduling / LDS bank conflict）。另需排查 shared expert（M=64）融入 grouped GEMM 后与普通 expert（M≈2）的负载不均。
+
+**方向 2：MLA + reduce 融合（段 4，预估 0-7μs）**
+
+mla_a8w8_qh16 (25.5μs) → HBM 写回 → mla_reduce_v1 (7.2μs)。B200 fmhaSm100f 在单 kernel 内完成 attention + head reduce。融合可省 HBM 往返 + kernel launch (~5-7μs)，但 CDNA4 的 register/LDS 容量是否足够在 attention 后保留中间结果做 reduce 需验证——register 饱和会降低 occupancy，可能反效果。
+
+**方向 3：q_b GEMM tile 调优（段 2，预估 3-5μs）**
+
+11.8 vs 6.3μs = 1.87x。MI355X FP8 (gemm_xdl_preshuffle) 理论 TFLOPS 是 B200 BF16 (nvjet_v_bz_TNN) 的 2 倍，却慢近 2 倍——CK 对 shape `[64×1536]×[1536×768]` 的 tile config 明显不优。低挂果实，调整 tile size / split-K 即可。
+
+**方向 4：MoE 排序精简（段 6，预估 2-3μs）**
+
+MoeSorting_P0+P23 (10.8μs) vs B200 expert_sort (5.3μs)。三阶段排序与 moe_mxgemm input layout 强耦合，改 sort 需联动改 GEMM，性价比低。
+
+**方向 5：gate_up → down 量化融合（段 7，预估 4-5μs）**
+
+B200 的 cuBLAS bmm 在 gate_up epilogue 中完成 SwiGLU + FP4 quantize，直接输出 FP4，gate_up 与 down 之间**无独立 quant kernel**。MI355X 的 moe_mxgemm epilogue 已融合 SwiGLU 但输出 BF16，需额外 `fused_mxfp4_quant_sort` (5.8μs) 转 MXFP4。CK epilogue fusion 框架支持 post-op chain，追加 MXFP4 quantize 是自然扩展。gate_up 与 down 的 token-expert 分配不变、layout 兼容，sort 应为 identity。B200 已证明此模式可行。
+
+| # | 方向 | 段 | 预估 μs | 可行性 |
+|---|------|-----|---------|--------|
+| 1 | gate_up GEMM 效率 | 7 | 6-12 | 中 |
+| 2 | MLA + reduce 融合 | 4 | 0-7 | 不确定 |
+| 3 | q_b GEMM tile 调优 | 2 | 3-5 | 高 |
+| 4 | MoE 排序精简 | 6 | 2-3 | 低 |
+| 5 | gate_up→down quant 融合 | 7 | 4-5 | 中-高 |
+| | **总计** | | **15-32** | |
+
+> **小结：** 当前 MI355X ~388μs，上述优化可覆盖 15-32μs（→ 356-373μs）。与 B200 关键路径 ~283μs 的 ~105μs 总差距中，~50-60μs 来自双 stream / PDL 并行优势（段 1/5/6），属架构级差异，软件层面无法弥补。
 
 #### 功能分组对比（单层，绝对 GPU 时间）
 
@@ -429,6 +579,7 @@ bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-13 v26 | **TP=4 单层分段执行分析与优化方向。** 将单层 Transformer 按执行阶段分为 7 段，逐段对比 B200 vs MI355X 关键路径（4GPU TP=4 EP=4）。总差距 ~105μs 中 ~50-60μs 来自双 stream/PDL 并行。新增 5 项 MI355X 软件优化方向（15-32μs）：gate_up GEMM 效率、MLA+reduce 融合、q_b GEMM tile 调优、MoE 排序精简、gate_up→down quant epilogue 融合（B200 已实现此模式）|
 | 2026-04-06 v24 | **B200 4GPU per-layer torch trace 分析。** 新增 4GPU TP=4 EP=4 SGLang torch trace per-layer kernel 分析（layers 10-40, 4410 样本）。25 算子 × 8 module。per-layer 356.4μs × 61 = 21.74ms ≈ kernel sum 21.69ms（拟合 0.2%）。MoE 48.2% 主导，gate_up 102.0μs + down 58.8μs。4GPU vs 8GPU 对比：MoE GEMM ~1.75x（理论 2x），总层时间 1.29x |
 | 2026-04-05 v23 | **4GPU 跨框架对比表。** 新增 4GPU (TP=4) FP4 跨框架对比表：B200 SGLang vs TRT-LLM post2 vs MI355X ATOM，含 SA InferenceX 基线。ratio=0.8 对齐。SGLang ≈ TRT-LLM 吞吐（<0.5%），TRT-LLM TTFT 4.7x 更低。B200 vs MI355X 1.34x。MI355X EP4 vs EP1: EP4 略慢 -3.1%|
 | 2026-04-04 v22 | **端到端性能总表。** 新增 5-metric 数据总表（B200 bench/profiling + MI355X bench/profiling × rocm711/721），统一 EP/TP/Env/Mode 维度。B200 profiling 数据待补。删除 fp4-b200-vs-mi355x-comparison.md（重复内容）|
