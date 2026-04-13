@@ -305,9 +305,9 @@ if [[ "$MODE" == "serve" ]]; then
     # GPU kernels because they run on the same CUDA context.
     log "Serve mode: launching server outside ncu..."
 
-    # Kill any leftover server
-    pkill -f sglang.launch_server 2>/dev/null || true
-    pkill -f trtllm-serve 2>/dev/null || true
+    # Kill any leftover server (avoid pkill -f which can kill the calling shell)
+    pids=$(pgrep -f "python3.*sglang.launch_server" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
+    pids=$(pgrep -f "trtllm-serve" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
     sleep 2
 
     # Launch server directly (not through ncu_infer.py)
@@ -321,16 +321,16 @@ if [[ "$MODE" == "serve" ]]; then
     log "  Server PID: $SERVER_PID"
 
     # Wait for server to be ready
-    for i in $(seq 1 360); do
+    for i in $(seq 1 720); do
         if curl -s "http://localhost:$PORT/health" 2>/dev/null | grep -q ok; then
             log "  Server ready in $((i*5))s"
             break
         fi
-        if [[ $i -eq 360 ]]; then
-            log "ERROR: Server not ready after 1800s"
+        if [[ $i -eq 720 ]]; then
+            log "ERROR: Server not ready after 3600s"
             log "  Server log tail:"
             tail -30 "$NCU_DIR/phase2_server.log" 2>/dev/null
-            kill $SERVER_PID 2>/dev/null; pkill -f sglang.launch_server 2>/dev/null
+            kill $SERVER_PID 2>/dev/null; pids=$(pgrep -f "python3.*sglang.launch_server" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null
             exit 1
         fi
         sleep 5
@@ -350,11 +350,11 @@ if [[ "$MODE" == "serve" ]]; then
     ncu "${NCU_OPTS[@]}" $NCU_CMD > "$NCU_DIR/${REPORT_NAME}.log" 2>&1
     NCU_EXIT=$?
 
-    # Cleanup server
+    # Cleanup server (avoid pkill -f which can kill the calling shell)
     log "Stopping server..."
     kill $SERVER_PID 2>/dev/null || true
-    pkill -f sglang.launch_server 2>/dev/null || true
-    pkill -f trtllm-serve 2>/dev/null || true
+    pids=$(pgrep -f "python3.*sglang.launch_server" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
+    pids=$(pgrep -f "trtllm-serve" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
     sleep 3
 else
     # Offline mode: ncu wraps the entire inference
