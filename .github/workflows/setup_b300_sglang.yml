@@ -12,7 +12,7 @@ jobs:
       - name: Remove old container, start zufa_sglang
         run: |
           docker rm -f $CONTAINER 2>/dev/null || true
-          docker run -d --name $CONTAINER --gpus all --ipc host --ulimit memlock=-1 --ulimit stack=67108864 -v /home:/home --shm-size=64g -p 8888:8888 --cap-add=SYS_PTRACE $IMAGE sleep infinity
+          docker run -d --name $CONTAINER --gpus all --ipc host --ulimit memlock=-1 --ulimit stack=67108864 -v /home:/home -v /models:/models --shm-size=64g -p 8888:8888 --cap-add=SYS_PTRACE $IMAGE sleep infinity
           echo "Container $CONTAINER started"
 
       - name: Verify GPU + SGLang
