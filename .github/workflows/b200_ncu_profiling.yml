@@ -60,18 +60,19 @@ jobs:
       - name: Set result dir
         id: vars
         run: |
-          RESULT_DIR="results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_sglang_ncu_${{ inputs.scenario }}_c${{ inputs.concurrency }}"
+          RESULT_DIR="results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_sglang059_ncu"
           echo "result_dir=$RESULT_DIR" >> "$GITHUB_OUTPUT"
 
       - name: Run ncu profiling (serve mode, ${{ inputs.scenario }} c=${{ inputs.concurrency }})
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_ncu_trace.sh --backend sglang --mode serve --model $MODEL_FP4 --tp 8 --ep 8 --quantization modelopt_fp4 --concurrency ${{ inputs.concurrency }} --scenario ${{ inputs.scenario }} --warmup-prompts $(( ${{ inputs.concurrency }} * 2 )) --ncu-set ${{ inputs.ncu_set }} --launch-count ${{ inputs.launch_count }} --result-dir ./${{ steps.vars.outputs.result_dir }}'" 2>&1 | tail -80
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_ncu_trace.sh --backend sglang --mode serve --model $MODEL_FP4 --tp 8 --ep 8 --quantization modelopt_fp4 --concurrency ${{ inputs.concurrency }} --scenario ${{ inputs.scenario }} --warmup-prompts $(( ${{ inputs.concurrency }} * 2 )) --ncu-set ${{ inputs.ncu_set }} --launch-count ${{ inputs.launch_count }} --report-name ncu_decode_${{ inputs.scenario }}_c${{ inputs.concurrency }} --result-dir ./${{ steps.vars.outputs.result_dir }}'" 2>&1 | tail -200
 
       - name: Show results
         if: always()
         run: |
           ssh $NODE "ls -lh $REPO/${{ steps.vars.outputs.result_dir }}/ncu/ 2>/dev/null || echo 'No ncu dir'"
-          ssh $NODE "tail -30 $REPO/${{ steps.vars.outputs.result_dir }}/ncu/ncu_decode.log 2>/dev/null || echo 'No log'"
+          ssh $NODE "tail -50 $REPO/${{ steps.vars.outputs.result_dir }}/ncu/ncu_decode_${{ inputs.scenario }}_c${{ inputs.concurrency }}.log 2>/dev/null || echo 'No log'"
+          ssh $NODE "tail -30 $REPO/${{ steps.vars.outputs.result_dir }}/ncu/decode_region.log 2>/dev/null || echo 'No decode region log'"
 
       - name: Git commit and push
         if: always()

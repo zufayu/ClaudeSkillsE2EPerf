@@ -60,6 +60,7 @@ CONCURRENCY=64
 SCENARIO="chat"
 PORT=8888
 NUM_PROMPTS=0              # 0 = auto (concurrency * 10)
+DRY_RUN_PROMPTS=0          # 0 = auto (concurrency * 3 for serve, same as main for offline)
 
 # Kernel name regex — matches inference kernels, skips loading kernels
 # Covers: GEMM (nvjet/cutlass), attention (fmha/flash), MoE, comm (nccl/allreduce)
@@ -104,6 +105,7 @@ Options:
   --scenario SCENARIO     chat|reasoning|summarize for serve mode (default: chat)
   --port N                Server port for serve mode (default: 8888)
   --num-prompts N         Benchmark prompts for serve mode (default: concurrency*10)
+  --dry-run-prompts N     Prompts for Phase 1 nsys dry-run (default: concurrency*3 for serve)
   -h, --help              Show this help
 
 Section sets:
@@ -138,6 +140,7 @@ while [[ $# -gt 0 ]]; do
         --scenario)         SCENARIO="$2"; shift 2 ;;
         --port)             PORT="$2"; shift 2 ;;
         --num-prompts)      NUM_PROMPTS="$2"; shift 2 ;;
+        --dry-run-prompts)  DRY_RUN_PROMPTS="$2"; shift 2 ;;
         -h|--help)          usage ;;
         *)                  echo "Unknown option: $1"; usage ;;
     esac
@@ -211,14 +214,30 @@ if [[ -z "$LAUNCH_SKIP" ]] && [[ "$SKIP_DRY_RUN" != "true" ]]; then
         NSYS_REP_FILE="$NSYS_REP"
     else
         NSYS_REPORT="$NCU_DIR/dry_run"
+
+        # For serve mode, use fewer prompts to keep the trace small
+        DRY_RUN_CMD="$INFER_CMD"
+        if [[ "$MODE" == "serve" ]]; then
+            DRY_RUN_NUM=${DRY_RUN_PROMPTS:-0}
+            if [[ "$DRY_RUN_NUM" -eq 0 ]] 2>/dev/null; then
+                DRY_RUN_NUM=$((CONCURRENCY * 3))
+            fi
+            DRY_RUN_CMD="$DRY_RUN_CMD --num-prompts $DRY_RUN_NUM"
+            log "Dry-run with reduced prompts: $DRY_RUN_NUM (vs full benchmark)"
+        fi
+
         log "Running nsys trace..."
-        nsys profile --trace cuda -o "$NSYS_REPORT" --force-overwrite true $INFER_CMD > "$NCU_DIR/dry_run_stdout.log" 2>&1 || true
+        log "  $DRY_RUN_CMD"
+        nsys profile --trace cuda -o "$NSYS_REPORT" --force-overwrite true $DRY_RUN_CMD > "$NCU_DIR/dry_run_stdout.log" 2>&1 || true
         NSYS_REP_FILE="${NSYS_REPORT}.nsys-rep"
     fi
 
     if [[ -f "$NSYS_REP_FILE" ]]; then
-        log "nsys trace captured. Finding steady-state decode region..."
-        FIND_RESULT=$(python3 "$SCRIPT_DIR/find_decode_region.py" --nsys-rep "$NSYS_REP_FILE" --kernel-regex "$KERNEL_REGEX" --launch-count "$LAUNCH_COUNT" --json 2>/dev/null | tail -1)
+        NSYS_SIZE=$(du -h "$NSYS_REP_FILE" | cut -f1)
+        log "nsys trace captured ($NSYS_SIZE). Finding steady-state decode region..."
+
+        # Run with stderr captured for debugging (not swallowed)
+        FIND_RESULT=$(python3 "$SCRIPT_DIR/find_decode_region.py" --nsys-rep "$NSYS_REP_FILE" --kernel-regex "$KERNEL_REGEX" --launch-count "$LAUNCH_COUNT" --json 2>"$NCU_DIR/find_decode_stderr.log" | tail -1)
 
         if [[ -n "$FIND_RESULT" ]]; then
             LAUNCH_SKIP=$(echo "$FIND_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['launch_skip'])" 2>/dev/null || echo "0")
@@ -229,7 +248,8 @@ if [[ -z "$LAUNCH_SKIP" ]] && [[ "$SKIP_DRY_RUN" != "true" ]]; then
             log "  launch-count: $DETECTED_COUNT"
             log "  decode kernel time: ${DECODE_DUR}ms"
         else
-            log "WARNING: find_decode_region.py failed, using launch-skip=0"
+            log "ERROR: find_decode_region.py failed to produce JSON output"
+            log "  stderr: $(cat "$NCU_DIR/find_decode_stderr.log" 2>/dev/null | tail -5)"
             LAUNCH_SKIP=0
         fi
 
@@ -242,6 +262,11 @@ if [[ -z "$LAUNCH_SKIP" ]] && [[ "$SKIP_DRY_RUN" != "true" ]]; then
 fi
 
 [[ -z "$LAUNCH_SKIP" ]] && LAUNCH_SKIP=0
+
+if [[ "$LAUNCH_SKIP" -eq 0 ]] && [[ "$MODE" == "serve" ]]; then
+    log "WARNING: launch-skip=0 in serve mode — ncu will profile from server startup (likely wrong)"
+    log "  Consider using --launch-skip N or --nsys-rep to provide skip value"
+fi
 
 # ======================== Phase 2: ncu capture ================================
 

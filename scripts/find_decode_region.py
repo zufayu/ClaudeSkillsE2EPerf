@@ -13,12 +13,16 @@ Model-agnostic, concurrency-agnostic. Works because:
   - Middle = steady-state decode (what we want)
   - End = ramp-down (unstable)
 
+Scalable: for large traces (c=64 serving → millions of kernels),
+uses COUNT + LIMIT/OFFSET to only load a window around the middle.
+
 Usage:
     python3 scripts/find_decode_region.py \\
         --nsys-rep trace.nsys-rep \\
         [--tpot-ms 5.2] \\
         [--kernel-regex "nvjet|fmha|..."] \\
-        [--launch-count 50]
+        [--launch-count 50] \\
+        [--sample-window 10000]
 """
 
 import argparse
@@ -34,6 +38,8 @@ DEFAULT_KERNEL_REGEX = (
     "reduce_scatter|all_gather|nccl|deep_gemm"
 )
 
+SAMPLE_THRESHOLD = 50000  # above this, use windowed sampling
+
 
 def ensure_sqlite(nsys_rep):
     """Export nsys-rep to sqlite if needed."""
@@ -43,7 +49,7 @@ def ensure_sqlite(nsys_rep):
         subprocess.run(
             ["nsys", "stats", nsys_rep, "--report", "cuda_gpu_kern_sum",
              "--format", "csv", "-o", "/dev/null"],
-            capture_output=True, timeout=300
+            capture_output=True, timeout=600
         )
     if not os.path.exists(db):
         print(f"ERROR: could not create {db}")
@@ -51,19 +57,48 @@ def ensure_sqlite(nsys_rep):
     return db
 
 
-def extract_kernels(db_path, kernel_regex):
-    """Extract inference kernels ordered by launch time."""
-    conn = sqlite3.connect(db_path)
+def _build_where_clause(kernel_regex):
+    """Build SQL WHERE clause from kernel regex."""
     parts = kernel_regex.split("|")
-    like_clauses = " OR ".join([f"s.value LIKE '%{p}%'" for p in parts])
+    return " OR ".join([f"s.value LIKE '%{p}%'" for p in parts])
 
+
+def count_kernels(db_path, kernel_regex):
+    """Count total matching kernels without loading them."""
+    conn = sqlite3.connect(db_path)
+    where = _build_where_clause(kernel_regex)
     cur = conn.execute(f"""
+        SELECT COUNT(*)
+        FROM CUPTI_ACTIVITY_KIND_KERNEL k
+        JOIN StringIds s ON k.demangledName = s.id
+        WHERE {where}
+    """)
+    n = cur.fetchone()[0]
+    conn.close()
+    return n
+
+
+def extract_kernels(db_path, kernel_regex, limit=None, offset=0):
+    """Extract inference kernels ordered by launch time.
+
+    Args:
+        limit: max rows to fetch (None = all)
+        offset: skip first N rows
+    """
+    conn = sqlite3.connect(db_path)
+    where = _build_where_clause(kernel_regex)
+
+    sql = f"""
         SELECT s.value, k.start, k.end, (k.end - k.start) as dur
         FROM CUPTI_ACTIVITY_KIND_KERNEL k
         JOIN StringIds s ON k.demangledName = s.id
-        WHERE {like_clauses}
+        WHERE {where}
         ORDER BY k.start
-    """)
+    """
+    if limit is not None:
+        sql += f" LIMIT {limit} OFFSET {offset}"
+
+    cur = conn.execute(sql)
     rows = cur.fetchall()
     conn.close()
     return rows
@@ -139,25 +174,40 @@ def main():
     p.add_argument("--kernel-regex", default=DEFAULT_KERNEL_REGEX)
     p.add_argument("--launch-count", type=int, default=50,
                     help="Desired number of kernels to capture")
+    p.add_argument("--sample-window", type=int, default=0,
+                    help="Window size for large traces (0=auto)")
     p.add_argument("--json", action="store_true", help="Output as JSON")
     args = p.parse_args()
 
     db = ensure_sqlite(args.nsys_rep)
-    rows = extract_kernels(db, args.kernel_regex)
-    N = len(rows)
+
+    # Step 0: count total kernels (cheap query, no data transfer)
+    N = count_kernels(db, args.kernel_regex)
+    print(f"Total inference kernels: {N}")
 
     if N == 0:
         print("ERROR: no inference kernels found")
         sys.exit(1)
 
+    # Determine if we need windowed sampling
+    global_offset = 0  # offset into the full kernel list
+    if N > SAMPLE_THRESHOLD:
+        window = args.sample_window if args.sample_window > 0 else max(10000, args.launch_count * 20)
+        window = min(window, N)  # can't be larger than total
+        global_offset = max(0, N // 2 - window // 2)
+        print(f"Large trace detected ({N} kernels > {SAMPLE_THRESHOLD})")
+        print(f"  Sampling window: [{global_offset}..{global_offset + window}] ({window} kernels)")
+        rows = extract_kernels(db, args.kernel_regex, limit=window, offset=global_offset)
+    else:
+        rows = extract_kernels(db, args.kernel_regex)
+
+    local_N = len(rows)
     names = [short_name(r[0]) for r in rows]
     durs_ns = [r[3] for r in rows]
 
-    print(f"Total inference kernels: {N}")
-
-    # Step 1: take middle
-    mid = N // 2
-    print(f"Middle index: {mid}")
+    # Step 1: take middle of the LOCAL window
+    mid = local_N // 2
+    print(f"Middle index: {mid} (global: {mid + global_offset})")
 
     # Step 2: detect layer pattern at middle
     best_pattern = None
@@ -179,7 +229,7 @@ def main():
     if best_pattern is None:
         print("WARNING: no repeating pattern found at middle")
         print("  Falling back to launch-skip = mid")
-        launch_skip = mid
+        launch_skip = mid + global_offset
         kernels_per_layer = 0
         kernels_per_decode = 0
         n_layers = 0
@@ -205,7 +255,7 @@ def main():
         # Steady-state decode = consistent short duration
         print(f"\nDuration analysis (per {kernels_per_decode}-kernel pass):")
         pass_durations = []
-        for i in range(0, N - kernels_per_decode + 1, kernels_per_decode):
+        for i in range(0, local_N - kernels_per_decode + 1, kernels_per_decode):
             dur = sum(durs_ns[i:i + kernels_per_decode]) / 1e6
             pass_durations.append((i, dur))
 
@@ -238,36 +288,37 @@ def main():
 
                 # Center capture in steady-state region
                 steady_mid_idx = len(steady_passes) // 2
-                steady_mid_pass = steady_passes[steady_mid_idx]
                 passes_to_capture = max(1, args.launch_count // kernels_per_decode)
                 center_pass_idx = steady_mid_idx
                 start_pass_idx = max(0, center_pass_idx - passes_to_capture // 2)
-                launch_skip = steady_passes[start_pass_idx][0]
+                launch_skip = steady_passes[start_pass_idx][0] + global_offset
 
                 print(f"\n  Targeting middle of steady-state region:")
                 print(f"    Pass duration at target: {steady_passes[start_pass_idx][1]:.3f} ms")
             else:
                 print(f"  WARNING: no steady-state passes found")
-                launch_skip = best_start
+                launch_skip = best_start + global_offset
         else:
             # Not enough passes, fall back to pattern-based approach
             pattern_start = best_start
             passes_to_mid = (mid - pattern_start) // kernels_per_decode
             passes_to_capture = max(1, args.launch_count // kernels_per_decode)
             start_pass = max(0, passes_to_mid - passes_to_capture // 2)
-            launch_skip = pattern_start + start_pass * kernels_per_decode
+            launch_skip = pattern_start + start_pass * kernels_per_decode + global_offset
 
     # Step 3: validate against TPOT
     decode_dur_ms = 0
     if kernels_per_decode > 0:
         # Sum duration of one full decode pass at the middle
-        iter_start = launch_skip + (args.launch_count // 2)
+        # Use local indices for array access
+        local_skip = launch_skip - global_offset
+        iter_start = local_skip + (args.launch_count // 2)
         # Align to decode pass boundary
-        iter_start = launch_skip + ((iter_start - launch_skip) // kernels_per_decode) * kernels_per_decode
-        if iter_start + kernels_per_decode <= N:
+        iter_start = local_skip + ((iter_start - local_skip) // kernels_per_decode) * kernels_per_decode
+        if iter_start + kernels_per_decode <= local_N:
             decode_dur_ns = sum(durs_ns[iter_start:iter_start + kernels_per_decode])
             decode_dur_ms = decode_dur_ns / 1e6
-            print(f"\nDuration of 1 full decode pass (at index {iter_start}):")
+            print(f"\nDuration of 1 full decode pass (at index {iter_start + global_offset}):")
             print(f"  {n_layers} layers × {kernels_per_layer} kernels = {kernels_per_decode} kernels")
             print(f"  Kernel time: {decode_dur_ms:.3f} ms")
 
