@@ -51,4 +51,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: docker exec $CONTAINER bash -c 'pkill -f sglang.launch_server 2>/dev/null || true; sleep 3'
+        run: docker exec $CONTAINER bash -c 'pids=$(pgrep -f "python3.*launch_server" 2>/dev/null | grep -v $$); [ -n "$pids" ] && kill $pids 2>/dev/null; sleep 3; true'
