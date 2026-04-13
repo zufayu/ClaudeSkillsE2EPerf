@@ -1,0 +1,50 @@
+name: B300 Debug Test
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: [self-hosted, b300]
+    timeout-minutes: 60
+    env:
+      CONTAINER: zufa_sglang
+    steps:
+      - name: Step 1 - echo
+        run: echo "step 1 ok"
+
+      - name: Step 2 - docker exec echo
+        run: docker exec $CONTAINER echo "step 2 ok"
+
+      - name: Step 3 - docker exec bash
+        run: docker exec $CONTAINER bash -c 'echo "step 3 ok"; sleep 2; echo "step 3 done"'
+
+      - name: Step 4 - docker exec pkill
+        run: docker exec $CONTAINER bash -c 'pkill -f sglang.launch_server 2>/dev/null; sleep 2; true'
+
+      - name: Step 5 - docker exec nohup server
+        run: |
+          docker exec $CONTAINER bash -c 'nohup python3 -m sglang.launch_server --model-path /models/DeepSeek-R1-0528-NVFP4-v2 --host 0.0.0.0 --port 8888 --tp 8 --ep 8 --trust-remote-code --mem-fraction-static 0.85 --kv-cache-dtype fp8_e4m3 --chunked-prefill-size 16384 --quantization modelopt_fp4 --disable-radix-cache --attention-backend trtllm_mla --moe-runner-backend flashinfer_trtllm --max-running-requests 256 --cuda-graph-max-bs 256 --enable-flashinfer-allreduce-fusion --enable-symm-mem --stream-interval 10 > /tmp/sglang_server.log 2>&1 &'
+          echo "step 5: server launched in background"
+
+      - name: Step 6 - wait for health
+        run: |
+          for i in $(seq 1 180); do
+            if docker exec $CONTAINER curl -s http://localhost:8888/health 2>/dev/null | grep -q ok; then
+              echo "Server ready in $((i*5))s"
+              exit 0
+            fi
+            if [ $((i % 24)) -eq 0 ]; then echo "Still waiting... ($((i*5))s)"; fi
+            sleep 5
+          done
+          echo "TIMEOUT"
+          docker exec $CONTAINER tail -50 /tmp/sglang_server.log 2>/dev/null || true
+          exit 1
+
+      - name: Step 7 - smoke request
+        run: |
+          docker exec $CONTAINER curl -s http://localhost:8888/v1/completions \
+            -H "Content-Type: application/json" \
+            -d '{"model": "/models/DeepSeek-R1-0528-NVFP4-v2", "prompt": "Say hello", "max_tokens": 16, "temperature": 0}'
+
+      - name: Cleanup
+        if: always()
+        run: docker exec $CONTAINER bash -c 'pkill -f sglang.launch_server 2>/dev/null || true; sleep 3'
