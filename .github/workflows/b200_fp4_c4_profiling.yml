@@ -1,0 +1,64 @@
+name: B200 FP4 c4 Profiling
+on:
+  workflow_dispatch: {}
+jobs:
+  fp4-c4-profiling:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 120
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_trt3
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
+      MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+
+      - name: Detect TRT-LLM version
+        run: |
+          IMAGE=$(ssh $NODE "docker inspect $CONTAINER --format '{{.Config.Image}}'" 2>/dev/null || echo unknown)
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          VERSION=$(ssh $NODE "docker exec $CONTAINER bash -c 'pip show tensorrt-llm 2>/dev/null | grep ^Version | cut -d\" \" -f2'")
+          if [ -z "$VERSION" ]; then VERSION=$(echo "$IMAGE" | grep -oP 'release:\K[0-9a-z.]+' || echo unknown); fi
+          echo "TRTLLM_VERSION=$VERSION" >> $GITHUB_ENV
+          case "$VERSION" in
+            *post2*) ENV_TAG=post2 ;; *post3*) ENV_TAG=post3 ;; *rc10*) ENV_TAG=rc10 ;; *) ENV_TAG=$(echo "$VERSION" | sed 's/[^a-zA-Z0-9]/_/g') ;;
+          esac
+          echo "ENV_TAG=$ENV_TAG" >> $GITHUB_ENV
+          RESULT_DIR="results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_${ENV_TAG}_profiling"
+          echo "RESULT_DIR=$RESULT_DIR" >> $GITHUB_ENV
+          echo "Container=$CONTAINER Version=$VERSION EnvTag=$ENV_TAG ResultDir=$RESULT_DIR"
+
+      - name: Verify GPU
+        run: ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -4"
+
+      - name: Collect torch trace (chat c=4)
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_nsys_trace.sh --model $MODEL_FP4 --scenario chat --concurrency 4 --tp 4 --ep-sizes 4 --gpus 0,1,2,3 --dp false --env ${{ env.ENV_TAG }} --result-dir ./${{ env.RESULT_DIR }}'"
+
+      - name: Analyze trace
+        if: always()
+        run: |
+          echo "=== Trace files ==="
+          ssh $NODE "ls -lh $REPO/${{ env.RESULT_DIR }}/*.json.gz $REPO/${{ env.RESULT_DIR }}/*.nsys-rep 2>/dev/null || echo 'No traces'"
+          echo "=== Result JSONs ==="
+          ssh $NODE "ls -lh $REPO/${{ env.RESULT_DIR }}/result_*.json 2>/dev/null || echo 'No results'"
+
+      - name: Run trace analysis
+        if: always()
+        run: |
+          TRACE=$(ssh $NODE "ls -t $REPO/${{ env.RESULT_DIR }}/*.json.gz 2>/dev/null | grep -v capture | head -1")
+          if [ -n "$TRACE" ]; then
+            echo "Analyzing: $TRACE"
+            ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO/${{ env.RESULT_DIR }} && python3 $REPO/scripts/trace_layer_detail.py $TRACE --layer 3'" 2>&1 | tail -50
+          else
+            echo "No trace to analyze"
+          fi
+
+      - name: Git commit and push
+        if: always()
+        run: |
+          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && for ext in json log md csv xlsx; do git add -f ${{ env.RESULT_DIR }}/*.\$ext 2>/dev/null || true; done && git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=4 TP=4 c=4 profiling (chat, ${{ env.ENV_TAG }})
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
