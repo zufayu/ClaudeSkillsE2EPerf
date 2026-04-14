@@ -1,0 +1,65 @@
+name: MI355X Diagnostic
+on:
+  workflow_dispatch:
+jobs:
+  diag:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 10
+    steps:
+      - name: Host and paths
+        run: |
+          echo "=== Host ==="
+          hostname
+          whoami
+          echo "HOME=$HOME"
+          echo ""
+          echo "=== Find repo ==="
+          find /home /shared -maxdepth 5 -name "ClaudeSkillsE2EPerf" -type d 2>/dev/null | head -5
+          echo ""
+          echo "=== Find model ==="
+          find /home /shared -maxdepth 5 -name "DeepSeek-R1*" -type d 2>/dev/null | head -5
+          echo ""
+          echo "=== Home contents ==="
+          ls -la ~/
+          echo ""
+          echo "=== Podman containers (all) ==="
+          podman ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" 2>/dev/null
+
+      - name: Try start containers
+        run: |
+          echo "=== Starting zufa_atom ==="
+          podman start zufa_atom 2>&1 || echo "FAILED to start zufa_atom"
+          echo ""
+          echo "=== Starting zufa_atom2 ==="
+          podman start zufa_atom2 2>&1 || echo "FAILED to start zufa_atom2"
+          echo ""
+          echo "=== Container status ==="
+          podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null
+
+      - name: Check trace files
+        run: |
+          echo "=== Looking for torch trace files ==="
+          find /home /shared -maxdepth 8 -name "*.json.gz" -path "*profiling*" 2>/dev/null | head -20
+          echo ""
+          echo "=== Check old profiling dirs ==="
+          REPO_OLD=/shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+          REPO_NEW=$HOME/ClaudeSkillsE2EPerf
+          for R in "$REPO_OLD" "$REPO_NEW"; do
+            echo "--- $R ---"
+            ls "$R/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711_profiling/" 2>/dev/null || echo "  not found"
+          done
+
+      - name: Check container env
+        run: |
+          echo "=== zufa_atom env ==="
+          podman exec zufa_atom bash -c '
+            echo "ROCm: $(cat /opt/rocm/.info/version 2>/dev/null || echo N/A)"
+            python3 -c "import torch; print(f\"PyTorch: {torch.__version__}\")" 2>/dev/null || echo "PyTorch: NOT FOUND"
+            python3 -c "import torch; print(f\"GPUs: {torch.cuda.device_count()}\")" 2>/dev/null
+            echo "Model check:"
+            ls -ld /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 2>/dev/null && echo "  OK (shared)" || echo "  MISSING (shared)"
+            echo "ATOM_TOOLS:"
+            ls /app/ATOM/tools/ 2>/dev/null | head -5 || echo "  NOT FOUND"
+            echo "trace_layer_detail.py:"
+            which trace_layer_detail.py 2>/dev/null || ls /app/ATOM/tools/trace_layer_detail.py 2>/dev/null || echo "  NOT FOUND"
+          ' 2>&1 || echo "zufa_atom not running"
