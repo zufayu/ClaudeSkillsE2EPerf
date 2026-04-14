@@ -5,13 +5,14 @@ jobs:
   check:
     runs-on: [self-hosted, b200]
     timeout-minutes: 5
-    env:
-      REPO: /home/ubuntu/ClaudeSkillsE2EPerf
     steps:
       - name: Repo state
         run: |
-          echo "=== Repo ==="
-          cd $REPO 2>/dev/null && echo "Repo exists at $REPO" || { echo "Repo NOT at $REPO"; ls /home/ubuntu/ 2>/dev/null; exit 0; }
+          echo "=== Finding repo ==="
+          REPO=$(find /home -maxdepth 4 -name "ClaudeSkillsE2EPerf" -type d 2>/dev/null | head -1)
+          if [ -z "$REPO" ]; then echo "Repo NOT FOUND anywhere under /home"; ls /home/ubuntu/zufa/ 2>/dev/null; exit 0; fi
+          echo "Repo at: $REPO"
+          cd $REPO
           git log --oneline -5
           git status --short
           echo ""
@@ -22,7 +23,7 @@ jobs:
           for d in results/b200*/; do
             [ -d "$d" ] || continue
             echo "$d: $(find "$d" -type f | wc -l) files"
-            find "$d" -type f -name "*.json" -o -name "*.csv" -o -name "*.xlsx" -o -name "*.md" -o -name "*.nsys-rep" -o -name "*.ncu-rep" -o -name "*.json.gz" | sort
+            find "$d" -type f \( -name "*.json" -o -name "*.csv" -o -name "*.xlsx" -o -name "*.md" -o -name "*.nsys-rep" -o -name "*.ncu-rep" -o -name "*.json.gz" \) | sort
           done
           echo ""
           echo "=== Docker images available ==="
