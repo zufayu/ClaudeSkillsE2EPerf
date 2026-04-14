@@ -45,8 +45,8 @@ jobs:
       - name: Verify GPU
         run: ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -8"
 
-      - name: Collect nsys trace (chat c=4 EP=8 TP=8)
-        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_nsys_trace.sh --model $MODEL_FP4 --mode serve --scenario chat --concurrency 4 --tp 8 --ep 8 --quant fp4 --config throughput --env ${{ env.ENV_TAG }} --trace-dir ./${{ env.RESULT_DIR }}'"
+      - name: Collect nsys trace (chat c=4 EP=8 TP=8, bench mode)
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_nsys_trace.sh --model $MODEL_FP4 --mode bench --scenario chat --concurrency 4 --tp 8 --ep 8 --quant fp4 --config throughput --env ${{ env.ENV_TAG }} --trace-dir ./${{ env.RESULT_DIR }}'"
 
       - name: Show trace files
         if: always()
@@ -70,8 +70,7 @@ jobs:
       - name: Git commit and push
         if: always()
         run: |
-          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
-          ssh $NODE "cd $REPO && for ext in json log md csv xlsx; do git add -f ${{ env.RESULT_DIR }}/*.\$ext 2>/dev/null || true; done && git diff --cached --name-only"
-          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=8 TP=8 c=4 profiling (chat, ${{ env.ENV_TAG }})
-
-          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git stash 2>/dev/null || true && git pull --rebase origin main && git stash pop 2>/dev/null || true && git push; else echo 'Nothing to commit'; fi"
+          ssh $NODE "cd $REPO && git config user.email ci@github.com && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git checkout main 2>/dev/null; git fetch origin main && git reset --hard origin/main; true"
+          ssh $NODE "cd $REPO && for ext in json log md csv xlsx yml jsonl; do git add -f ${{ env.RESULT_DIR }}/*.\$ext 2>/dev/null || true; done && git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=8 TP=8 c=4 nsys profiling (chat, ${{ env.ENV_TAG }})' && git push origin main; else echo 'Nothing to commit'; fi"
