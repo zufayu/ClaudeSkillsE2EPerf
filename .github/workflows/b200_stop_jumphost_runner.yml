@@ -1,0 +1,15 @@
+name: B200 Stop Jumphost Runner
+on:
+  workflow_dispatch:
+jobs:
+  stop:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 5
+    steps:
+      - name: Schedule runner shutdown
+        run: |
+          echo "Host: $(hostname)"
+          echo "Scheduling runner shutdown in 30s..."
+          nohup bash -c 'sleep 30 && pkill -f "Runner.Listener" 2>/dev/null; pkill -f "Runner.Worker" 2>/dev/null' > /tmp/kill_runner.log 2>&1 &
+          echo "Runner will stop ~30s after this job completes."
+          echo "Then b200-runner on hungry-hippo-fin-03-2 can take over."
