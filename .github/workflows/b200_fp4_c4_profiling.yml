@@ -12,7 +12,7 @@ jobs:
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
     steps:
       - name: Sync repo
-        run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+        run: ssh $NODE "cd $REPO && git stash 2>/dev/null || true && git fetch origin main && git rebase origin/main && git stash pop 2>/dev/null || true"
 
       - name: Detect TRT-LLM version
         run: |
@@ -25,17 +25,17 @@ jobs:
             *post2*) ENV_TAG=post2 ;; *post3*) ENV_TAG=post3 ;; *rc10*) ENV_TAG=rc10 ;; *) ENV_TAG=$(echo "$VERSION" | sed 's/[^a-zA-Z0-9]/_/g') ;;
           esac
           echo "ENV_TAG=$ENV_TAG" >> $GITHUB_ENV
-          RESULT_DIR="results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_${ENV_TAG}_profiling"
+          RESULT_DIR="results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_${ENV_TAG}_profiling"
           echo "RESULT_DIR=$RESULT_DIR" >> $GITHUB_ENV
           echo "Container=$CONTAINER Version=$VERSION EnvTag=$ENV_TAG ResultDir=$RESULT_DIR"
 
       - name: Verify GPU
-        run: ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -4"
+        run: ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -8"
 
-      - name: Collect torch trace (chat c=4)
-        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_nsys_trace.sh --model $MODEL_FP4 --scenario chat --concurrency 4 --tp 4 --ep-sizes 4 --gpus 0,1,2,3 --dp false --env ${{ env.ENV_TAG }} --result-dir ./${{ env.RESULT_DIR }}'"
+      - name: Collect nsys trace (chat c=4 EP=8 TP=8)
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_nsys_trace.sh --model $MODEL_FP4 --scenario chat --concurrency 4 --tp 8 --ep-sizes 8 --dp false --env ${{ env.ENV_TAG }} --result-dir ./${{ env.RESULT_DIR }}'"
 
-      - name: Analyze trace
+      - name: Show trace files
         if: always()
         run: |
           echo "=== Trace files ==="
@@ -59,6 +59,6 @@ jobs:
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
           ssh $NODE "cd $REPO && for ext in json log md csv xlsx; do git add -f ${{ env.RESULT_DIR }}/*.\$ext 2>/dev/null || true; done && git diff --cached --name-only"
-          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=4 TP=4 c=4 profiling (chat, ${{ env.ENV_TAG }})
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 EP=8 TP=8 c=4 profiling (chat, ${{ env.ENV_TAG }})
 
-          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git stash 2>/dev/null || true && git pull --rebase origin main && git stash pop 2>/dev/null || true && git push; else echo 'Nothing to commit'; fi"
