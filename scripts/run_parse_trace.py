@@ -204,6 +204,10 @@ def main():
         "--skip-ratio", type=float, default=0.5,
         help="Position within target-bs decodes to pick (0.0=first, 0.5=median, 0.9=late). Default: 0.5",
     )
+    parser.add_argument(
+        "--capture-trace", type=str, default=None,
+        help="Explicit path to capture_graph trace file (bypasses auto-detection)",
+    )
     args = parser.parse_args()
 
     filepath = args.filepath
@@ -213,7 +217,11 @@ def main():
     events = trace.get("traceEvents", [])
     print(f"Loaded {len(events)} events")
 
-    capture_trace_path = parse_trace.find_capture_graph_trace_path(filepath)
+    if args.capture_trace:
+        capture_trace_path = args.capture_trace
+        print(f"Using explicit capture trace: {capture_trace_path}")
+    else:
+        capture_trace_path = parse_trace.find_capture_graph_trace_path(filepath)
     if capture_trace_path is None:
         print("Warning: no capture trace found, using run trace for hierarchy")
         capture_events = events

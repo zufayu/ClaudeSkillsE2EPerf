@@ -569,8 +569,14 @@ TRIM_PYEOF
     # Run kernel breakdown analysis (selects steady-state bs for decode)
     RUN_PARSE="$SCRIPT_DIR/run_parse_trace.py"
     if [[ -f "$RUN_PARSE" ]]; then
+        CAPTURE_ARG=""
+        CAPTURE_FILE="$RESULT_DIR/capture_graph_${TAG}.json.gz"
+        if [[ -f "$CAPTURE_FILE" ]]; then
+            CAPTURE_ARG="--capture-trace $(basename "$CAPTURE_FILE")"
+            log "Using explicit capture trace: $(basename "$CAPTURE_FILE")"
+        fi
         log "Running run_parse_trace.py --layer $LAYER (target-bs=auto)..."
-        (cd "$RESULT_DIR" && ATOM_TOOLS=/app/ATOM/tools python3 "$RUN_PARSE" "$(basename "$TRACE_FILE")" --layer "$LAYER" 2>&1) || \
+        (cd "$RESULT_DIR" && ATOM_TOOLS=/app/ATOM/tools python3 "$RUN_PARSE" "$(basename "$TRACE_FILE")" --layer "$LAYER" $CAPTURE_ARG 2>&1) || \
             log "WARNING: run_parse_trace.py failed"
     fi
 else
