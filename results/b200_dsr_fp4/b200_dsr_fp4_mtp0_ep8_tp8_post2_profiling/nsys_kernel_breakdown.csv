@@ -1,0 +1,23 @@
+rank,name,category,count,total_ms,pct,avg_us,steps_seen
+1,moefinalize_allreduce_fusion_kernel_oneshot_lamport,Communication,197,4.828,15.24,24.506,18
+2,bmm_E2m1_E2m1E2m1_Fp32_t128x8x512u2_s5_et128x8_m128x8x64_cga1x1x1_16dp256b_rM_TN_transOut_schedP2x1x2x3_biasM_bN_tma_tmaOpt_clmp_swiGlu_dynBatch_sm100f,MoE/Expert (gate_up),195,2.633,8.31,13.504,20
+3,fmhaSm100fKernel_QkvE4m3OBfloat16HQk576HV512HVPerCta512PagedKvDenseP32MultiCtasKvVarSeqQ16Kv128StaticSwapsAbForGen,Attention,204,2.566,8.1,12.579,20
+4,userbuffers_fp16_sum_gpu_mc_rmsnorm,Communication,207,2.315,7.31,11.185,20
+5,nvjet_sm100_ootst_128x128_256x5_4x1_v_bx_Avec16UE4M3_Bvec16UE4M3_TNT,GEMM/MatMul,421,2.084,6.58,4.951,20
+6,quantize_with_block_size,Quantization,804,2.046,6.46,2.545,20
+7,bmm_Bfloat16_E2m1E2m1_Fp32_t128x8x512_s5_et128x8_m128x8x64_cga1x1x1_16dp256b_rM_TN_transOut_schedP2x1x2x3_biasM_bN_tmaOpt_clmp_dynBatch_sm100f,MoE/Expert (down),192,1.943,6.14,10.122,19
+8,userbuffers_fp16_sum_inplace_gpu_mc_res_allgather,Communication,198,1.724,5.44,8.709,20
+9,fused_a_gemm_kernel,GEMM/MatMul,207,1.575,4.97,7.611,20
+10,nvjet_sm100_tst_24x64_64x16_4x1_v_bz_TNN,GEMM/MatMul,207,1.377,4.35,6.653,20
+11,cudaCoreGemmFp4,GEMM/MatMul,196,1.049,3.31,5.354,19
+12,RMSNormKernel,Normalization,414,1.049,3.31,2.534,20
+13,CatArrayBatchedCopy,Memory,207,1.034,3.26,4.995,20
+14,routingIndicesClusterKernel,MoE/Router,197,0.929,2.93,4.717,20
+15,routingMainKernel,MoE/Router,197,0.803,2.53,4.075,20
+16,nvjet_sm100_tst_16x64_64x16_4x1_v_bz_TNN,GEMM/MatMul,205,0.789,2.49,3.849,20
+17,applyMLARopeAndAssignQKVKernelGeneration,RoPE,207,0.723,2.28,3.494,20
+18,router_gemm_kernel,GEMM/MatMul,198,0.711,2.24,3.588,20
+19,nvjet_sm100_tst_64x8_64x16_4x1_v_bz_TNT,GEMM/MatMul,206,0.709,2.24,3.443,20
+20,block_scale_interleave_reverse_kernel,Other,195,0.382,1.21,1.962,19
+21,silu_and_mul_kernel,Other,207,0.331,1.04,1.598,20
+22,userbuffers_fp16_sum_inplace_gpu_mc_rmsnorm_quant_fp4,Communication,6,0.07,0.22,11.616,3
