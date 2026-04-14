@@ -1,0 +1,38 @@
+name: MI355X Start Container
+on:
+  workflow_dispatch:
+jobs:
+  start:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 10
+    env:
+      CONTAINER: zufa_atom
+      IMAGE: docker.io/rocm/atom:rocm7.1.1-ubuntu24.04-pytorch2.9-atom0.1.1-MI350x
+    steps:
+      - name: Check and start container
+        run: |
+          echo "=== Existing containers (all) ==="
+          podman ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+          echo ""
+          if podman ps -a --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
+            echo "Container $CONTAINER exists, starting..."
+            podman start $CONTAINER
+          else
+            echo "Container $CONTAINER not found, creating..."
+            podman run -d --name $CONTAINER --device /dev/kfd --device /dev/dri --group-add video --ipc host --shm-size 256g --security-opt seccomp=unconfined -v /shared:/shared $IMAGE sleep infinity
+          fi
+          echo ""
+          echo "=== Running containers ==="
+          podman ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+
+      - name: Verify environment
+        run: |
+          podman exec $CONTAINER bash -c '
+            echo "Python: $(python3 --version 2>&1)"
+            echo "ROCm: $(cat /opt/rocm/.info/version 2>/dev/null || echo N/A)"
+            python3 -c "import torch; print(f\"PyTorch: {torch.__version__}, GPUs: {torch.cuda.device_count()}\")"
+            echo "Model check:"
+            ls -ld /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4 2>/dev/null && echo "  MXFP4: OK" || echo "  MXFP4: MISSING"
+            echo "Repo check:"
+            ls -ld /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf 2>/dev/null && echo "  Repo: OK" || echo "  Repo: MISSING"
+          '
