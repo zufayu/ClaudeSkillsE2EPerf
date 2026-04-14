@@ -33,7 +33,7 @@ jobs:
         run: ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -8"
 
       - name: Collect nsys trace (chat c=4 EP=8 TP=8)
-        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_nsys_trace.sh --model $MODEL_FP4 --scenario chat --concurrency 4 --tp 8 --ep 8 --quant fp4 --config throughput --env ${{ env.ENV_TAG }} --trace-dir ./${{ env.RESULT_DIR }}'"
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_nsys_trace.sh --model $MODEL_FP4 --mode serve --scenario chat --concurrency 4 --tp 8 --ep 8 --quant fp4 --config throughput --env ${{ env.ENV_TAG }} --trace-dir ./${{ env.RESULT_DIR }}'"
 
       - name: Show trace files
         if: always()
