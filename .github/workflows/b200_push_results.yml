@@ -19,10 +19,8 @@ jobs:
           ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null || true"
           ssh $NODE "cd $REPO && git merge --abort 2>/dev/null || true"
           ssh $NODE "cd $REPO && rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null || true"
-          ssh $NODE "cd $REPO && git stash 2>/dev/null || true"
-          ssh $NODE "cd $REPO && git fetch origin main"
-          ssh $NODE "cd $REPO && git rebase origin/main || (git rebase --abort && git reset --hard origin/main)"
-          ssh $NODE "cd $REPO && git stash pop 2>/dev/null || true"
+          ssh $NODE "cd $REPO && git checkout main 2>/dev/null || git checkout -b main origin/main"
+          ssh $NODE "cd $REPO && git fetch origin main && git reset --hard origin/main"
 
       - name: Re-add all result data and push
         run: |
