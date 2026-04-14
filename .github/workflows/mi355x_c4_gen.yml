@@ -1,0 +1,45 @@
+name: MI355X c4 Gen
+on:
+  workflow_dispatch: {}
+jobs:
+  gen:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 30
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+      OLD_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711_profiling_c4
+      TARGET_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711_profiling
+    steps:
+      - name: Ensure container running
+        run: podman start $CONTAINER 2>/dev/null || true
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+      - name: Inventory
+        run: ls -lh $REPO/$OLD_DIR/ 2>/dev/null || echo "OLD_DIR not found"
+      - name: Generate decode_walltime CSV
+        run: podman exec $CONTAINER bash -c "cd $REPO && python3 scripts/gen_decode_walltime.py $OLD_DIR $TARGET_DIR"
+      - name: Run ATOM parse_trace
+        run: |
+          TRACE=$(ls $REPO/$OLD_DIR/*_trim_decode.json.gz 2>/dev/null | head -1)
+          if [ -z "$TRACE" ]; then TRACE=$(ls $REPO/$OLD_DIR/*.pt.trace.json.gz 2>/dev/null | grep -v capture_graph | head -1); fi
+          if [ -z "$TRACE" ]; then echo "No trace file"; exit 0; fi
+          echo "Trace: $TRACE"
+          podman exec $CONTAINER bash -c "cd $REPO/$TARGET_DIR && ATOM_TOOLS=/app/ATOM/tools python3 $REPO/scripts/run_parse_trace.py $TRACE --layer 40" 2>&1 | tail -40
+      - name: Commit and push
+        if: always()
+        run: |
+          cd $REPO
+          git config user.email "ci@github.com"
+          git config user.name "MI355X CI"
+          for ext in log csv md xlsx json; do git add -f $TARGET_DIR/*.$ext 2>/dev/null || true; done
+          git diff --cached --name-only
+          if ! git diff --cached --quiet; then
+            git commit -m "data: MI355X EP8 TP8 c=4 profiling (decode_walltime + reparse)
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+            git pull --rebase origin main || true
+            git push
+          else
+            echo "Nothing new to commit"
+          fi
