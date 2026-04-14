@@ -8,11 +8,24 @@ jobs:
     env:
       NODE: hungry-hippo-fin-03-2
       CONTAINER: zufa_trt
+      CONTAINER_IMAGE: "nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post2"
       REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      SFS: /SFS-aGqda6ct
     steps:
       - name: Sync repo
         run: ssh $NODE "cd $REPO && git stash 2>/dev/null || true && git fetch origin main && git rebase origin/main && git stash pop 2>/dev/null || true"
+
+      - name: Ensure post2 container exists
+        run: |
+          if ssh $NODE "docker inspect $CONTAINER" &>/dev/null; then
+            echo "Container $CONTAINER already exists"
+            ssh $NODE "docker start $CONTAINER 2>/dev/null || true"
+          else
+            echo "Creating $CONTAINER from $CONTAINER_IMAGE"
+            ssh $NODE "docker run -d --name $CONTAINER --gpus all --ipc host --ulimit memlock=-1 --ulimit stack=67108864 -v $SFS:$SFS -v /home/ubuntu/zufa:/home/ubuntu/zufa $CONTAINER_IMAGE sleep infinity"
+          fi
+          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name --format=csv,noheader | head -1"
 
       - name: Detect TRT-LLM version
         run: |
