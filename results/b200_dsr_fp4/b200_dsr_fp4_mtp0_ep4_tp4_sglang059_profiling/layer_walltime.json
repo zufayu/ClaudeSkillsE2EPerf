@@ -1,0 +1,121 @@
+{
+  "trace_file": "/SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf/results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling/trace_torch_b200_sglang_dsr1_fp4_sglang059_chat_ep4_tp4_c64_step30-1030_TP-2-EP-2.trace.json.gz",
+  "n_iterations": 100,
+  "skip": 10,
+  "layer_range": "5-56",
+  "n_layer_samples": 5100,
+  "avg_layers_per_iter": 60.4,
+  "per_layer_avg": {
+    "kernel_sum_us": 244.2,
+    "walltime_us": 203.8,
+    "overlap_us": 40.4,
+    "overlap_pct": 16.5,
+    "n_kernels": 16.2
+  },
+  "per_layer_median": {
+    "kernel_sum_us": 244.6,
+    "walltime_us": 204.7
+  },
+  "full_model_estimate_ms": {
+    "by_walltime": 12.31,
+    "by_kernel_sum": 14.75
+  },
+  "per_operator": [
+    {
+      "tag": "moe_gate_up",
+      "avg_us": 101.8,
+      "pct": 41.7,
+      "avg_count": 1.0
+    },
+    {
+      "tag": "moe_down",
+      "avg_us": 56.3,
+      "pct": 23.1,
+      "avg_count": 1.0
+    },
+    {
+      "tag": "FP4_GEMM",
+      "avg_us": 17.7,
+      "pct": 7.3,
+      "avg_count": 2.0
+    },
+    {
+      "tag": "lamport_AR+RMSNorm",
+      "avg_us": 17.2,
+      "pct": 7.0,
+      "avg_count": 1.2
+    },
+    {
+      "tag": "splitK_GEMM",
+      "avg_us": 14.0,
+      "pct": 5.8,
+      "avg_count": 1.0
+    },
+    {
+      "tag": "moe_finalize",
+      "avg_us": 7.5,
+      "pct": 3.1,
+      "avg_count": 1.0
+    },
+    {
+      "tag": "expert_sort",
+      "avg_us": 5.3,
+      "pct": 2.2,
+      "avg_count": 1.0
+    },
+    {
+      "tag": "TopK_select",
+      "avg_us": 4.5,
+      "pct": 1.9,
+      "avg_count": 1.0
+    },
+    {
+      "tag": "FP4_convert",
+      "avg_us": 4.4,
+      "pct": 1.8,
+      "avg_count": 2.0
+    },
+    {
+      "tag": "FP4_quant",
+      "avg_us": 3.6,
+      "pct": 1.5,
+      "avg_count": 1.0
+    },
+    {
+      "tag": "splitK_reduce",
+      "avg_us": 3.4,
+      "pct": 1.4,
+      "avg_count": 1.0
+    },
+    {
+      "tag": "tensor_copy",
+      "avg_us": 3.3,
+      "pct": 1.3,
+      "avg_count": 1.0
+    },
+    {
+      "tag": "SiLU_mul",
+      "avg_us": 3.0,
+      "pct": 1.2,
+      "avg_count": 1.0
+    },
+    {
+      "tag": "residual_add",
+      "avg_us": 2.1,
+      "pct": 0.9,
+      "avg_count": 1.0
+    },
+    {
+      "tag": "other:void at::native::vectorized_elementwise_",
+      "avg_us": 0.0,
+      "pct": 0.0,
+      "avg_count": 0.0
+    },
+    {
+      "tag": "other:void at::native::index_elementwise_kerne",
+      "avg_us": 0.0,
+      "pct": 0.0,
+      "avg_count": 0.0
+    }
+  ]
+}
