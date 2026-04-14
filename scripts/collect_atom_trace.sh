@@ -502,9 +502,18 @@ if [[ -n "$TRACE_FILE" ]]; then
     log "Copying traces to $RESULT_DIR/"
     cp -v "$TRACE_DIR"/rank_0/*.json.gz "$RESULT_DIR/"
 
-    # Update TRACE_FILE to point to the copied location
+    # Rename trace to include config info (TAG)
     TRACE_BASENAME=$(basename "$TRACE_FILE")
     TRACE_FILE="$RESULT_DIR/$TRACE_BASENAME"
+    RENAMED_TRACE="$RESULT_DIR/${TAG}.json.gz"
+    if [[ "$TRACE_FILE" != "$RENAMED_TRACE" ]]; then
+        mv -v "$TRACE_FILE" "$RENAMED_TRACE"
+        TRACE_FILE="$RENAMED_TRACE"
+        # Also rename capture_graph if present
+        for cg in "$RESULT_DIR"/capture_graph_*.json.gz; do
+            [[ -f "$cg" ]] && mv -v "$cg" "$RESULT_DIR/capture_graph_${TAG}.json.gz" && break
+        done
+    fi
 
     log "============================================================"
     log "  DECODE WALL TIME ANALYSIS"
