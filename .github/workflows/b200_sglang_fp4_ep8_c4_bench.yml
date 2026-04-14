@@ -26,11 +26,6 @@ jobs:
       - name: Bench chat c=4
         run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_sglang.sh --model $MODEL_FP4 --tp 8 --ep 8 --scenario chat --concurrency 4 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'"
 
-      - name: Bench reasoning c=4
-        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_sglang.sh --model $MODEL_FP4 --tp 8 --ep 8 --scenario reasoning --concurrency 4 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'"
-
-      - name: Bench summarize c=4
-        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_sglang.sh --model $MODEL_FP4 --tp 8 --ep 8 --scenario summarize --concurrency 4 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'"
 
       - name: Show results
         if: always()

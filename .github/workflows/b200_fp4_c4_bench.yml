@@ -36,11 +36,6 @@ jobs:
       - name: Bench chat c=4
         run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_b200.sh --model-fp4 $MODEL_FP4 --configs fp4-throughput --scenario chat --concurrency 4 --tp 8 --ep-sizes 8 --dp false --container-image ${{ env.IMAGE }} --result-dir ./${{ env.RESULT_DIR }}'"
 
-      - name: Bench reasoning c=4
-        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_b200.sh --model-fp4 $MODEL_FP4 --configs fp4-throughput --scenario reasoning --concurrency 4 --tp 8 --ep-sizes 8 --dp false --container-image ${{ env.IMAGE }} --result-dir ./${{ env.RESULT_DIR }}'"
-
-      - name: Bench summarize c=4
-        run: ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_b200.sh --model-fp4 $MODEL_FP4 --configs fp4-throughput --scenario summarize --concurrency 4 --tp 8 --ep-sizes 8 --dp false --container-image ${{ env.IMAGE }} --result-dir ./${{ env.RESULT_DIR }}'"
 
       - name: Show results
         if: always()
