@@ -1,6 +1,6 @@
-name: "MI355X EP8 c4 Complete Missing Data"
+name: MI355X EP8 c4 Complete Missing Data
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
 jobs:
   complete:
     runs-on: [self-hosted, mi355x]
