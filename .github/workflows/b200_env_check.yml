@@ -1,0 +1,68 @@
+name: B200 Environment Check
+on:
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 10
+    steps:
+      - name: Host info
+        run: |
+          echo "=== Host ==="
+          hostname
+          uname -r
+          echo "Driver: $(cat /proc/driver/nvidia/version 2>/dev/null | head -1 || echo 'N/A')"
+          nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader 2>/dev/null | head -2
+          echo "GPU count: $(nvidia-smi -L 2>/dev/null | wc -l)"
+          echo "Disk:"
+          df -h / /SFS-aGqda6ct 2>/dev/null | tail -5
+
+      - name: Docker containers
+        run: |
+          echo "=== Running containers ==="
+          docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" 2>/dev/null || echo "No docker access"
+
+      - name: TRT-LLM container (zufa_trt)
+        run: |
+          echo "=== zufa_trt ==="
+          docker exec zufa_trt bash -c '
+            echo "Python: $(python3 --version 2>&1)"
+            python3 -c "import tensorrt_llm; print(f\"TRT-LLM: {tensorrt_llm.__version__}\")" 2>/dev/null || echo "TRT-LLM: NOT FOUND"
+            python3 -c "import torch; print(f\"PyTorch: {torch.__version__}, CUDA: {torch.version.cuda}\")" 2>/dev/null || echo "PyTorch: NOT FOUND"
+            python3 -c "import torch; print(f\"GPUs visible: {torch.cuda.device_count()}\")" 2>/dev/null
+            nvidia-smi -L 2>/dev/null | head -2
+            echo "Model check:"
+            ls -ld /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2 2>/dev/null && echo "  FP4 model: OK" || echo "  FP4 model: MISSING"
+            ls /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2/config.json 2>/dev/null && echo "  config.json: OK" || echo "  config.json: MISSING"
+            ls -ld /SFS-aGqda6ct/models/models--DeepSeek-R1-0528 2>/dev/null && echo "  FP8 model: OK" || echo "  FP8 model: MISSING"
+            echo "trtllm-bench:"
+            which trtllm-bench 2>/dev/null && trtllm-bench --version 2>/dev/null || echo "  NOT FOUND"
+            echo "nsys:"
+            which nsys 2>/dev/null && nsys --version 2>/dev/null || echo "  NOT FOUND"
+            echo "ncu:"
+            which ncu 2>/dev/null && ncu --version 2>/dev/null || echo "  NOT FOUND"
+          ' 2>&1 || echo "zufa_trt container not running"
+
+      - name: SGLang container (zufa_sglang)
+        run: |
+          echo "=== zufa_sglang ==="
+          docker exec zufa_sglang bash -c '
+            echo "Python: $(python3 --version 2>&1)"
+            python3 -c "import sglang; print(f\"SGLang: {sglang.__version__}\")" 2>/dev/null || echo "SGLang: NOT FOUND"
+            python3 -c "import torch; print(f\"PyTorch: {torch.__version__}, CUDA: {torch.version.cuda}\")" 2>/dev/null || echo "PyTorch: NOT FOUND"
+            python3 -c "import torch; print(f\"GPUs visible: {torch.cuda.device_count()}\")" 2>/dev/null
+            nvidia-smi -L 2>/dev/null | head -2
+            echo "Model check:"
+            ls -ld /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2 2>/dev/null && echo "  FP4 model: OK" || echo "  FP4 model: MISSING"
+            echo "nsys:"
+            which nsys 2>/dev/null && nsys --version 2>/dev/null || echo "  NOT FOUND"
+            echo "ncu:"
+            which ncu 2>/dev/null && ncu --version 2>/dev/null || echo "  NOT FOUND"
+            echo "Running servers:"
+            pgrep -af "sglang.launch_server" 2>/dev/null || echo "  No SGLang servers running"
+          ' 2>&1 || echo "zufa_sglang container not running"
+
+      - name: GPU status
+        run: |
+          echo "=== GPU Health ==="
+          nvidia-smi 2>/dev/null || echo "nvidia-smi failed"

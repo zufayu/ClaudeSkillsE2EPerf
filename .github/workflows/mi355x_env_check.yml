@@ -1,0 +1,57 @@
+name: MI355X Environment Check
+on:
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 10
+    steps:
+      - name: Host info
+        run: |
+          echo "=== Host ==="
+          hostname
+          uname -r
+          echo "ROCm: $(cat /opt/rocm/.info/version 2>/dev/null || echo 'N/A')"
+          rocm-smi --showproductname 2>/dev/null | head -10 || echo "rocm-smi failed"
+          echo "GPU count: $(rocm-smi -l 2>/dev/null | grep -c 'GPU' || echo 'N/A')"
+          echo "Disk:"
+          df -h / /shared 2>/dev/null | tail -5
+
+      - name: Podman containers
+        run: |
+          echo "=== Running containers ==="
+          podman ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" 2>/dev/null || echo "No podman access"
+
+      - name: ATOM container (zufa_atom)
+        run: |
+          echo "=== zufa_atom (ROCm 7.1.1) ==="
+          podman exec zufa_atom bash -c '
+            echo "Python: $(python3 --version 2>&1)"
+            echo "ROCm: $(cat /opt/rocm/.info/version 2>/dev/null || echo N/A)"
+            python3 -c "import torch; print(f\"PyTorch: {torch.__version__}\")" 2>/dev/null || echo "PyTorch: NOT FOUND"
+            python3 -c "import torch; print(f\"GPUs visible: {torch.cuda.device_count()}\")" 2>/dev/null
+            rocm-smi -L 2>/dev/null | head -2 || true
+            echo "Model check:"
+            ls -ld /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 2>/dev/null && echo "  MXFP4 model: OK" || echo "  MXFP4 model: MISSING"
+            echo "ATOM CLI:"
+            which atom 2>/dev/null || echo "  NOT FOUND"
+            echo "rocprof:"
+            which rocprof 2>/dev/null && rocprof --version 2>/dev/null || echo "  NOT FOUND"
+          ' 2>&1 || echo "zufa_atom container not running"
+
+      - name: ATOM2 container (zufa_atom2)
+        run: |
+          echo "=== zufa_atom2 (ROCm 7.2.1) ==="
+          podman exec zufa_atom2 bash -c '
+            echo "Python: $(python3 --version 2>&1)"
+            echo "ROCm: $(cat /opt/rocm/.info/version 2>/dev/null || echo N/A)"
+            python3 -c "import torch; print(f\"PyTorch: {torch.__version__}\")" 2>/dev/null || echo "PyTorch: NOT FOUND"
+            python3 -c "import torch; print(f\"GPUs visible: {torch.cuda.device_count()}\")" 2>/dev/null
+            echo "Model check:"
+            ls -ld /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 2>/dev/null && echo "  MXFP4 model: OK" || echo "  MXFP4 model: MISSING"
+          ' 2>&1 || echo "zufa_atom2 container not running"
+
+      - name: GPU status
+        run: |
+          echo "=== GPU Health ==="
+          rocm-smi 2>/dev/null || echo "rocm-smi failed"
