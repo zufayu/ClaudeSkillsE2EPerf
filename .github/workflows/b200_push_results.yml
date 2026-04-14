@@ -12,14 +12,26 @@ jobs:
       - name: Show current state
         run: |
           ssh $NODE "cd $REPO && git log --oneline -5"
-          ssh $NODE "cd $REPO && git status --short | head -20"
+          ssh $NODE "cd $REPO && git status --short | head -30"
 
-      - name: Stash unstaged, rebase, push
+      - name: Fix git state and force sync
         run: |
-          ssh $NODE "cd $REPO && git stash 2>/dev/null || true"
-          ssh $NODE "cd $REPO && git fetch origin main && git rebase origin/main"
-          ssh $NODE "cd $REPO && git push origin main"
-          ssh $NODE "cd $REPO && git stash pop 2>/dev/null || true"
+          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null || true"
+          ssh $NODE "cd $REPO && git merge --abort 2>/dev/null || true"
+          ssh $NODE "cd $REPO && rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null || true"
+          ssh $NODE "cd $REPO && git reset --hard HEAD"
+          ssh $NODE "cd $REPO && git fetch origin main"
+          ssh $NODE "cd $REPO && git rebase origin/main || (git rebase --abort && git reset --hard origin/main)"
+
+      - name: Re-add all result data and push
+        run: |
+          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && for d in results/b200_dsr_fp4/*/; do for ext in json log md csv yml; do git add -f \$d*.\$ext 2>/dev/null; done; done"
+          ssh $NODE "cd $REPO && git diff --cached --name-only | head -30"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 results (re-committed after git fix)
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push origin main; else echo 'Nothing to commit'; fi"
 
       - name: Verify
-        run: ssh $NODE "cd $REPO && git log --oneline -5"
+        if: always()
+        run: ssh $NODE "cd $REPO && git log --oneline -5 && git status --short | head -10"
