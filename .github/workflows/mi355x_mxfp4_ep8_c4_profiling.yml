@@ -32,7 +32,9 @@ jobs:
           cd $REPO
           git config user.email "ci@github.com"
           git config user.name "MI355X CI"
+          git stash 2>/dev/null || true
           git fetch origin main && git rebase origin/main || (git rebase --abort 2>/dev/null; git reset --hard origin/main)
+          git stash pop 2>/dev/null || true
           for ext in log csv md xlsx; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done
           git add -f $RESULT_DIR/result_profiled_*.json 2>/dev/null || true
           git diff --cached --name-only
