@@ -16,18 +16,17 @@ jobs:
 
       - name: Fix git state and force sync
         run: |
-          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null || true"
-          ssh $NODE "cd $REPO && git merge --abort 2>/dev/null || true"
-          ssh $NODE "cd $REPO && rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null || true"
-          ssh $NODE "cd $REPO && git checkout main 2>/dev/null || git checkout -b main origin/main"
-          ssh $NODE "cd $REPO && git fetch origin main && git reset --hard origin/main"
+          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; git merge --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git checkout main 2>/dev/null || git checkout -b main origin/main; git fetch origin main; git reset --hard origin/main; echo done"
 
-      - name: Re-add all result data and push
+      - name: Re-add all result data
         run: |
-          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
-          ssh $NODE "cd $REPO && for d in results/b200_dsr_fp4/*/; do for ext in json log md csv yml; do git add -f \$d*.\$ext 2>/dev/null; done; done"
-          ssh $NODE "cd $REPO && git diff --cached --name-only | head -30"
-          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 FP4 results' && git push origin main; else echo 'Nothing to commit'; fi"
+          ssh $NODE "cd $REPO && git config user.email ci@github.com && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && find results/b200_dsr_fp4 -maxdepth 2 -type f \\( -name '*.json' -o -name '*.log' -o -name '*.md' -o -name '*.csv' -o -name '*.yml' -o -name '*.xlsx' \\) ! -name '*.json.gz' -exec git add -f {} +"
+          ssh $NODE "cd $REPO && git diff --cached --stat"
+
+      - name: Commit and push
+        run: |
+          ssh $NODE "cd $REPO && git diff --cached --quiet && echo 'Nothing to commit' && exit 0 || git commit -m 'data: B200 FP4 results' && git push origin main"
 
       - name: Verify
         if: always()
