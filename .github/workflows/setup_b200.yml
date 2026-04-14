@@ -1,73 +1,40 @@
 name: Setup B200 Node
-
 on:
-  workflow_dispatch:
-    inputs:
-      node:
-        description: 'GPU node to setup'
-        type: choice
-        options:
-          - hungry-hippo-fin-03-2
-          - hungry-hippo-fin-03-7
-          - hungry-hippo-fin-03-1
-          - hungry-hippo-fin-03-3
-        default: hungry-hippo-fin-03-2
-
+  workflow_dispatch: {}
 jobs:
   setup:
     runs-on: [self-hosted, b200]
     env:
-      NODE: ${{ inputs.node }}
       REPO_DIR: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
       CONTAINER: zufa_trt
-      IMAGE: nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post2
+      IMAGE: nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc10
       SFS: /SFS-aGqda6ct
     steps:
-      - name: Remove old container, start zufa_trt
+      - name: Remove old container and start fresh
         run: |
-          ssh $NODE "docker rm -f trtllm-b200 2>/dev/null && echo 'Removed trtllm-b200' || echo 'trtllm-b200 not found'"
-          ssh $NODE "docker rm -f $CONTAINER 2>/dev/null || true"
-          ssh $NODE "docker run -d --name $CONTAINER --gpus all --ipc host \
+          docker rm -f $CONTAINER 2>/dev/null || true
+          docker run -d --name $CONTAINER --gpus all --ipc host \
             --ulimit memlock=-1 --ulimit stack=67108864 \
             -v /home:/home -v /mnt:/mnt -v /data:/data \
             -v $SFS:$SFS \
             --shm-size=64g -p 8000:8000 --cap-add=SYS_PTRACE \
-            $IMAGE sleep infinity"
-          echo "Container $CONTAINER started on $NODE"
+            $IMAGE sleep infinity
+          echo "Container $CONTAINER started with $IMAGE"
 
-      - name: Verify GPU + model paths
+      - name: Verify GPU and model paths
         run: |
           echo "=== GPU ==="
-          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader"
+          docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
           echo "=== FP4 Model ==="
-          ssh $NODE "docker exec $CONTAINER ls $SFS/models/DeepSeek-R1-0528-NVFP4-v2/ | head -10"
+          docker exec $CONTAINER ls $SFS/models/DeepSeek-R1-0528-NVFP4-v2/ | head -10
           echo "=== Repo ==="
-          ssh $NODE "docker exec $CONTAINER ls $REPO_DIR/scripts/ | head -5"
+          docker exec $CONTAINER ls $REPO_DIR/scripts/ | head -5
 
-      - name: List B200 FP4 result directories
+      - name: Sync repo inside container
         run: |
-          echo "=== Result dirs ==="
-          ssh $NODE "docker exec $CONTAINER bash -c 'for d in $SFS/ubuntu/zufa/ClaudeSkillsE2EPerf/results_b200_fp4_*; do echo \"### \$d\"; ls \$d/*.json 2>/dev/null | head -5; echo \"Total: \$(ls \$d/*.json 2>/dev/null | wc -l) files\"; done'"
+          docker exec $CONTAINER bash -c "cd $REPO_DIR && git fetch origin && git reset --hard origin/main"
 
-      - name: Show FP4 result summaries (TPOT focus)
+      - name: Show existing results
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c '
-            for d in $SFS/ubuntu/zufa/ClaudeSkillsE2EPerf/results_b200_fp4_*; do
-              echo \"### \$(basename \$d)\"
-              for f in \$d/result_*.json; do
-                [ -f \"\$f\" ] || continue
-                python3 -c \"
-import json, os
-with open(\\\"\\x27\$f\\x27\\\") as fh: r=json.load(fh)
-bn=os.path.basename(\\\"\\x27\$f\\x27\\\")
-tpot=r.get(\\\"tpot_p50\\\", r.get(\\\"token_metrics\\\",{}).get(\\\"time_per_output_token_p50\\\",\\\"?\\\"))
-otps=r.get(\\\"output_tps\\\", r.get(\\\"token_metrics\\\",{}).get(\\\"output_throughput\\\",\\\"?\\\"))
-conc=r.get(\\\"concurrency\\\", r.get(\\\"config\\\",{}).get(\\\"concurrency\\\",\\\"?\\\"))
-isl=r.get(\\\"isl\\\", r.get(\\\"config\\\",{}).get(\\\"isl\\\",\\\"?\\\"))
-osl=r.get(\\\"osl\\\", r.get(\\\"config\\\",{}).get(\\\"osl\\\",\\\"?\\\"))
-print(f\\\"{bn}: isl={isl} osl={osl} c={conc} TPOT={tpot} output_tps={otps}\\\")
-\" 2>/dev/null || echo \"\$(basename \$f): parse error\"
-              done
-              echo
-            done
-          '"
+          echo "=== Result directories ==="
+          docker exec $CONTAINER bash -c "ls -d $REPO_DIR/results*/b200* 2>/dev/null || echo 'No results yet'"
