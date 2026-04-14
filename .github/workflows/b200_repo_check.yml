@@ -1,0 +1,32 @@
+name: B200 Repo Check
+on:
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 5
+    env:
+      REPO: /home/ubuntu/ClaudeSkillsE2EPerf
+    steps:
+      - name: Repo state
+        run: |
+          echo "=== Repo ==="
+          cd $REPO 2>/dev/null && echo "Repo exists at $REPO" || { echo "Repo NOT at $REPO"; ls /home/ubuntu/ 2>/dev/null; exit 0; }
+          git log --oneline -5
+          git status --short
+          echo ""
+          echo "=== Results dirs ==="
+          ls -d results/b200* 2>/dev/null || echo "No b200 results"
+          echo ""
+          echo "=== Results file counts ==="
+          for d in results/b200*/; do
+            [ -d "$d" ] || continue
+            echo "$d: $(find "$d" -type f | wc -l) files"
+            find "$d" -type f -name "*.json" -o -name "*.csv" -o -name "*.xlsx" -o -name "*.md" -o -name "*.nsys-rep" -o -name "*.ncu-rep" -o -name "*.json.gz" | sort
+          done
+          echo ""
+          echo "=== Docker images available ==="
+          docker images --format "{{.Repository}}:{{.Tag}}\t{{.Size}}" 2>/dev/null | head -20
+          echo ""
+          echo "=== Disk usage ==="
+          du -sh results/b200*/ 2>/dev/null
