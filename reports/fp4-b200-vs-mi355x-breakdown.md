@@ -1,12 +1,6 @@
-<style>
-table { width: 100%; min-width: 1400px; table-layout: auto; font-size: 14px; }
-th, td { white-space: nowrap; padding: 4px 12px; }
-td:last-child, th:last-child { white-space: normal; min-width: 200px; }
-</style>
-
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
-> **Last updated:** 2026-04-13 v27
+> **Last updated:** 2026-04-14 v28
 > **Model:** DeepSeek-R1-0528-NVFP4-v2, FP4
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
 > **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅；**MI355X TP=8+EP 公平对标完成 ✅**；**B200 4GPU torch trace per-layer 分析完成 ✅**；**Multi-stream overlap 分析完成 ✅**；**TP=4 分段执行分析+优化方向完成 ✅**
@@ -147,33 +141,33 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 | # | B200_Module  | B200_Operator     | B200_Raw_Kernel      | Stream | B200_us | Overlap_us | B200_Overlap_With         | MI355X_Module   | MI355X_Kernel     | MI355X_us | Notes        |
 |---|-------------|---------------|-----------------|--------|---------|------------|-------------------|---------------|---------------|-----------|-------|
-| 1 | EP_AR | EP_AR+residual+RMSNorm(fused) | allreduce_fusion_kernel_oneshot_lamport | 23 | 25.9 | 24.1 | qkv_a_proj_GEMM(same):24.1μs | input_layernorm | reduce_scatter + load_rmsnorm | 29 | B200 fuses AR+residual+RMSNorm; B200 value inflated by same-stream overlap (true ~11μs) |
-| 2 | Attention | qkv_a_proj_GEMM | nvjet_splitK_TNT | 23 | 31.9 | 25.5 | EP_AR+residual+RMSNorm(same):24.1μs \| qkv_a_splitK_reduce(same):1.4μs | input_layernorm | add_rmsnorm_quant ×2 | 5.5 | MI355X only: additional quant after norm |
-| 3 | Attention | qkv_a_splitK_reduce | splitKreduce_kernel | 23 | 3.7 | 2.5 | qkv_a_proj_GEMM(same):1.4μs \| q/k_norm_RMSNorm(same):1.1μs | gemm_a16w16 | bf16gemm_splitk (qkv_a) | 16.1 | MI355X qkv_a GEMM maps here in strict timeline |
+| 1 | EP_AR | EP_AR+residual+RMSNorm(fused) | allreduce_fusion_kernel_oneshot_lamport | 23 | 25.9 | 24.1 | qkv_a_proj_GEMM(same):24.1μs | input_layernorm | reduce_scatter_cross_device_store + local_device_load_rmsnorm | 29 | B200 fuses AR+residual+RMSNorm; B200 value inflated by same-stream overlap (true ~11μs) |
+| 2 | Attention | qkv_a_proj_GEMM | nvjet_splitK_TNT | 23 | 31.9 | 25.5 | EP_AR+residual+RMSNorm(same):24.1μs \| qkv_a_splitK_reduce(same):1.4μs | input_layernorm | add_rmsnorm_quant_kernel<256,8> | 5.5 | MI355X only: additional quant after norm |
+| 3 | Attention | qkv_a_splitK_reduce | splitKreduce_kernel | 23 | 3.7 | 2.5 | qkv_a_proj_GEMM(same):1.4μs \| q/k_norm_RMSNorm(same):1.1μs | gemm_a16w16 | bf16gemm_fp32bf16_tn_64x64_splitk_clean | 16.1 | MI355X qkv_a GEMM maps here in strict timeline |
 | 4 | Attention | q/k_norm_RMSNorm | RMSNormKernel (stream 23) | 23 | 3.2 | 2.7 | q/k_norm_RMSNorm(cross):1.5μs \| qkv_a_splitK_reduce(same):1.1μs | | | | B200 dual-stream norm #1; no MI355X match at this position |
-| 5 | Attention | q/k_norm_RMSNorm | RMSNormKernel (stream 385) | 385 | 2.4 | 1.5 | q/k_norm_RMSNorm(cross):1.5μs | q/k_norm | q/k_norm_RMSNormx2 | 10.8 | MI355X combines both norms into 1 kernel |
-| 6 | Attention | q_b_proj_GEMM | nvjet_v_bz_TNN | 23 | 6.3 | 1.3 | uk_gemm(K_expansion)(same):1.3μs | q_proj_and_k_up_proj | gemm_xdl (q_b) | 11.8 | |
-| 7 | Attention | uk_gemm(K_expansion) | nvjet_v_bz_TNT | 23 | 4.4 | 1.3 | q_b_proj_GEMM(same):1.3μs | q_proj_and_k_up_proj | batched_gemm_a8w8 | 5.5 | |
-| 8 | Attention | RoPE+KV_cache_write | RopeQuantizeKernel | 23 | 2.7 | 0 | | rope_and_kv_cache | fuse_qk_rope_concat_cache | 5.3 | |
+| 5 | Attention | q/k_norm_RMSNorm | RMSNormKernel (stream 385) | 385 | 2.4 | 1.5 | q/k_norm_RMSNorm(cross):1.5μs | q/k_norm | add_rmsnorm_quant_kernel<64,8> | 10.8 | MI355X combines both norms into 1 kernel |
+| 6 | Attention | q_b_proj_GEMM | nvjet_v_bz_TNN | 23 | 6.3 | 1.3 | uk_gemm(K_expansion)(same):1.3μs | q_proj_and_k_up_proj | Cijk_BBS_MT64x32x128_SK3_ISA950 (Tensile) | 11.8 | |
+| 7 | Attention | uk_gemm(K_expansion) | nvjet_v_bz_TNT | 23 | 4.4 | 1.3 | q_b_proj_GEMM(same):1.3μs | q_proj_and_k_up_proj | batched_gemm_a8w8_M32_N128_K128 (aiter) | 5.5 | |
+| 8 | Attention | RoPE+KV_cache_write | RopeQuantizeKernel | 23 | 2.7 | 0 | | rope_and_kv_cache | fuse_qk_rope_concat_and_cache_mla_per_head_kernel (aiter) | 5.3 | |
 | 9 | Attention | set_mla_kv | set_mla_kv_buffer_kernel | 23 | 1.7 | 0 | | | | | B200 only |
-| 10 | Attention | Attention(FMHA) | fmhaSm100fKernel | 23 | 20.3 | 0 | | mla_decode | mla_a8w8_qh16 | 25.5 | |
-| 11 | Attention | uv_gemm(V_expansion) | nvjet_h_bz_TNT | 23 | 4 | 0 | | mla_decode | mla_reduce_v1 | 7.2 | MI355X attention output reduction |
-| 12 | Proj | o_proj_quant(BF16→FP4) #1 | cvt_fp16_to_fp4 | 23 | 2.1 | 0.1 | | mla_decode:v_up_proj | batched_gemm_a8w8 (uv) | 6.6 | MI355X uv_gemm maps here in strict timeline |
+| 10 | Attention | Attention(FMHA) | fmhaSm100fKernel | 23 | 20.3 | 0 | | mla_decode | mla_a8w8_qh16_qseqlen1_gqaratio16_ps (aiter) | 25.5 | |
+| 11 | Attention | uv_gemm(V_expansion) | nvjet_h_bz_TNT | 23 | 4 | 0 | | mla_decode | kn_mla_reduce_v1_ps<512,16,1> (aiter) | 7.2 | MI355X attention output reduction |
+| 12 | Proj | o_proj_quant(BF16→FP4) #1 | cvt_fp16_to_fp4 | 23 | 2.1 | 0.1 | | v_up_proj_and_o_proj | batched_gemm_a8w8_M32_N64_K128 (aiter) | 6.6 | MI355X uv_gemm maps here in strict timeline |
 | 13 | Proj | o_proj_GEMM #1 | DeviceGemmFp4GemmSm100 | 23 | 9.4 | 0.1 | | | | | B200 splits o_proj into #1+#2 (9.4+10.2=19.6) |
-| 14 | EP_AR | EP_AR+residual+RMSNorm(fused) #2 | allreduce_fusion_kernel_oneshot_lamport | 23 | 11 | 9.2 | router_GEMM(cross):9.1μs | v_up_proj_and_o_proj | gemm_xdl (o_proj) | 21.4 | MI355X single o_proj; B200 fuses AR+residual+RMSNorm |
-| 15 | MoE_Route | router_GEMM | nvjet_h_bz_splitK_TNT | 385 | 13.5 | 14.3 | EP_AR+residual+RMSNorm(cross):9.1μs \| o_proj_quant(cross):2.5μs \| router_splitK_reduce(same):1.4μs \| o_proj_GEMM(cross):1.3μs | post_attn_layernorm | reduce_scatter + triton_fused_clone ×2 | 31.2 | MI355X post_attn combined (20.0+5.7+5.5) |
-| 16 | MoE_quant | Moe_Expert_quant(BF16→FP4) | cvt_fp16_to_fp4 | 23 | 2.5 | 2.6 | router_GEMM(cross):2.5μs \| router_splitK_reduce(cross):0.2μs | gemm_a16w16 | bf16gemm_splitk (router) | 9.2 | MI355X router GEMM maps here in strict timeline |
+| 14 | EP_AR | EP_AR+residual+RMSNorm(fused) #2 | allreduce_fusion_kernel_oneshot_lamport | 23 | 11 | 9.2 | router_GEMM(cross):9.1μs | v_up_proj_and_o_proj | Cijk_BBS_MT64x64x128_SK3_ISA950 (Tensile) | 21.4 | MI355X single o_proj; B200 fuses AR+residual+RMSNorm |
+| 15 | MoE_Route | router_GEMM | nvjet_h_bz_splitK_TNT | 385 | 13.5 | 14.3 | EP_AR+residual+RMSNorm(cross):9.1μs \| o_proj_quant(cross):2.5μs \| router_splitK_reduce(same):1.4μs \| o_proj_GEMM(cross):1.3μs | post_attn_layernorm | reduce_scatter_cross_device_store + local_device_load_rmsnorm + triton_fused_clone ×2 | 31.2 | MI355X post_attn combined (20.0+5.7+5.5) |
+| 16 | MoE_quant | Moe_Expert_quant(BF16→FP4) | cvt_fp16_to_fp4 | 23 | 2.5 | 2.6 | router_GEMM(cross):2.5μs \| router_splitK_reduce(cross):0.2μs | gemm_a16w16 | bf16gemm_fp32bf16_tn_64x64_splitk_clean | 9.2 | MI355X router GEMM maps here in strict timeline |
 | 17 | MoE_Route | router_splitK_reduce | splitKreduce_kernel | 385 | 3.6 | 6.3 | MoE_Quant_GEMM(cross):3.4μs \| router_GEMM(same):1.4μs \| MoE_input_quant(same):1.4μs \| o_proj_quant(cross):0.2μs | | | | B200 only: splitK reduction |
 | 18 | Proj | o_proj_GEMM #2 | DeviceGemmFp4GemmSm100 | 23 | 10.2 | 12.2 | MoE_input_quant(cross):3.8μs \| router_splitK_reduce(cross):3.4μs \| tensor_copy(cross):3.0μs \| router_GEMM(cross):1.3μs \| TopK_select(cross):1.1μs | | | | (included in B200 o_proj #1+#2 = 19.6) |
 | 19 | MoE_Route | MoE_input_quant(BF16→FP4) | quantize_with_block_size | 385 | 3.8 | 5.1 | MoE_Quant_GEMM(cross):3.8μs \| router_splitK_reduce(same):1.4μs | | | | B200 only: FP4 quant for MoE input |
 | 20 | MoE_Route | tensor_copy | unrolled_elementwise_kernel | 385 | 3.2 | 3.1 | MoE_Quant_GEMM(cross):3.0μs | | | | B200 tensor_copy; no MI355X match at this position |
-| 21 | MoE_Route | TopK_select | routingMainKernel | 385 | 4.5 | 6.3 | SiLU×Mul(cross):2.6μs \| expert_sort(same):2.5μs \| o_proj_GEMM(cross):1.1μs \| shared_quant(cross):1.1μs | triton_poi | triton_fused_clone | 5.5 | MI355X tensor_copy maps here in strict timeline |
-| 22 | MoE_Route | expert_sort | routingIndicesClusterKernel | 385 | 5.3 | 7.2 | TopK_select(same):2.5μs \| SiLU×Mul(cross):2.0μs \| shared_quant(cross):1.5μs \| shared_GEMM(cross):1.4μs \| gate_up(same):0.2μs | mxfp4_moe | grouped_topk_opt_sort | 5.4 | MI355X TopK maps here in strict timeline |
-| 23 | Shared_Exp | SiLU×Mul | act_and_mul_kernel | 23 | 3.2 | 4.7 | TopK_select(cross):2.6μs \| expert_sort(cross):2.0μs | mxfp4_moe | MoeSorting_P0+P23 | 10.8 | MI355X expert_sort maps here in strict timeline; B200 shared expert SiLU parallel with MoE(cross) |
-| 24 | Shared_Exp | shared_quant(BF16→FP4) | cvt_fp16_to_fp4 | 23 | 1.7 | 2.2 | expert_sort(cross):1.5μs \| TopK_select(cross):1.1μs | mxfp4_moe | fused_mxfp4_quant_sort | 9.5 | MI355X MoE quant+sort before gate_up |
-| 25 | MoE_Expert | gate_up_GEMM(+SwiGLU) | bmm_E2m1_E2m1E2m1 | 385 | 101.7 | 4.3 | shared_GEMM(cross):3.4μs \| down_GEMM(same):0.6μs \| expert_sort(same):0.2μs | mxfp4_moe | moe_mxgemm(gate_up) | 119.5 | |
-| 26 | Shared_Exp | shared_GEMM(FP4) | DeviceGemmFp4GemmSm100 | 23 | 5.8 | 6 | gate_up_GEMM(cross):3.4μs \| expert_sort(cross):1.4μs | mxfp4_moe | fused_mxfp4_quant_sort | 5.8 | MI355X quant between gate_up and down; B200 shared expert GEMM parallel with gate_up(cross) |
-| 27 | MoE_Expert | down_GEMM | bmm_Bfloat16_E2m1E2m1 | 385 | 55.8 | 2.5 | MoE_finalize(same):0.6μs \| gate_up_GEMM(same):0.6μs | mxfp4_moe | moe_mxgemm(down) | 58 | |
+| 21 | MoE_Route | TopK_select | routingMainKernel | 385 | 4.5 | 6.3 | SiLU×Mul(cross):2.6μs \| expert_sort(same):2.5μs \| o_proj_GEMM(cross):1.1μs \| shared_quant(cross):1.1μs | triton_poi | triton_poi_fused_as_strided_clone_copy__0 | 5.5 | MI355X tensor_copy maps here in strict timeline |
+| 22 | MoE_Route | expert_sort | routingIndicesClusterKernel | 385 | 5.3 | 7.2 | TopK_select(same):2.5μs \| SiLU×Mul(cross):2.0μs \| shared_quant(cross):1.5μs \| shared_GEMM(cross):1.4μs \| gate_up(same):0.2μs | mxfp4_moe | grouped_topk_opt_sort_kernel (aiter) | 5.4 | MI355X TopK maps here in strict timeline |
+| 23 | Shared_Exp | SiLU×Mul | act_and_mul_kernel | 23 | 3.2 | 4.7 | TopK_select(cross):2.6μs \| expert_sort(cross):2.0μs | mxfp4_moe | MoeSortingMultiPhaseKernel_P0_v2 + P23 (ck_tile) | 10.8 | MI355X expert_sort maps here in strict timeline; B200 shared expert SiLU parallel with MoE(cross) |
+| 24 | Shared_Exp | shared_quant(BF16→FP4) | cvt_fp16_to_fp4 | 23 | 1.7 | 2.2 | expert_sort(cross):1.5μs \| TopK_select(cross):1.1μs | mxfp4_moe | _fused_dynamic_mxfp4_quant_moe_sort_kernel (aiter) | 9.5 | MI355X MoE quant+sort before gate_up |
+| 25 | MoE_Expert | gate_up_GEMM(+SwiGLU) | bmm_E2m1_E2m1E2m1 | 385 | 101.7 | 4.3 | shared_GEMM(cross):3.4μs \| down_GEMM(same):0.6μs \| expert_sort(same):0.2μs | mxfp4_moe | kernel_moe_mxgemm_2lds<MulABScaleShuffled> (CK) | 119.5 | |
+| 26 | Shared_Exp | shared_GEMM(FP4) | DeviceGemmFp4GemmSm100 | 23 | 5.8 | 6 | gate_up_GEMM(cross):3.4μs \| expert_sort(cross):1.4μs | mxfp4_moe | _fused_dynamic_mxfp4_quant_moe_sort_kernel (aiter) | 5.8 | MI355X quant between gate_up and down; B200 shared expert GEMM parallel with gate_up(cross) |
+| 27 | MoE_Expert | down_GEMM | bmm_Bfloat16_E2m1E2m1 | 385 | 55.8 | 2.5 | MoE_finalize(same):0.6μs \| gate_up_GEMM(same):0.6μs | mxfp4_moe | kernel_moe_mxgemm_2lds<MulABScaleExpertWeightShuffled> (CK) | 58 | |
 | 28 | MoE_Expert | MoE_finalize+residual | finalizeKernelVecLoad | 385 | 7.5 | 0.6 | down_GEMM(same):0.6μs | | | | B200 only |
 | 29 | Residual | residual_add | vectorized_elementwise_kernel | 23 | 2.1 | 0 | | | | | B200 only |
 | | | | | | **B200 TOTAL (kernel_sum): 353.2** | | | | | | |
@@ -481,6 +475,7 @@ bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
 
 | 日期 | 变更 |
 |------|------|
+| 2026-04-14 v28 | **MI355X kernel 名修正为 trace 原始名。** 29 行表 MI355X_Kernel 列全部替换为 decode_breakdown.xlsx 原始 kernel 名。关键发现：q_b/o_proj 实际用 Tensile (hipBLASLt) 而非 CK gemm_xdl_preshuffle；uk_gemm/uv_gemm 用 aiter batched_gemm_a8w8；仅 MoE GEMM 用 CK kernel_moe_mxgemm_2lds |
 | 2026-04-13 v27 | **数据修正+宽表。** 修正总览表段 2 MI355X 缺失 q/k_norm_RMSNormx2 (10.8μs)：MI355X 22.8→33.6，GAP 8.8→19.6，总 MI355X ~388→~400，总 GAP ~105→~117。段 2 明细表补齐 MI355X q/k_norm 行。全表 CSS 适配 24 寸显示器（min-width: 1400px + nowrap）|
 | 2026-04-13 v26 | **TP=4 单层分段执行分析与优化方向。** 将单层 Transformer 按执行阶段分为 7 段，逐段对比 B200 vs MI355X 关键路径（4GPU TP=4 EP=4）。总差距 ~105μs 中 ~50-60μs 来自双 stream/PDL 并行。新增 5 项 MI355X 软件优化方向（15-32μs）：gate_up GEMM 效率、MLA+reduce 融合、q_b GEMM tile 调优、MoE 排序精简、gate_up→down quant epilogue 融合（B200 已实现此模式）|
 | 2026-04-06 v24 | **B200 4GPU per-layer torch trace 分析。** 新增 4GPU TP=4 EP=4 SGLang torch trace per-layer kernel 分析（layers 10-40, 4410 样本）。25 算子 × 8 module。per-layer 356.4μs × 61 = 21.74ms ≈ kernel sum 21.69ms（拟合 0.2%）。MoE 48.2% 主导，gate_up 102.0μs + down 58.8μs。4GPU vs 8GPU 对比：MoE GEMM ~1.75x（理论 2x），总层时间 1.29x |
