@@ -1,6 +1,6 @@
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
-> **Last updated:** 2026-04-14 v29
+> **Last updated:** 2026-04-14 v30
 > **Model:** DeepSeek-R1-0528-NVFP4-v2, FP4
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
 > **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅；**MI355X TP=8+EP 公平对标完成 ✅**；**B200 4GPU torch trace per-layer 分析完成 ✅**；**Multi-stream overlap 分析完成 ✅**；**TP=4 分段执行分析+优化方向完成 ✅**
@@ -43,23 +43,24 @@
 
 > MTP=0, chat 1K/1K, c=4, DP=false, ratio=0.8
 >
-> B200: SGLang v0.5.9 (SA InferenceX 同版) / TRT-LLM rc6.post2
+> B200: SGLang v0.5.9 (SA InferenceX 同版) vs TRT-LLM rc6.post2
 > MI355X: ATOM rocm7.1.1
 
 | Platform  | Framework   | Config  | Source    | Total Tput | Per‑GPU | Output Tput | TPOT p50 (ms) | TTFT p50 (ms) | Interactivity |
 |----------|-----------|--------|--------|------------|---------|-------------|---------------|---------------|---------------|
-| B200 | SGLang | EP8 TP8 | bench | 786.6 | 98.3 | 391.4 | 9.8 | 133.0 | 101.9 |
+| B200 | SGLang | EP8 TP8 | bench | 989.6 | 123.7 | 492.4 | 7.8 | 114.8 | 128.6 |
+| B200 | TRT-LLM post2 | EP8 TP8 | bench | 848.5 | 106.1 | 422.2 | 9.2 | 55.0 | 109.3 |
 | B200 | SGLang | EP8 TP8 | profiling | 872.9 | 109.1 | 434.3 | 7.8 | 134.5 | 114.1 |
-| B200 | TRT-LLM post2 | EP8 TP8 | bench | — | — | — | — | — | — |
 | MI355X | ATOM | EP8 TP8 | bench | 698.2 | 87.3 | 347.4 | 11.1 | 72.8 | 90.3 |
 | MI355X | ATOM | EP8 TP8 | profiling | 598.8 | 74.9 | 298.0 | 12.9 | 100.3 | 77.6 |
 
 > **Key findings:**
-> - **B200 SGLang vs MI355X ATOM (bench):** B200 1.13x 吞吐量（786.6 vs 698.2），TPOT 低 12%（9.8 vs 11.1ms）
-> - **B200 Per-GPU 领先 12.6%**（98.3 vs 87.3 tok/s/GPU），差距小于 c=64 场景（c=64: 21%）
+> - **B200 SGLang vs TRT-LLM post2:** SGLang 1.17x 吞吐量（989.6 vs 848.5），但 TRT-LLM TTFT 2.1x 更低（55 vs 115ms）
+> - **B200 SGLang vs MI355X ATOM (bench):** B200 1.42x 吞吐量（989.6 vs 698.2），TPOT 低 30%（7.8 vs 11.1ms）
+> - **B200 TRT-LLM vs MI355X ATOM (bench):** B200 1.22x（848.5 vs 698.2），TPOT 低 17%（9.2 vs 11.1ms）
+> - **B200 Per-GPU 领先 42%**（SGLang 123.7 vs MI355X 87.3 tok/s/GPU）
 > - **MI355X profiling overhead:** 14.2%（698.2→598.8），显著高于 c=64 场景的 ~7%
-> - **B200 TTFT 较高：** 133.0 vs 72.8ms — SGLang TTFT 在低并发下偏高（scheduler overhead），但 TPOT 优势更大
-> - **B200 TRT-LLM 数据待补充：** bench 正在运行中
+> - **SGLang TTFT 偏高：** 114.8ms vs TRT-LLM 55.0ms / ATOM 72.8ms — SGLang scheduler 在低并发下延迟较大
 
 ## 端到端性能TP=4跨框架对比表
 
@@ -498,7 +499,7 @@ bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
 
 | 日期 | 变更 |
 |------|------|
-| 2026-04-14 v29 | **TP=8 C=4 跨框架对比表。** 新增 8GPU TP=8 C=4 FP4 跨框架对比表：B200 SGLang bench+profiling vs MI355X ATOM bench/profiling。bench 对比：B200 SGLang 1.13x MI355X ATOM（786.6 vs 698.2），TPOT 9.8 vs 11.1ms，Per-GPU 领先 12.6%。B200 TRT-LLM post2 数据运行中 |
+| 2026-04-14 v30 | **TP=8 C=4 跨框架对比表完整版。** B200 SGLang bench (989.6) vs TRT-LLM post2 bench (848.5) vs MI355X ATOM bench (698.2)。SGLang 1.17x TRT-LLM，1.42x MI355X。TRT-LLM TTFT 最低（55ms）。v29 数据因 GPU 冲突作废（两 job 并行跑在同一 8GPU 上） |
 | 2026-04-14 v28 | **MI355X kernel 名修正为 trace 原始名。** 29 行表 MI355X_Kernel 列全部替换为 decode_breakdown.xlsx 原始 kernel 名。关键发现：q_b/o_proj 实际用 Tensile (hipBLASLt) 而非 CK gemm_xdl_preshuffle；uk_gemm/uv_gemm 用 aiter batched_gemm_a8w8；仅 MoE GEMM 用 CK kernel_moe_mxgemm_2lds |
 | 2026-04-13 v27 | **数据修正+宽表。** 修正总览表段 2 MI355X 缺失 q/k_norm_RMSNormx2 (10.8μs)：MI355X 22.8→33.6，GAP 8.8→19.6，总 MI355X ~388→~400，总 GAP ~105→~117。段 2 明细表补齐 MI355X q/k_norm 行。全表 CSS 适配 24 寸显示器（min-width: 1400px + nowrap）|
 | 2026-04-13 v26 | **TP=4 单层分段执行分析与优化方向。** 将单层 Transformer 按执行阶段分为 7 段，逐段对比 B200 vs MI355X 关键路径（4GPU TP=4 EP=4）。总差距 ~105μs 中 ~50-60μs 来自双 stream/PDL 并行。新增 5 项 MI355X 软件优化方向（15-32μs）：gate_up GEMM 效率、MLA+reduce 融合、q_b GEMM tile 调优、MoE 排序精简、gate_up→down quant epilogue 融合（B200 已实现此模式）|
