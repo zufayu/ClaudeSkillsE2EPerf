@@ -1,0 +1,25 @@
+name: B200 Push Results
+on:
+  workflow_dispatch: {}
+jobs:
+  push:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 10
+    env:
+      NODE: hungry-hippo-fin-03-2
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
+    steps:
+      - name: Show current state
+        run: |
+          ssh $NODE "cd $REPO && git log --oneline -5"
+          ssh $NODE "cd $REPO && git status --short | head -20"
+
+      - name: Stash unstaged, rebase, push
+        run: |
+          ssh $NODE "cd $REPO && git stash 2>/dev/null || true"
+          ssh $NODE "cd $REPO && git fetch origin main && git rebase origin/main"
+          ssh $NODE "cd $REPO && git push origin main"
+          ssh $NODE "cd $REPO && git stash pop 2>/dev/null || true"
+
+      - name: Verify
+        run: ssh $NODE "cd $REPO && git log --oneline -5"
