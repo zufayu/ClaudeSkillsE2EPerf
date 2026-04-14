@@ -570,7 +570,7 @@ TRIM_PYEOF
     RUN_PARSE="$SCRIPT_DIR/run_parse_trace.py"
     if [[ -f "$RUN_PARSE" ]]; then
         log "Running run_parse_trace.py --layer $LAYER (target-bs=auto)..."
-        (cd "$RESULT_DIR" && ATOM_TOOLS=/app/ATOM/tools python3 "$RUN_PARSE" "$TRACE_FILE" --layer "$LAYER" 2>&1) || \
+        (cd "$RESULT_DIR" && ATOM_TOOLS=/app/ATOM/tools python3 "$RUN_PARSE" "$(basename "$TRACE_FILE")" --layer "$LAYER" 2>&1) || \
             log "WARNING: run_parse_trace.py failed"
     fi
 else
