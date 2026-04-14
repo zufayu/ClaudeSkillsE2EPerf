@@ -64,4 +64,4 @@ jobs:
       - name: Check repo state
         run: |
           echo "=== Repo ==="
-          ssh $NODE "cd /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf && git log --oneline -3 && echo --- && ls results/ 2>/dev/null | head -20"
+          ssh $NODE "cd /home/ubuntu/zufa/ClaudeSkillsE2EPerf && git log --oneline -3 && echo --- && ls results/ 2>/dev/null | head -20"

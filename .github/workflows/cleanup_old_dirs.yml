@@ -8,7 +8,7 @@ jobs:
     timeout-minutes: 10
     env:
       NODE: hungry-hippo-fin-03-2
-      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
     steps:
       - name: Remove old non-standard directories
         run: |

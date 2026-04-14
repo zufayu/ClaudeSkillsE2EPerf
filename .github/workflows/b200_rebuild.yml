@@ -10,7 +10,7 @@ jobs:
       SFS: /SFS-aGqda6ct
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
       MODEL_BF16: /SFS-aGqda6ct/models/models--DeepSeek-R1-0528
-      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
     steps:
       - name: Cleanup old containers
         run: |

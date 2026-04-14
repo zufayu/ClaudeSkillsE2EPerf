@@ -7,7 +7,7 @@ jobs:
     timeout-minutes: 5
     env:
       NODE: hungry-hippo-fin-03-2
-      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
       SRC: /home/ubuntu/zufa/ClaudeSkillsE2EPerf/results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep1_tp4_sglang059
       DST: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep1_tp4_sglang059
     steps:

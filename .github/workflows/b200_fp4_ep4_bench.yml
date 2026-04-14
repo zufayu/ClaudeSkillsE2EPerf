@@ -19,7 +19,7 @@ jobs:
       NODE: hungry-hippo-fin-03-2
       CONTAINER: ${{ inputs.container }}
       SFS: /SFS-aGqda6ct
-      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
     steps:
       - name: Sync repo

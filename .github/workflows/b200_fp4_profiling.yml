@@ -9,7 +9,7 @@ jobs:
       NODE: hungry-hippo-fin-03-2
       CONTAINER: zufa_trt
       SFS: /SFS-aGqda6ct
-      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
       RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_post2_profiling
     steps:

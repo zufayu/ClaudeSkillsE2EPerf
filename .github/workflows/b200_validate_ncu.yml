@@ -8,7 +8,7 @@ jobs:
     env:
       NODE: hungry-hippo-fin-03-2
       CONTAINER: zufa_trt
-      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
       MODEL_BF16: /SFS-aGqda6ct/models/models--DeepSeek-R1-0528
     steps:
       - name: Sync repo

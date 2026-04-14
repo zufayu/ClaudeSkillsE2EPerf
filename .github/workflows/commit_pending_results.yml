@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 10
     env:
       NODE: hungry-hippo-fin-03-2
-      REPO: /SFS-aGqda6ct/ubuntu/zufa/ClaudeSkillsE2EPerf
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
     steps:
       - name: Reset and sync
         run: ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard origin/main 2>/dev/null; git fetch origin && git reset --hard origin/main"
