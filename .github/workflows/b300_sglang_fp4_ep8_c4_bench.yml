@@ -23,7 +23,7 @@ jobs:
         run: echo "IMAGE=$(docker inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
 
       - name: Bench chat c=4
-        run: docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_sglang.sh --model $MODEL_FP4 --tp 8 --ep 8 --scenario chat --concurrency 4 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'
+        run: docker exec -e REPO=$REPO -e MODEL_FP4=$MODEL_FP4 -e RESULT_DIR=$RESULT_DIR $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_sglang.sh --model $MODEL_FP4 --tp 8 --ep 8 --scenario chat --concurrency 4 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'
 
       - name: Show results
         if: always()
@@ -36,7 +36,7 @@ jobs:
       - name: Fix file ownership and commit results
         if: always()
         run: |
-          docker exec $CONTAINER bash -c 'chown -R $(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'
+          docker exec -e REPO=$REPO $CONTAINER bash -c 'chown -R $(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'
           cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B300 CI'
           cd $REPO && git reset HEAD 2>/dev/null; for ext in json log md csv; do git add -f $RESULT_DIR/*.$ext 2>/dev/null || true; done; git diff --cached --name-only
           cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B300 SGLang FP4 TP=8 EP=8 c=4 bench (chat)' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi
