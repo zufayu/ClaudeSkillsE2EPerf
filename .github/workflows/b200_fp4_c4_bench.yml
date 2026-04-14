@@ -7,7 +7,7 @@ jobs:
     timeout-minutes: 180
     env:
       NODE: hungry-hippo-fin-03-2
-      CONTAINER: zufa_trt3
+      CONTAINER: zufa_trt
       SFS: /SFS-aGqda6ct
       REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
       MODEL_FP4: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
