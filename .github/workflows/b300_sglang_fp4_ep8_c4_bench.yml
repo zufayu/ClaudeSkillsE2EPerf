@@ -1,0 +1,42 @@
+name: "B300 SGLang FP4 EP8 TP8 c=4 Bench"
+on:
+  workflow_dispatch:
+jobs:
+  sglang-fp4-tp8-ep8-c4:
+    runs-on: [self-hosted, b300]
+    timeout-minutes: 180
+    env:
+      CONTAINER: zufa_sglang
+      REPO: /home/zufayu/ClaudeSkillsE2EPerf
+      MODEL_FP4: /models/DeepSeek-R1-0528-NVFP4-v2
+      RESULT_DIR: results/b300_dsr_fp4/b300_dsr_fp4_mtp0_ep8_tp8_sglang059
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Verify container
+        run: |
+          docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2
+          docker exec $CONTAINER python3 -c 'import sglang; print(f"SGLang {sglang.__version__}")'
+
+      - name: Get container image name
+        run: echo "IMAGE=$(docker inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: Bench chat c=4
+        run: docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/sa_bench_sglang.sh --model $MODEL_FP4 --tp 8 --ep 8 --scenario chat --concurrency 4 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'
+
+      - name: Show results
+        if: always()
+        run: |
+          for f in $(ls $REPO/$RESULT_DIR/result_*c4*.json $REPO/$RESULT_DIR/result_*_c4_*.json 2>/dev/null); do
+            echo "=== $(basename $f) ==="
+            python3 -c "import json; d=json.load(open('$f')); print(f'c={d.get(\"max_concurrency\",\"?\")}, Output Tput: {d.get(\"output_throughput\",0):.1f}, TPOT p50: {d.get(\"tpot_p50\", d.get(\"median_tpot_ms\",0)):.1f}ms')" 2>/dev/null || echo "parse failed"
+          done
+
+      - name: Fix file ownership and commit results
+        if: always()
+        run: |
+          docker exec $CONTAINER bash -c 'chown -R $(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'
+          cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B300 CI'
+          cd $REPO && git reset HEAD 2>/dev/null; for ext in json log md csv; do git add -f $RESULT_DIR/*.$ext 2>/dev/null || true; done; git diff --cached --name-only
+          cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B300 SGLang FP4 TP=8 EP=8 c=4 bench (chat)' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi

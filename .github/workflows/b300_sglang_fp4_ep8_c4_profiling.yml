@@ -1,0 +1,73 @@
+name: "B300 SGLang FP4 EP8 TP8 c=4 Profiling"
+on:
+  workflow_dispatch:
+jobs:
+  sglang-fp4-tp8-ep8-c4-profiling:
+    runs-on: [self-hosted, b300]
+    timeout-minutes: 180
+    env:
+      CONTAINER: zufa_sglang
+      REPO: /home/zufayu/ClaudeSkillsE2EPerf
+      MODEL_FP4: /models/DeepSeek-R1-0528-NVFP4-v2
+      RESULT_DIR: results/b300_dsr_fp4/b300_dsr_fp4_mtp0_ep8_tp8_sglang059_profiling
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Verify container
+        run: |
+          docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2
+          docker exec $CONTAINER python3 -c 'import sglang; print(f"SGLang {sglang.__version__}")'
+
+      - name: Get container image name
+        run: echo "IMAGE=$(docker inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: Clean old results
+        run: docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true'
+
+      - name: "Torch trace capture (chat c=4, TP8 EP8)"
+        run: docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_trace.sh --model $MODEL_FP4 --tp 8 --ep 8 --scenario chat --concurrency 4 --env sglang059 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'
+
+      - name: Show trace results
+        if: always()
+        run: |
+          ls -lh $REPO/$RESULT_DIR/*.json.gz 2>/dev/null | head -10 || echo 'No trace files'
+          cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'
+
+      - name: "Fix overlapping kernels in trace"
+        if: always()
+        run: |
+          TRACE=$(ls $REPO/$RESULT_DIR/*TP-0-EP-0*.trace.json.gz 2>/dev/null | grep -v serialized | grep -v '.fix.' | head -1)
+          if [ -n "$TRACE" ]; then
+            docker exec $CONTAINER bash -c "cd $REPO && python3 scripts/fix_torch_trace_pro.py $TRACE"
+          else
+            echo "No trace file found"
+          fi
+
+      - name: "Run trace_layer_detail.py analysis"
+        if: always()
+        run: |
+          TRACE=$(ls $REPO/$RESULT_DIR/*TP-0-EP-0*.fix.json.gz 2>/dev/null | head -1)
+          if [ -n "$TRACE" ]; then
+            docker exec $CONTAINER bash -c "cd $REPO && python3 scripts/trace_layer_detail.py $TRACE --output-dir ./$RESULT_DIR"
+          else
+            echo "No fixed trace file found for analysis"
+          fi
+
+      - name: Show CSV
+        if: always()
+        run: |
+          cat $REPO/$RESULT_DIR/layer_kernel_avg.csv 2>/dev/null || echo 'No CSV'
+          cat $REPO/$RESULT_DIR/allreduce_fusion_dist.csv 2>/dev/null | head -20 || echo 'No allreduce CSV'
+
+      - name: Git commit and push results
+        if: always()
+        run: |
+          docker exec $CONTAINER bash -c 'chown -R $(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'
+          cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B300 CI'
+          cd $REPO && git reset HEAD 2>/dev/null; for ext in log yml jsonl json md csv; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done; git diff --cached --name-only
+          cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B300 SGLang FP4 TP=8 EP=8 profiling (chat c=4)' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi
+
+      - name: Show final state
+        if: always()
+        run: cd $REPO && git log --oneline -3
