@@ -88,19 +88,17 @@ jobs:
       - name: Find and inject libcuinj64.so for NCU attach mode
         run: |
           echo "=== Search host for libcuinj64.so ==="
-          HOST_LIB=$(ssh $NODE "find /usr -name 'libcuinj64.so' 2>/dev/null | head -1")
+          echo "Known nsight-compute install: /opt/nvidia/nsight-compute"
+          ssh $NODE "ls /opt/nvidia/nsight-compute/ 2>/dev/null | head -10"
+          ssh $NODE "find /opt/nvidia/nsight-compute -name 'libcuinj64*' 2>/dev/null"
+          HOST_LIB=$(ssh $NODE "find /opt/nvidia /usr -name 'libcuinj64*' 2>/dev/null | head -1")
           if [ -z "$HOST_LIB" ]; then
-            echo "Not in /usr, searching broader..."
-            HOST_LIB=$(ssh $NODE "find /opt /usr/local -name 'libcuinj64.so' 2>/dev/null | head -1")
-          fi
-          if [ -z "$HOST_LIB" ]; then
-            echo "WARNING: libcuinj64.so not found on host. NCU attach mode will fail."
-            echo "Searching for any nsight-compute directory..."
-            ssh $NODE "find /usr /opt -type d -name 'nsight-compute*' 2>/dev/null | head -5"
-            ssh $NODE "dpkg -l 2>/dev/null | grep -i nsight || rpm -qa 2>/dev/null | grep -i nsight || echo 'No nsight packages found'"
+            echo "Still not found by name. Listing target dirs..."
+            ssh $NODE "find /opt/nvidia/nsight-compute -type d -name 'target' 2>/dev/null"
+            ssh $NODE "find /opt/nvidia/nsight-compute -type d 2>/dev/null | head -20"
+            ssh $NODE "find /opt/nvidia/nsight-compute -name '*.so' 2>/dev/null | head -20"
           else
-            echo "Found on host: $HOST_LIB"
-            HOST_DIR=$(ssh $NODE "dirname $HOST_LIB")
+            echo "Found: $HOST_LIB"
             echo "Copying into container..."
             ssh $NODE "docker cp $HOST_LIB $CONTAINER:/usr/local/lib/libcuinj64.so"
             echo "Verify in container:"
