@@ -308,15 +308,22 @@ NCU_OPTS+=(--section Nvlink --section Nvlink_Tables --section Nvlink_Topology)
 
 if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     # ── Attach mode (serve only) ──────────────────────────────────────────
-    # 1. Start server normally (no ncu involvement at startup)
-    # 2. Warmup to steady state
-    # 3. Find GPU worker PID for rank 0
-    # 4. Attach ncu via CUDA_INJECTION64_PATH
-    # 5. Send benchmark requests → ncu captures decode kernels
-    # 6. Detach and collect .ncu-rep
+    # Uses CUDA_INJECTION64_PATH to pre-inject NCU library at server startup.
+    # The injection library loads in passthrough mode (no profiling overhead).
+    # After server is ready + warmed up, `ncu --mode attach` connects to the
+    # injection library's IPC endpoint and triggers profiling.
     #
     # This bypasses IPC timeout issues that crash multi-TP frameworks
-    # (e.g., TRT-LLM's _create_ipc_executor) under ncu launch mode.
+    # (e.g., TRT-LLM's _create_ipc_executor) under ncu launch mode,
+    # because the injection library in passthrough mode has negligible overhead.
+    #
+    # Flow:
+    #   1. Query NCU injection library path
+    #   2. Start server with CUDA_INJECTION64_PATH (passive injection)
+    #   3. Wait for server ready + warmup to steady state
+    #   4. ncu --mode attach (connects to injection IPC, starts profiling)
+    #   5. Send benchmark requests → ncu captures decode kernels
+    #   6. Collect .ncu-rep
 
     # Kill any leftover server and free GPU/port
     log "Cleaning up leftover processes..."
@@ -328,12 +335,26 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     log "GPU processes after cleanup:"
     nvidia-smi --query-compute-apps=pid,name,used_memory --format=csv,noheader 2>/dev/null | head -5 || echo "  (none)"
 
-    log "=== Attach mode: Phase 2a — Start server normally ==="
+    # Phase 2a: Query injection path and start server with passive injection
+    log "=== Attach mode: Phase 2a — Start server with NCU injection (passive) ==="
+    NCU_INJECTION_PATH=$(ncu --query-injection-path 2>/dev/null || true)
+    if [[ -z "$NCU_INJECTION_PATH" ]]; then
+        log "ERROR: ncu --query-injection-path returned empty"
+        log "  Trying fallback paths..."
+        for p in /usr/local/cuda/nsight-compute/host/linux-desktop-glibc_2_11_3-x64/libcuinj64.so /usr/local/cuda/extras/CUPTI/lib64/libcuinj64.so; do
+            if [[ -f "$p" ]]; then NCU_INJECTION_PATH="$p"; break; fi
+        done
+    fi
+    if [[ -z "$NCU_INJECTION_PATH" ]]; then
+        log "ERROR: Could not find NCU injection library"
+        exit 1
+    fi
+    log "NCU injection library: $NCU_INJECTION_PATH"
 
-    # Launch server using --server-only: starts server and blocks (no warmup/benchmark)
+    # Launch server with injection library (passive — no profiling yet)
     ATTACH_SERVER_CMD="$INFER_CMD --server-only"
-    log "Launching server (no ncu wrapper): $ATTACH_SERVER_CMD"
-    $ATTACH_SERVER_CMD &
+    log "Launching server with CUDA_INJECTION64_PATH: $ATTACH_SERVER_CMD"
+    CUDA_INJECTION64_PATH="$NCU_INJECTION_PATH" $ATTACH_SERVER_CMD &
     ATTACH_SERVER_PID=$!
     log "Server launcher PID=$ATTACH_SERVER_PID"
 
@@ -346,6 +367,10 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
             log "Server is ready (${ATTACH_WAIT}s)"
             break
         fi
+        if ! kill -0 $ATTACH_SERVER_PID 2>/dev/null; then
+            log "ERROR: Server process died during startup"
+            exit 1
+        fi
         sleep 5
         ATTACH_WAIT=$((ATTACH_WAIT + 5))
         if [[ $ATTACH_WAIT -ge $ATTACH_TIMEOUT ]]; then
@@ -356,8 +381,7 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
         [[ $((ATTACH_WAIT % 30)) -eq 0 ]] && log "  Still waiting... (${ATTACH_WAIT}s)"
     done
 
-    # Warmup to reach steady state (CUDA graphs compiled, caches warm)
-    # Use benchmark_serving directly (NOT ncu_infer.py which has its own lifecycle)
+    # Phase 2b: Warmup to steady state
     case "$SCENARIO" in
         chat)      ATTACH_ISL=1024; ATTACH_OSL=1024 ;;
         reasoning) ATTACH_ISL=1024; ATTACH_OSL=8192 ;;
@@ -366,57 +390,15 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     ATTACH_WARMUP_PROMPTS=$((CONCURRENCY * 2))
     log "=== Attach mode: Phase 2b — Warmup ($ATTACH_WARMUP_PROMPTS prompts, c=$CONCURRENCY) ==="
     python3 -m sglang.bench_serving --model "$MODEL" --port "$PORT" --backend vllm --dataset-name random --random-input-len "$ATTACH_ISL" --random-output-len "$ATTACH_OSL" --random-range-ratio 0.8 --num-prompts "$ATTACH_WARMUP_PROMPTS" --max-concurrency "$CONCURRENCY" --warmup-requests 0 --output-file /tmp/ncu_warmup.jsonl 2>&1 || log "WARNING: warmup benchmark returned non-zero"
-    log "Warmup complete."
+    log "Warmup complete. Server in steady state."
 
-    # Find the GPU worker process for rank 0
-    log "=== Attach mode: Phase 2c — Find GPU worker PID ==="
-    sleep 2
+    # Phase 2c: Attach NCU profiler
+    log "=== Attach mode: Phase 2c — Attach NCU profiler ==="
 
-    # Debug: show all GPU processes and sglang processes
-    log "GPU compute processes:"
-    nvidia-smi --query-compute-apps=pid,name,used_memory --format=csv,noheader 2>/dev/null || log "  nvidia-smi query failed"
-    log "SGLang processes:"
-    pgrep -af "sglang" 2>/dev/null || log "  no sglang processes found"
-    log "Server launcher PID=$ATTACH_SERVER_PID alive=$(kill -0 $ATTACH_SERVER_PID 2>/dev/null && echo yes || echo no)"
-
-    # Temporarily disable set -e for PID discovery (pipefail can cause issues)
-    set +e
-    TARGET_PID=""
-    if [[ "$BACKEND" == "sglang" ]]; then
-        TARGET_PID=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')
-        if [[ -z "$TARGET_PID" ]]; then
-            TARGET_PID=$(pgrep -f "sglang.*worker" 2>/dev/null | head -1)
-        fi
-        if [[ -z "$TARGET_PID" ]]; then
-            TARGET_PID=$(pgrep -f "python.*sglang" 2>/dev/null | head -1)
-        fi
-    elif [[ "$BACKEND" == "trtllm" ]]; then
-        TARGET_PID=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')
-    fi
-    set -e
-
-    if [[ -z "$TARGET_PID" ]]; then
-        log "ERROR: Could not find GPU worker PID"
-        log "  nvidia-smi output:"
-        nvidia-smi --query-compute-apps=pid,name --format=csv,noheader 2>/dev/null | head -10
-        log "  sglang processes:"
-        pgrep -af "sglang" 2>/dev/null | head -10
-        kill $ATTACH_SERVER_PID 2>/dev/null || true
-        exit 1
-    fi
-
-    log "Target PID for ncu attach: $TARGET_PID"
-    log "  Process: $(ps -p $TARGET_PID -o args= 2>/dev/null || echo 'unknown')"
-
-    # Attach ncu to the target process
-    log "=== Attach mode: Phase 2d — Attach ncu to PID $TARGET_PID ==="
-
-    # Remove launch-skip/launch-count from NCU_OPTS for attach mode
-    # In attach mode, we profile ALL kernels during the benchmark window
-    # (server is already warmed up, so all kernels are decode-phase)
     NCU_ATTACH_OPTS=(
-        --mode launch-and-attach
+        --mode attach
         --target-processes all
+        --replay-mode application
         --graph-profiling node
         --pm-sampling-interval 1000
         -k "regex:$KERNEL_REGEX"
@@ -433,35 +415,41 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     fi
     NCU_ATTACH_OPTS+=(--section Nvlink --section Nvlink_Tables --section Nvlink_Topology)
 
-    log "ncu command: ncu ${NCU_ATTACH_OPTS[*]} --target-pid $TARGET_PID"
+    log "ncu command: ncu ${NCU_ATTACH_OPTS[*]}"
 
-    # Start ncu in background — it attaches and waits for kernel launches
-    ncu "${NCU_ATTACH_OPTS[@]}" --target-pid "$TARGET_PID" > "$NCU_DIR/${REPORT_NAME}.log" 2>&1 &
+    # Start ncu attach in background — it connects to the injection library IPC
+    ncu "${NCU_ATTACH_OPTS[@]}" > "$NCU_DIR/${REPORT_NAME}.log" 2>&1 &
     NCU_PID=$!
     log "ncu attach PID=$NCU_PID"
     sleep 5
 
     # Verify ncu is still running
     if ! kill -0 $NCU_PID 2>/dev/null; then
-        log "ERROR: ncu attach failed immediately"
-        tail -20 "$NCU_DIR/${REPORT_NAME}.log" 2>/dev/null
+        log "ERROR: ncu attach failed immediately. Log:"
+        cat "$NCU_DIR/${REPORT_NAME}.log" 2>/dev/null | tail -20
+        log "Falling back: trying ncu --mode launch-and-attach with server restart..."
+        # If attach fails, we'll exit and let the user decide
         kill $ATTACH_SERVER_PID 2>/dev/null || true
         exit 1
     fi
+    log "ncu attached successfully, waiting for benchmark to trigger kernels..."
 
-    # Send benchmark requests to trigger decode kernels
+    # Phase 2d: Send benchmark requests to trigger decode kernels
     NUM_PROMPTS_ACTUAL=${NUM_PROMPTS}
     [[ "$NUM_PROMPTS_ACTUAL" -eq 0 ]] && NUM_PROMPTS_ACTUAL=$((CONCURRENCY * 10))
-    log "=== Attach mode: Phase 2e — Benchmark ($NUM_PROMPTS_ACTUAL prompts) ==="
+    log "=== Attach mode: Phase 2d — Benchmark ($NUM_PROMPTS_ACTUAL prompts, c=$CONCURRENCY) ==="
 
-    log "Running: sglang.bench_serving --num-prompts $NUM_PROMPTS_ACTUAL --max-concurrency $CONCURRENCY"
     python3 -m sglang.bench_serving --model "$MODEL" --port "$PORT" --backend vllm --dataset-name random --random-input-len "$ATTACH_ISL" --random-output-len "$ATTACH_OSL" --random-range-ratio 0.8 --num-prompts "$NUM_PROMPTS_ACTUAL" --max-concurrency "$CONCURRENCY" --warmup-requests 0 --output-file /tmp/ncu_profiled.jsonl 2>&1 || log "WARNING: benchmark returned non-zero"
 
     # Wait for ncu to finish collecting
-    log "Waiting for ncu to complete..."
+    log "Waiting for ncu to complete (may take a while for kernel replay)..."
     wait $NCU_PID 2>/dev/null
     NCU_EXIT=$?
     log "ncu exited with code $NCU_EXIT"
+
+    # Show ncu log tail
+    log "ncu log (last 20 lines):"
+    tail -20 "$NCU_DIR/${REPORT_NAME}.log" 2>/dev/null
 
     # Cleanup server
     log "Stopping server..."
