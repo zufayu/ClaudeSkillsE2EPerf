@@ -76,27 +76,38 @@ jobs:
           set -x
           AITER_ROOT=$(python3 -c "import aiter; print(aiter.__path__[0])")
           echo "AITER_ROOT=$AITER_ROOT"
-          echo "=== aiter.dtypes ==="
-          python3 -c "from aiter import dtypes; [print(f'  {k} = {getattr(dtypes, k)}') for k in sorted(dir(dtypes)) if not k.startswith('_')]"
-          echo "=== gemm_op_a8w8.py lines 340-400 ==="
-          sed -n '340,400p' $AITER_ROOT/ops/gemm_op_a8w8.py 2>/dev/null
-          echo "=== gemm_op_a8w8.py lines 1-40 ==="
-          head -40 $AITER_ROOT/ops/gemm_op_a8w8.py 2>/dev/null
-          echo "=== batched_gemm_op_a8w8.py lines 90-130 ==="
-          sed -n '90,130p' $AITER_ROOT/ops/batched_gemm_op_a8w8.py 2>/dev/null
-          echo "=== Quick test: CK variant with dtypes.fp8 ==="
+          echo "=== batched_gemm_op_a8w8.py full ==="
+          cat $AITER_ROOT/ops/batched_gemm_op_a8w8.py 2>/dev/null
+          echo "=== Quick test: batched_gemm_a8w8_CK with int8 ==="
           python3 -c "
           import torch; from aiter import dtypes; import aiter
           print('dtypes.fp8 =', dtypes.fp8)
-          print('dtypes.bf16 =', dtypes.bf16)
-          XQ = torch.randn(4, 8, device='cuda', dtype=dtypes.fp8)
-          WQ = torch.randn(8, 8, device='cuda', dtype=dtypes.fp8)
-          xs = torch.ones(4, 1, device='cuda', dtype=torch.float32)
-          ws = torch.ones(1, 8, device='cuda', dtype=torch.float32)
+          B,M,N,K = 32,64,128,512
+          # Try int8 for batched gemm (kernel says 'should both be int8')
+          XQ = torch.randint(-128, 127, (B,M,K), dtype=torch.int8, device='cuda')
+          WQ = torch.randint(-128, 127, (B,N,K), dtype=torch.int8, device='cuda')
+          xs = torch.ones(B,M,1, device='cuda', dtype=torch.float32)
+          ws = torch.ones(B,1,N, device='cuda', dtype=torch.float32)
           print('XQ dtype=', XQ.dtype, 'shape=', XQ.shape)
-          result = aiter.gemm_a8w8_CK(XQ, WQ, xs, ws, None, dtypes.bf16)
-          print('SUCCESS: result=', result.shape, result.dtype)
-          " 2>&1 || echo "CK test failed"
+          result = aiter.batched_gemm_a8w8_CK(XQ, WQ, xs, ws, None, dtypes.bf16)
+          print('INT8 SUCCESS:', result.shape, result.dtype)
+          " 2>&1 || echo "int8 batched test failed"
+          echo "=== Quick test: batched_gemm_a8w8 low-level with fp8 view as int8 ==="
+          python3 -c "
+          import torch; from aiter import dtypes; import aiter
+          B,M,N,K = 32,64,128,512
+          # Create as fp8 then view as int8 for the kernel
+          XQ_fp8 = torch.randint(0, 127, (B,M,K), dtype=torch.uint8, device='cuda').view(dtypes.fp8)
+          WQ_fp8 = torch.randint(0, 127, (B,N,K), dtype=torch.uint8, device='cuda').view(dtypes.fp8)
+          XQ_i8 = XQ_fp8.view(torch.int8)
+          WQ_i8 = WQ_fp8.view(torch.int8)
+          xs = torch.ones(B,M,1, device='cuda', dtype=torch.float32)
+          ws = torch.ones(B,1,N, device='cuda', dtype=torch.float32)
+          Out = torch.empty(B,M,N, device='cuda', dtype=dtypes.bf16)
+          print('XQ_i8 dtype=', XQ_i8.dtype, 'shape=', XQ_i8.shape)
+          result = aiter.batched_gemm_a8w8(XQ_i8, WQ_i8, xs, ws, Out, None, 0)
+          print('FP8->INT8 SUCCESS:', result.shape, result.dtype)
+          " 2>&1 || echo "fp8->int8 batched test failed"
           SCRIPT_EOF
           chmod +x /tmp/aiter_discover.sh
           podman cp /tmp/aiter_discover.sh $CONTAINER:/tmp/aiter_discover.sh

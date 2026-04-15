@@ -164,17 +164,20 @@ def benchmark_gemm(name, M, N, K, warmup=WARMUP, iters=ITERS):
 
 def benchmark_batched_gemm(name, B_count, M, N, K, warmup=WARMUP, iters=ITERS):
     """Benchmark aiter batched GEMM a8w8.
-    API: aiter.batched_gemm_a8w8_CK(XQ, WQ, x_scale, w_scale, bias=None, dtype=bf16, splitK=None)
+    Low-level kernel requires int8 tensors (reinterprets as fp8 internally).
+    Use batched_gemm_a8w8() directly with pre-allocated Out.
     """
-    XQ = make_tensor((B_count, M, K))
-    WQ = make_tensor((B_count, N, K))
+    # Create fp8 data as int8 (kernel does fp8 interpretation internally)
+    XQ = torch.randint(-128, 127, (B_count, M, K), dtype=torch.int8, device="cuda")
+    WQ = torch.randint(-128, 127, (B_count, N, K), dtype=torch.int8, device="cuda")
     x_scale = torch.ones(B_count, M, 1, device="cuda", dtype=torch.float32)
     w_scale = torch.ones(B_count, 1, N, device="cuda", dtype=torch.float32)
+    Out = torch.empty(B_count, M, N, device="cuda", dtype=OUT_DTYPE)
 
     print(f"  {name}: XQ={XQ.shape} {XQ.dtype}, WQ={WQ.shape} {WQ.dtype}")
 
-    result = aiter.batched_gemm_a8w8_CK(XQ, WQ, x_scale, w_scale, None, OUT_DTYPE)
-    call_fn = lambda: aiter.batched_gemm_a8w8_CK(XQ, WQ, x_scale, w_scale, None, OUT_DTYPE)
+    result = aiter.batched_gemm_a8w8(XQ, WQ, x_scale, w_scale, Out, None, 0)
+    call_fn = lambda: aiter.batched_gemm_a8w8(XQ, WQ, x_scale, w_scale, Out, None, 0)
     print(f"  {name}: output={result.shape} {result.dtype}")
 
     torch.cuda.synchronize()
@@ -219,11 +222,17 @@ if r: results.append(r)
 # Batched GEMMs
 print()
 print("--- Batched GEMM (aiter.batched_gemm_a8w8) ---")
-r = benchmark_batched_gemm("k_up", B_count=32, M=64, N=128, K=512)
-if r: results.append(r)
+try:
+    r = benchmark_batched_gemm("k_up", B_count=32, M=64, N=128, K=512)
+    if r: results.append(r)
+except Exception as e:
+    print(f"  k_up FAILED: {e}")
 
-r = benchmark_batched_gemm("uv", B_count=32, M=64, N=128, K=512)
-if r: results.append(r)
+try:
+    r = benchmark_batched_gemm("uv", B_count=32, M=64, N=128, K=512)
+    if r: results.append(r)
+except Exception as e:
+    print(f"  uv FAILED: {e}")
 
 # Save CSV
 csv_path = os.path.join(RESULT_DIR, f"aiter_gemm_{TAG}.csv")
