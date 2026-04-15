@@ -1,0 +1,75 @@
+name: "MI355X Check Model Identity"
+on:
+  workflow_dispatch:
+
+jobs:
+  check-models:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 10
+    steps:
+      - name: Compare FP4 model directories
+        run: |
+          MODELS=(
+            "/shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4"
+            "/shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4"
+            "/shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8"
+            "/shared/data/amd_int/models/DeepSeek-R1-0528-MoE-MXFP4-Attn-MTP-PTPC-FP8"
+          )
+
+          echo "=== Directory type (symlink/real) ==="
+          for m in "${MODELS[@]}"; do
+            if [ -L "$m" ]; then
+              echo "$(basename $m) -> SYMLINK to $(readlink -f $m)"
+            elif [ -d "$m" ]; then
+              echo "$(basename $m) -> real directory"
+            else
+              echo "$(basename $m) -> NOT FOUND"
+            fi
+          done
+
+          echo ""
+          echo "=== File counts and total sizes ==="
+          for m in "${MODELS[@]}"; do
+            echo -n "$(basename $m): "
+            FC=$(ls "$m"/*.safetensors 2>/dev/null | wc -l)
+            SZ=$(du -sh "$m" 2>/dev/null | cut -f1)
+            echo "safetensors=$FC, total=$SZ"
+          done
+
+          echo ""
+          echo "=== config.json quantization_config diff ==="
+          for m in "${MODELS[@]}"; do
+            echo "--- $(basename $m) ---"
+            python3 -c "
+          import json
+          with open('$m/config.json') as f:
+              c = json.load(f)
+          qc = c.get('quantization_config', {})
+          print(f'  quantization_config: {json.dumps(qc, indent=4)[:500]}')
+          print(f'  architectures: {c.get(\"architectures\", \"?\")}')
+          print(f'  num_hidden_layers: {c.get(\"num_hidden_layers\", \"?\")}')
+          " 2>/dev/null || echo "  (no config.json or parse error)"
+          done
+
+          echo ""
+          echo "=== Inode comparison of model-00001-of-*.safetensors ==="
+          for m in "${MODELS[@]}"; do
+            FIRST=$(ls "$m"/model-00001-of-*.safetensors 2>/dev/null | head -1)
+            if [ -n "$FIRST" ]; then
+              INODE=$(stat -c %i "$FIRST" 2>/dev/null)
+              SIZE=$(stat -c %s "$FIRST" 2>/dev/null)
+              echo "$(basename $m): $(basename $FIRST) inode=$INODE size=$SIZE"
+            else
+              echo "$(basename $m): no model-00001 file"
+            fi
+          done
+
+          echo ""
+          echo "=== Quick MD5 check (first 1MB of first shard) ==="
+          for m in "${MODELS[@]}"; do
+            FIRST=$(ls "$m"/model-00001-of-*.safetensors 2>/dev/null | head -1)
+            if [ -n "$FIRST" ]; then
+              HASH=$(head -c 1048576 "$FIRST" | md5sum | cut -d' ' -f1)
+              echo "$(basename $m): first-1MB md5=$HASH"
+            fi
+          done
