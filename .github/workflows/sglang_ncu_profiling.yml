@@ -1,0 +1,123 @@
+name: "SGLang NCU Profiling (Attach Mode)"
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "GPU platform"
+        type: choice
+        options:
+          - b200
+        default: b200
+      tp:
+        description: "Tensor parallel"
+        type: string
+        default: "4"
+      ep:
+        description: "Expert parallel"
+        type: string
+        default: "4"
+      concurrency:
+        description: "Concurrency"
+        type: string
+        default: "4"
+      scenario:
+        description: "Benchmark scenario"
+        type: choice
+        options:
+          - chat
+          - reasoning
+          - summarize
+        default: chat
+      ncu_set:
+        description: "NCU section set"
+        type: choice
+        options:
+          - full
+          - detailed
+          - basic
+          - pmsampling
+        default: basic
+      launch_count:
+        description: "Number of kernel launches to capture"
+        type: string
+        default: "50"
+      ncu_mode:
+        description: "NCU profiling mode"
+        type: choice
+        options:
+          - attach
+          - launch
+        default: attach
+
+jobs:
+  sglang-ncu-profiling:
+    runs-on: [self-hosted, "${{ inputs.platform }}"]
+    timeout-minutes: 240
+    env:
+      PLATFORM: ${{ inputs.platform }}
+      TP: ${{ inputs.tp }}
+      EP: ${{ inputs.ep }}
+      CONC: ${{ inputs.concurrency }}
+      SCENARIO: ${{ inputs.scenario }}
+      NCU_SET: ${{ inputs.ncu_set }}
+      LAUNCH_COUNT: ${{ inputs.launch_count }}
+      NCU_MODE: ${{ inputs.ncu_mode }}
+    steps:
+      - name: Setup platform config
+        run: |
+          if [ "$PLATFORM" = "b200" ]; then
+            echo "NODE=hungry-hippo-fin-03-2" >> $GITHUB_ENV
+            echo "CONTAINER=zufa_sglang" >> $GITHUB_ENV
+            echo "REPO=/home/ubuntu/zufa/ClaudeSkillsE2EPerf" >> $GITHUB_ENV
+            echo "MODEL_FP4=/SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2" >> $GITHUB_ENV
+            echo "USE_SSH=true" >> $GITHUB_ENV
+          fi
+          echo "RESULT_DIR=results/${PLATFORM}_dsr_fp4/${PLATFORM}_dsr_fp4_mtp0_ep${EP}_tp${TP}_sglang059_ncu" >> $GITHUB_ENV
+
+      - name: Sync repo
+        run: |
+          ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+
+      - name: Verify container and NCU
+        run: |
+          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2"
+          ssh $NODE "docker exec $CONTAINER python3 -c 'import sglang; print(f\"SGLang {sglang.__version__}\")'"
+          ssh $NODE "docker exec $CONTAINER ncu --version 2>/dev/null | head -1 || echo 'NCU not found in container'"
+          ssh $NODE "docker exec $CONTAINER which ncu 2>/dev/null || echo 'ncu not in PATH'"
+
+      - name: Clean old results
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true' && rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true"
+
+      - name: "NCU profiling (${{ inputs.ncu_mode }} mode, ${{ inputs.scenario }} c=${{ inputs.concurrency }}, TP${{ inputs.tp }} EP${{ inputs.ep }})"
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_ncu_trace.sh --model $MODEL_FP4 --backend sglang --mode serve --tp $TP --ep $EP --quantization modelopt_fp4 --scenario $SCENARIO --concurrency $CONC --ncu-set $NCU_SET --ncu-mode $NCU_MODE --launch-count $LAUNCH_COUNT --result-dir ./$RESULT_DIR'" 2>&1 | tail -100
+
+      - name: Show NCU results
+        if: always()
+        run: |
+          ssh $NODE "ls -lh $REPO/$RESULT_DIR/ncu/*.ncu-rep 2>/dev/null || echo 'No .ncu-rep files'"
+          ssh $NODE "tail -30 $REPO/$RESULT_DIR/ncu/ncu_decode.log 2>/dev/null || echo 'No ncu log'"
+
+      - name: Export NCU summary CSV
+        if: always()
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'NCU_REP=\$(ls $REPO/$RESULT_DIR/ncu/*.ncu-rep 2>/dev/null | head -1); if [ -n \"\$NCU_REP\" ]; then ncu -i \$NCU_REP --page details --csv > $REPO/$RESULT_DIR/ncu/ncu_details.csv 2>/dev/null && echo \"Exported \$(wc -l < $REPO/$RESULT_DIR/ncu/ncu_details.csv) rows to ncu_details.csv\"; else echo \"No .ncu-rep to export\"; fi'"
+
+      - name: Show kernel summary
+        if: always()
+        run: |
+          ssh $NODE "head -20 $REPO/$RESULT_DIR/ncu/ncu_details.csv 2>/dev/null || echo 'No CSV'"
+
+      - name: Git commit and push results
+        if: always()
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
+          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name '${{ inputs.platform }} CI'"
+          ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; for ext in log yml csv md; do git add -f $RESULT_DIR/*.\$ext $RESULT_DIR/ncu/*.\$ext 2>/dev/null; done; git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: ${{ inputs.platform }} SGLang NCU ${{ inputs.ncu_mode }} TP=${{ inputs.tp }} EP=${{ inputs.ep }} (${{ inputs.scenario }} c=${{ inputs.concurrency }})' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
+
+      - name: Show final state
+        if: always()
+        run: |
+          ssh $NODE "cd $REPO && git log --oneline -3"

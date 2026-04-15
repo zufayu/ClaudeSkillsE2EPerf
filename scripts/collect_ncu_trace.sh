@@ -46,6 +46,7 @@ EP=4
 QUANTIZATION=""
 RESULT_DIR=""
 NCU_SET="full"             # full | detailed | basic | pmsampling
+NCU_MODE="launch"          # launch | attach
 LAUNCH_SKIP=""             # auto-detect from nsys dry-run if empty
 LAUNCH_COUNT=50            # kernels to capture
 REPORT_NAME="ncu_decode"
@@ -92,6 +93,10 @@ Options:
   --ep N                  Expert parallel size (default: 4)
   --quantization Q        Quantization method (e.g. modelopt_fp4)
   --ncu-set SET           full|detailed|basic|pmsampling (default: full)
+  --ncu-mode MODE         launch|attach (default: launch)
+                          launch: ncu wraps the process (traditional)
+                          attach: start server normally, attach ncu after warmup
+                          (bypasses IPC timeout issues with multi-TP frameworks)
   --launch-skip N         Skip first N matching kernel launches (auto if omitted)
   --launch-count N        Number of kernel launches to capture (default: 50)
   --skip-dry-run          Skip nsys dry-run, requires --launch-skip to be set
@@ -127,6 +132,7 @@ while [[ $# -gt 0 ]]; do
         --quantization)     QUANTIZATION="$2"; shift 2 ;;
         --result-dir)       RESULT_DIR="$2"; shift 2 ;;
         --ncu-set)          NCU_SET="$2"; shift 2 ;;
+        --ncu-mode)         NCU_MODE="$2"; shift 2 ;;
         --launch-skip)      LAUNCH_SKIP="$2"; shift 2 ;;
         --launch-count)     LAUNCH_COUNT="$2"; shift 2 ;;
         --skip-dry-run)     SKIP_DRY_RUN=true; shift ;;
@@ -161,6 +167,7 @@ log "  Nsight Compute Trace Capture"
 log "============================================================"
 log "  Backend:       $BACKEND"
 log "  Mode:          $MODE"
+log "  NCU Mode:      $NCU_MODE"
 log "  Model:         $MODEL"
 log "  TP=$TP  EP=$EP  quant=${QUANTIZATION:-none}"
 if [[ "$MODE" == "serve" ]]; then
@@ -202,7 +209,9 @@ log "  $INFER_CMD"
 
 # ======================== Phase 1: nsys dry-run ===============================
 
-if [[ -z "$LAUNCH_SKIP" ]] && [[ "$SKIP_DRY_RUN" != "true" ]]; then
+if [[ "$NCU_MODE" == "attach" ]]; then
+    log "Attach mode: skipping Phase 1 nsys dry-run (warmup done after server start)"
+elif [[ -z "$LAUNCH_SKIP" ]] && [[ "$SKIP_DRY_RUN" != "true" ]]; then
     log ""
     log "============================================================"
     log "  Phase 1: nsys dry-run → find steady-state decode region"
@@ -263,7 +272,7 @@ fi
 
 [[ -z "$LAUNCH_SKIP" ]] && LAUNCH_SKIP=0
 
-if [[ "$LAUNCH_SKIP" -eq 0 ]] && [[ "$MODE" == "serve" ]]; then
+if [[ "$LAUNCH_SKIP" -eq 0 ]] && [[ "$MODE" == "serve" ]] && [[ "$NCU_MODE" != "attach" ]]; then
     log "WARNING: launch-skip=0 in serve mode — ncu will profile from server startup (likely wrong)"
     log "  Consider using --launch-skip N or --nsys-rep to provide skip value"
 fi
@@ -297,24 +306,170 @@ fi
 # Always add NVLink sections for multi-GPU configurations
 NCU_OPTS+=(--section Nvlink --section Nvlink_Tables --section Nvlink_Topology)
 
-if [[ "$MODE" == "serve" ]]; then
-    # Serve mode: ncu must wrap the server process (or its parent) because
-    # --target-processes all only profiles CHILD processes of the wrapped command.
-    # ncu_infer.py launches the server as a subprocess, so ncu sees server GPU kernels.
+if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
+    # ── Attach mode (serve only) ──────────────────────────────────────────
+    # 1. Start server normally (no ncu involvement at startup)
+    # 2. Warmup to steady state
+    # 3. Find GPU worker PID for rank 0
+    # 4. Attach ncu via CUDA_INJECTION64_PATH
+    # 5. Send benchmark requests → ncu captures decode kernels
+    # 6. Detach and collect .ncu-rep
     #
-    # Server startup under ncu is slow (ncu counts each kernel launch for --launch-skip)
-    # but the counting overhead is modest. Set NCU_SERVER_TIMEOUT=3600 to allow enough time.
-    #
-    # Phase 1 nsys dry-run already determined the steady-state decode region
-    # (launch-skip), so ncu skips startup+warmup kernels and profiles decode only.
+    # This bypasses IPC timeout issues that crash multi-TP frameworks
+    # (e.g., TRT-LLM's _create_ipc_executor) under ncu launch mode.
 
-    # Kill any leftover server (avoid pkill -f which can kill the calling shell)
+    # Kill any leftover server
+    pids=$(pgrep -f "python3.*sglang.launch_server" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
+    pids=$(pgrep -f "trtllm-serve" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
+    sleep 2
+
+    log "=== Attach mode: Phase 2a — Start server normally ==="
+
+    # Build server launch command (reuse ncu_infer.py but only for server launch + warmup)
+    ATTACH_SERVER_CMD="$INFER_CMD --skip-warmup"
+    log "Launching server (no ncu wrapper): $ATTACH_SERVER_CMD"
+    $ATTACH_SERVER_CMD &
+    ATTACH_SERVER_PID=$!
+    log "Server launcher PID=$ATTACH_SERVER_PID"
+
+    # Wait for server ready via health endpoint
+    log "Waiting for server to be ready..."
+    ATTACH_WAIT=0
+    ATTACH_TIMEOUT=600
+    while true; do
+        if curl -sf "http://localhost:${PORT}/health" > /dev/null 2>&1; then
+            log "Server is ready (${ATTACH_WAIT}s)"
+            break
+        fi
+        sleep 5
+        ATTACH_WAIT=$((ATTACH_WAIT + 5))
+        if [[ $ATTACH_WAIT -ge $ATTACH_TIMEOUT ]]; then
+            log "ERROR: Server not ready after ${ATTACH_TIMEOUT}s"
+            kill $ATTACH_SERVER_PID 2>/dev/null || true
+            exit 1
+        fi
+        [[ $((ATTACH_WAIT % 30)) -eq 0 ]] && log "  Still waiting... (${ATTACH_WAIT}s)"
+    done
+
+    # Warmup to reach steady state (CUDA graphs compiled, caches warm)
+    ATTACH_WARMUP_PROMPTS=$((CONCURRENCY * 2))
+    log "=== Attach mode: Phase 2b — Warmup ($ATTACH_WARMUP_PROMPTS prompts, c=$CONCURRENCY) ==="
+    WARMUP_BENCH_CMD="python3 $SCRIPT_DIR/ncu_infer.py --backend $BACKEND --mode serve --model $MODEL --tp $TP --ep $EP --bench-only --skip-warmup --concurrency $CONCURRENCY --scenario $SCENARIO --port $PORT --num-prompts $ATTACH_WARMUP_PROMPTS"
+    if [[ -n "${QUANTIZATION:-}" ]]; then WARMUP_BENCH_CMD="$WARMUP_BENCH_CMD --quantization $QUANTIZATION"; fi
+    $WARMUP_BENCH_CMD || log "WARNING: warmup benchmark returned non-zero"
+    log "Warmup complete."
+
+    # Find the GPU worker process for rank 0
+    log "=== Attach mode: Phase 2c — Find GPU worker PID ==="
+    sleep 2
+
+    if [[ "$BACKEND" == "sglang" ]]; then
+        # SGLang uses torch.distributed — look for the sglang worker processes
+        # The main process is the scheduler; GPU workers are child processes
+        # Use nvidia-smi to find processes using GPU 0
+        TARGET_PID=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | head -1)
+        if [[ -z "$TARGET_PID" ]]; then
+            # Fallback: find sglang tp_worker or model_runner processes
+            TARGET_PID=$(pgrep -f "sglang.*worker" 2>/dev/null | head -1)
+        fi
+        if [[ -z "$TARGET_PID" ]]; then
+            # Fallback 2: any python process using sglang
+            TARGET_PID=$(pgrep -f "python.*sglang" 2>/dev/null | head -1)
+        fi
+    elif [[ "$BACKEND" == "trtllm" ]]; then
+        # TRT-LLM: look for the executor worker process on GPU 0
+        TARGET_PID=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | head -1)
+    fi
+
+    if [[ -z "$TARGET_PID" ]]; then
+        log "ERROR: Could not find GPU worker PID"
+        log "  nvidia-smi output:"
+        nvidia-smi --query-compute-apps=pid,name --format=csv,noheader 2>/dev/null | head -10
+        log "  sglang processes:"
+        pgrep -af "sglang" 2>/dev/null | head -10
+        kill $ATTACH_SERVER_PID 2>/dev/null || true
+        exit 1
+    fi
+
+    log "Target PID for ncu attach: $TARGET_PID"
+    log "  Process: $(ps -p $TARGET_PID -o args= 2>/dev/null || echo 'unknown')"
+
+    # Attach ncu to the target process
+    log "=== Attach mode: Phase 2d — Attach ncu to PID $TARGET_PID ==="
+
+    # Remove launch-skip/launch-count from NCU_OPTS for attach mode
+    # In attach mode, we profile ALL kernels during the benchmark window
+    # (server is already warmed up, so all kernels are decode-phase)
+    NCU_ATTACH_OPTS=(
+        --mode launch-and-attach
+        --target-processes all
+        --graph-profiling node
+        --pm-sampling-interval 1000
+        -k "regex:$KERNEL_REGEX"
+        --launch-count "$LAUNCH_COUNT"
+        -f
+        -o "$NCU_DIR/$REPORT_NAME"
+    )
+
+    # Section set
+    if [[ "$NCU_SET" == "pmsampling" ]]; then
+        NCU_ATTACH_OPTS+=(--section PmSampling --section PmSampling_WarpStates)
+    else
+        NCU_ATTACH_OPTS+=(--set "$NCU_SET")
+    fi
+    NCU_ATTACH_OPTS+=(--section Nvlink --section Nvlink_Tables --section Nvlink_Topology)
+
+    log "ncu command: ncu ${NCU_ATTACH_OPTS[*]} --target-pid $TARGET_PID"
+
+    # Start ncu in background — it attaches and waits for kernel launches
+    ncu "${NCU_ATTACH_OPTS[@]}" --target-pid "$TARGET_PID" > "$NCU_DIR/${REPORT_NAME}.log" 2>&1 &
+    NCU_PID=$!
+    log "ncu attach PID=$NCU_PID"
+    sleep 5
+
+    # Verify ncu is still running
+    if ! kill -0 $NCU_PID 2>/dev/null; then
+        log "ERROR: ncu attach failed immediately"
+        tail -20 "$NCU_DIR/${REPORT_NAME}.log" 2>/dev/null
+        kill $ATTACH_SERVER_PID 2>/dev/null || true
+        exit 1
+    fi
+
+    # Send benchmark requests to trigger decode kernels
+    NUM_PROMPTS_ACTUAL=${NUM_PROMPTS}
+    [[ "$NUM_PROMPTS_ACTUAL" -eq 0 ]] && NUM_PROMPTS_ACTUAL=$((CONCURRENCY * 10))
+    log "=== Attach mode: Phase 2e — Benchmark ($NUM_PROMPTS_ACTUAL prompts) ==="
+
+    BENCH_CMD="python3 $SCRIPT_DIR/ncu_infer.py --backend $BACKEND --mode serve --model $MODEL --tp $TP --ep $EP --bench-only --skip-warmup --concurrency $CONCURRENCY --scenario $SCENARIO --port $PORT --num-prompts $NUM_PROMPTS_ACTUAL"
+    if [[ -n "${QUANTIZATION:-}" ]]; then BENCH_CMD="$BENCH_CMD --quantization $QUANTIZATION"; fi
+    log "Running: $BENCH_CMD"
+    $BENCH_CMD || log "WARNING: benchmark returned non-zero"
+
+    # Wait for ncu to finish collecting
+    log "Waiting for ncu to complete..."
+    wait $NCU_PID 2>/dev/null
+    NCU_EXIT=$?
+    log "ncu exited with code $NCU_EXIT"
+
+    # Cleanup server
+    log "Stopping server..."
+    kill $ATTACH_SERVER_PID 2>/dev/null || true
+    wait $ATTACH_SERVER_PID 2>/dev/null || true
+    pids=$(pgrep -f "python3.*sglang.launch_server" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
+    pids=$(pgrep -f "trtllm-serve" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
+    sleep 3
+
+elif [[ "$MODE" == "serve" ]]; then
+    # ── Launch mode (serve) ───────────────────────────────────────────────
+    # ncu wraps the entire ncu_infer.py process (server + warmup + benchmark)
+
+    # Kill any leftover server
     pids=$(pgrep -f "python3.*sglang.launch_server" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
     pids=$(pgrep -f "trtllm-serve" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
     sleep 2
 
     export NCU_SERVER_TIMEOUT=3600
-    log "Serve mode: ncu wraps full ncu_infer.py (server + warmup + benchmark)"
+    log "Serve mode (launch): ncu wraps full ncu_infer.py (server + warmup + benchmark)"
     log "  NCU_SERVER_TIMEOUT=${NCU_SERVER_TIMEOUT}s for server startup under ncu"
     NCU_CMD="$INFER_CMD"
     log "Command:"
@@ -329,7 +484,7 @@ if [[ "$MODE" == "serve" ]]; then
     pids=$(pgrep -f "trtllm-serve" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
     sleep 3
 else
-    # Offline mode: ncu wraps the entire inference
+    # ── Launch mode (offline) ─────────────────────────────────────────────
     log "Command:"
     log "  ncu ${NCU_OPTS[*]} $INFER_CMD"
     log ""
