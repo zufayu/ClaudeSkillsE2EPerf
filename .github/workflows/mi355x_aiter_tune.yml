@@ -22,6 +22,7 @@ jobs:
       CONTAINER: zufa_aiter
       IMAGE: docker.io/rocm/atom:rocm7.1.1-ubuntu24.04-pytorch2.9-atom0.1.1-MI350x
       ACTION: ${{ inputs.action }}
+      RESULT_DIR: results/mi355x_aiter_gemm_tune
     steps:
       - name: Sync repo
         run: cd $REPO && git fetch origin && git reset --hard origin/main
@@ -70,143 +71,53 @@ jobs:
       - name: "Discover aiter structure"
         if: inputs.action == 'discover' || inputs.action == 'all'
         run: |
-          podman exec $CONTAINER bash -c '
-          echo "============================================================"
-          echo "  aiter Discovery"
-          echo "============================================================"
+          podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/benchmark_aiter_gemm.sh --action discover --result-dir ./${{ env.RESULT_DIR }}'
 
-          echo ""
-          echo "=== 1. aiter version and path ==="
-          python3 -c "
-          import aiter
-          print(f\"version: {aiter.__version__}\")
-          print(f\"path: {aiter.__path__}\")
-          print(f\"file: {aiter.__file__}\")
-          " 2>&1 || echo "FAILED to import aiter"
+      - name: "Benchmark baseline"
+        if: inputs.action == 'benchmark-baseline' || inputs.action == 'all'
+        run: |
+          podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/benchmark_aiter_gemm.sh --action benchmark-baseline --result-dir ./${{ env.RESULT_DIR }}'
 
-          echo ""
-          echo "=== 2. aiter install info (pip show) ==="
-          pip show aiter 2>/dev/null || echo "aiter not in pip"
+      - name: "Show baseline results"
+        if: (inputs.action == 'benchmark-baseline' || inputs.action == 'all') && always()
+        run: |
+          cat $REPO/$RESULT_DIR/aiter_gemm_baseline.csv 2>/dev/null || echo "No baseline CSV"
 
-          echo ""
-          echo "=== 3. aiter package location ==="
-          AITER_ROOT=$(python3 -c "import aiter; print(aiter.__path__[0])" 2>/dev/null)
-          echo "AITER_ROOT=$AITER_ROOT"
-          AITER_REPO=$(dirname "$AITER_ROOT" 2>/dev/null)
-          echo "AITER_REPO=$AITER_REPO"
+      - name: "Tune GEMM operators"
+        if: inputs.action == 'tune' || inputs.action == 'all'
+        timeout-minutes: 60
+        run: |
+          podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/benchmark_aiter_gemm.sh --action tune --result-dir ./${{ env.RESULT_DIR }}'
 
+      - name: "Show tuned configs"
+        if: (inputs.action == 'tune' || inputs.action == 'all') && always()
+        run: |
+          echo "=== Tuned PTPC CSV ==="
+          cat $REPO/$RESULT_DIR/tuned_ptpc.csv 2>/dev/null || echo "No tuned PTPC CSV"
           echo ""
-          echo "=== 4. aiter repo top-level files ==="
-          ls -la "$AITER_REPO/" 2>/dev/null | head -30
+          echo "=== Tuned Batched CSV ==="
+          cat $REPO/$RESULT_DIR/tuned_batched.csv 2>/dev/null || echo "No tuned batched CSV"
 
-          echo ""
-          echo "=== 5. aiter/configs/ directory ==="
-          ls -la "$AITER_REPO/aiter/configs/" 2>/dev/null || echo "no configs dir"
-          echo ""
-          echo "--- model_configs/ ---"
-          ls -la "$AITER_REPO/aiter/configs/model_configs/" 2>/dev/null || echo "no model_configs dir"
+      - name: "Benchmark with tuned configs"
+        if: inputs.action == 'benchmark-tuned' || inputs.action == 'all'
+        run: |
+          podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/benchmark_aiter_gemm.sh --action benchmark-tuned --result-dir ./${{ env.RESULT_DIR }}'
 
+      - name: "Show comparison"
+        if: (inputs.action == 'benchmark-tuned' || inputs.action == 'all') && always()
+        run: |
+          echo "=== Tuned results ==="
+          cat $REPO/$RESULT_DIR/aiter_gemm_tuned.csv 2>/dev/null || echo "No tuned CSV"
           echo ""
-          echo "=== 6. op_tests/ directory ==="
-          ls "$AITER_REPO/op_tests/" 2>/dev/null | head -30 || echo "no op_tests dir"
+          echo "=== Comparison ==="
+          cat $REPO/$RESULT_DIR/aiter_gemm_comparison.csv 2>/dev/null || echo "No comparison CSV"
 
-          echo ""
-          echo "=== 7. GEMM-related op_tests ==="
-          ls -la "$AITER_REPO/op_tests/test_gemm"* 2>/dev/null || echo "no test_gemm* files"
-          ls -la "$AITER_REPO/op_tests/test_batched_gemm"* 2>/dev/null || echo "no test_batched_gemm* files"
-
-          echo ""
-          echo "=== 8. csrc/ tune scripts ==="
-          echo "--- ck_gemm_a8w8_bpreshuffle/ ---"
-          ls "$AITER_REPO/csrc/ck_gemm_a8w8_bpreshuffle/"*tune* 2>/dev/null || echo "no tune scripts"
-          ls "$AITER_REPO/csrc/ck_gemm_a8w8_bpreshuffle/"*.py 2>/dev/null || echo "no .py files"
-          echo ""
-          echo "--- ck_batched_gemm_a8w8/ ---"
-          ls "$AITER_REPO/csrc/ck_batched_gemm_a8w8/"*tune* 2>/dev/null || echo "no tune scripts"
-          ls "$AITER_REPO/csrc/ck_batched_gemm_a8w8/"*.py 2>/dev/null || echo "no .py files"
-
-          echo ""
-          echo "=== 9. csrc/ top-level directories ==="
-          ls -d "$AITER_REPO/csrc/"*/ 2>/dev/null | head -30 || echo "no csrc dir"
-
-          echo ""
-          echo "=== 10. aiter public API (dir(aiter)) ==="
-          python3 -c "
-          import aiter
-          attrs = [a for a in dir(aiter) if not a.startswith(\"_\")]
-          print(\"\\n\".join(attrs))
-          " 2>/dev/null | head -50
-
-          echo ""
-          echo "=== 11. aiter.ops or aiter.gemm modules ==="
-          python3 -c "
-          try:
-              from aiter import ops
-              print(\"aiter.ops exists:\", dir(ops))
-          except: print(\"no aiter.ops\")
-          try:
-              from aiter import gemm_a8w8
-              print(\"aiter.gemm_a8w8 exists\")
-          except: print(\"no aiter.gemm_a8w8 module\")
-          try:
-              from aiter import batched_gemm_a8w8
-              print(\"aiter.batched_gemm_a8w8 exists\")
-          except: print(\"no aiter.batched_gemm_a8w8 module\")
-          " 2>&1
-
-          echo ""
-          echo "=== 12. Search for gemm functions in aiter ==="
-          python3 -c "
-          import aiter
-          for name in dir(aiter):
-              if \"gemm\" in name.lower():
-                  obj = getattr(aiter, name, None)
-                  print(f\"{name}: {type(obj).__name__} — {obj.__doc__[:100] if hasattr(obj, \"__doc__\") and obj.__doc__ else \"no doc\"}\")
-          " 2>&1 || echo "FAILED"
-
-          echo ""
-          echo "=== 13. Existing tuned config CSVs (content samples) ==="
-          for csv_file in "$AITER_REPO/aiter/configs/model_configs/"*dsv3*; do
-              if [ -f "$csv_file" ]; then
-                  echo "--- $(basename $csv_file) ---"
-                  head -5 "$csv_file"
-                  echo "  ($(wc -l < "$csv_file") total lines)"
-                  echo ""
-              fi
-          done
-
-          echo ""
-          echo "=== 14. Untuned batched GEMM CSV ==="
-          cat "$AITER_REPO/aiter/configs/a8w8_untuned_batched_gemm.csv" 2>/dev/null || echo "not found"
-          echo ""
-          echo "=== 15. Tuned batched GEMM CSV ==="
-          head -10 "$AITER_REPO/aiter/configs/a8w8_tuned_batched_gemm.csv" 2>/dev/null || echo "not found"
-
-          echo ""
-          echo "=== 16. jit/core.py env var definitions ==="
-          grep -n "AITER_CONFIG\|AITER_TUNE\|AITER_LOG" "$AITER_REPO/aiter/jit/core.py" 2>/dev/null | head -20 || echo "not found"
-
-          echo ""
-          echo "=== 17. .github/scripts/ ==="
-          ls "$AITER_REPO/.github/scripts/" 2>/dev/null || echo "no .github/scripts"
-
-          echo ""
-          echo "=== 18. op_tune.sh ==="
-          cat "$AITER_REPO/.github/scripts/op_tune.sh" 2>/dev/null | head -50 || echo "not found"
-
-          echo ""
-          echo "=== 19. PTPC tune script --help ==="
-          python3 "$AITER_REPO/csrc/ck_gemm_a8w8_bpreshuffle/gemm_a8w8_bpreshuffle_tune.py" --help 2>&1 | head -30 || echo "tune script not found or no --help"
-
-          echo ""
-          echo "=== 20. Batched GEMM tune script --help ==="
-          python3 "$AITER_REPO/csrc/ck_batched_gemm_a8w8/batched_gemm_a8w8_tune.py" --help 2>&1 | head -30 || echo "tune script not found or no --help"
-
-          echo ""
-          echo "============================================================"
-          echo "  Discovery complete"
-          echo "============================================================"
-          '
+      - name: Git commit and push results
+        if: always()
+        run: |
+          cd $REPO && git config user.email 'ci@github.com' && git config user.name 'MI355X CI'
+          cd $REPO && git add -f $RESULT_DIR/*.csv $RESULT_DIR/*.log 2>/dev/null; git diff --cached --name-only
+          cd $REPO && if ! git diff --cached --quiet; then git commit -m "data: MI355X aiter GEMM tune (${{ inputs.action }})" && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi
 
       - name: Show final state
         if: always()
