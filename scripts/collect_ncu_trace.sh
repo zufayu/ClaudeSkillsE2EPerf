@@ -338,36 +338,41 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     # Phase 2a: Find injection library and start server with passive injection
     log "=== Attach mode: Phase 2a — Start server with NCU injection (passive) ==="
     # Derive injection library path from ncu binary location
+    # NCU 2025.3+ renamed libcuinj64.so to libcuda-injection.so
     NCU_BIN=$(which ncu 2>/dev/null || true)
     NCU_INJECTION_PATH=""
     if [[ -n "$NCU_BIN" ]]; then
         NCU_DIR_REAL=$(dirname "$(readlink -f "$NCU_BIN")")
-        # libcuinj64.so is typically in the same directory as ncu or in target/linux-desktop-*/
-        for p in "$NCU_DIR_REAL/libcuinj64.so" "$NCU_DIR_REAL"/../target/linux-desktop-*/libcuinj64.so "$NCU_DIR_REAL"/../host/linux-desktop-*/libcuinj64.so; do
-            if [[ -f "$p" ]]; then NCU_INJECTION_PATH="$(readlink -f "$p")"; break; fi
+        for lib_name in libcuinj64.so libcuda-injection.so; do
+            for p in "$NCU_DIR_REAL/$lib_name" "$NCU_DIR_REAL"/../target/linux-desktop-glibc_2_11_3-x64/$lib_name "$NCU_DIR_REAL"/../target/linux-desktop-*/$lib_name "$NCU_DIR_REAL"/../host/linux-desktop-*/$lib_name; do
+                if [[ -f "$p" ]]; then NCU_INJECTION_PATH="$(readlink -f "$p")"; break 2; fi
+            done
         done
     fi
     # Broader fallback: search common paths
     if [[ -z "$NCU_INJECTION_PATH" ]]; then
-        log "Searching for libcuinj64.so..."
-        for search_dir in /usr/local/cuda /opt/nvidia /usr/local/cuda-*/nsight-compute /usr/lib/nsight-compute; do
-            NCU_INJECTION_PATH=$(find $search_dir -name "libcuinj64.so" -print -quit 2>/dev/null || true)
+        log "Searching for NCU injection library..."
+        for search_dir in /usr/local/lib /usr/local/cuda /opt/nvidia /usr/local/cuda-*/nsight-compute /usr/lib/nsight-compute; do
+            for lib_name in libcuinj64.so libcuda-injection.so; do
+                NCU_INJECTION_PATH=$(find $search_dir -name "$lib_name" -print -quit 2>/dev/null || true)
+                [[ -n "$NCU_INJECTION_PATH" ]] && break 2
+            done
+        done
+    fi
+    # Last resort: search entire /usr and /opt
+    if [[ -z "$NCU_INJECTION_PATH" ]]; then
+        log "Broad search under /usr and /opt..."
+        for lib_name in libcuinj64.so libcuda-injection.so; do
+            NCU_INJECTION_PATH=$(find /usr /opt -name "$lib_name" -print -quit 2>/dev/null || true)
             [[ -n "$NCU_INJECTION_PATH" ]] && break
         done
     fi
-    # Last resort: search entire /usr
     if [[ -z "$NCU_INJECTION_PATH" ]]; then
-        log "Broad search for libcuinj64.so under /usr..."
-        NCU_INJECTION_PATH=$(find /usr -name "libcuinj64.so" -print -quit 2>/dev/null || true)
-    fi
-    if [[ -z "$NCU_INJECTION_PATH" ]]; then
-        log "ERROR: Could not find NCU injection library (libcuinj64.so)"
+        log "ERROR: Could not find NCU injection library (libcuinj64.so or libcuda-injection.so)"
         log "  ncu binary: $NCU_BIN"
         log "  ncu dir: ${NCU_DIR_REAL:-unknown}"
         log "  Listing ncu installation area:"
-        find "${NCU_DIR_REAL:-/usr/local/cuda/bin}"/.. -name "*.so" -path "*/cuinj*" 2>/dev/null | head -5 || true
-        ls -la "${NCU_DIR_REAL:-/usr/local/cuda/bin}"/../extras/ 2>/dev/null | head -10 || true
-        ls -la "${NCU_DIR_REAL:-/usr/local/cuda/bin}"/../nsight-compute/ 2>/dev/null | head -10 || true
+        find "${NCU_DIR_REAL:-/usr/local/cuda/bin}"/.. -name "*.so" 2>/dev/null | head -10 || true
         exit 1
     fi
     log "NCU injection library: $NCU_INJECTION_PATH"

@@ -85,25 +85,15 @@ jobs:
           ssh $NODE "docker exec $CONTAINER ncu --version 2>/dev/null | head -1 || echo 'NCU not found in container'"
           ssh $NODE "docker exec $CONTAINER which ncu 2>/dev/null || echo 'ncu not in PATH'"
 
-      - name: Find and inject libcuinj64.so for NCU attach mode
+      - name: Inject NCU libraries into container
         run: |
-          echo "=== Search host for libcuinj64.so ==="
-          echo "Known nsight-compute install: /opt/nvidia/nsight-compute"
-          ssh $NODE "ls /opt/nvidia/nsight-compute/ 2>/dev/null | head -10"
-          ssh $NODE "find /opt/nvidia/nsight-compute -name 'libcuinj64*' 2>/dev/null"
-          HOST_LIB=$(ssh $NODE "find /opt/nvidia /usr -name 'libcuinj64*' 2>/dev/null | head -1")
-          if [ -z "$HOST_LIB" ]; then
-            echo "Still not found by name. Listing target dirs..."
-            ssh $NODE "find /opt/nvidia/nsight-compute -type d -name 'target' 2>/dev/null"
-            ssh $NODE "find /opt/nvidia/nsight-compute -type d 2>/dev/null | head -20"
-            ssh $NODE "find /opt/nvidia/nsight-compute -name '*.so' 2>/dev/null | head -20"
-          else
-            echo "Found: $HOST_LIB"
-            echo "Copying into container..."
-            ssh $NODE "docker cp $HOST_LIB $CONTAINER:/usr/local/lib/libcuinj64.so"
-            echo "Verify in container:"
-            ssh $NODE "docker exec $CONTAINER ls -la /usr/local/lib/libcuinj64.so"
-          fi
+          echo "=== Copy NCU target directory into container ==="
+          NCU_TARGET="/opt/nvidia/nsight-compute/2025.3.1/target/linux-desktop-glibc_2_11_3-x64"
+          ssh $NODE "ls $NCU_TARGET/libcuda-injection.so 2>/dev/null && echo 'Found libcuda-injection.so' || echo 'NOT FOUND'"
+          ssh $NODE "docker exec $CONTAINER mkdir -p /usr/local/ncu-target"
+          ssh $NODE "docker cp $NCU_TARGET/. $CONTAINER:/usr/local/ncu-target/"
+          echo "Verify in container:"
+          ssh $NODE "docker exec $CONTAINER ls -la /usr/local/ncu-target/libcuda-injection.so /usr/local/ncu-target/libnvperf_host.so /usr/local/ncu-target/libnvperf_target.so 2>/dev/null"
 
       - name: Clean old results
         run: |
