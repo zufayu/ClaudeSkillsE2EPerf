@@ -1,6 +1,6 @@
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
-> **Last updated:** 2026-04-14 v30
+> **Last updated:** 2026-04-15 v31
 > **Model:** DeepSeek-R1-0528-NVFP4-v2, FP4
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
 > **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅；**MI355X TP=8+EP 公平对标完成 ✅**；**B200 4GPU torch trace per-layer 分析完成 ✅**；**Multi-stream overlap 分析完成 ✅**；**TP=4 分段执行分析+优化方向完成 ✅**
@@ -19,6 +19,8 @@
     - [TP=4 单层分段执行分析](#tp4-单层分段执行分析)
 - [MI355X TPOT 来源分析](#mi355x-tpot-来源分析)
 - [精度说明](#精度说明)
+- [TP=8 C=4 算子级对比](#tp8-c4-算子级对比)
+- [NCU 硬件级 Profiling 进展](#ncu-硬件级-profiling-进展)
 - [迭代日志](#迭代日志)
 
 ## 端到端性能总表
@@ -495,6 +497,74 @@ bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
 - [x] 4GPU 跨框架对比表（v23：B200 SGLang/TRT-LLM + MI355X ATOM，ratio=0.8 对齐，含 SA InferenceX 基线）
 - [x] B200 4GPU per-layer torch trace 分析（v24：SGLang 4GPU TP=4 EP=4，torch profiler，FMHA 层切分+position module 分配，25 算子 × 8 module）
 
+## TP=8 C=4 算子级对比
+
+> B200 SGLang (EP8 TP8, chat c=4) vs MI355X ATOM (EP8 TP8, chat c=4)
+> 数据文件: `b200_vs_mi355x_kernel_map_c4_ep8.csv`
+
+### PASS 功能分组汇总 (c=4 EP8)
+
+| Pass | B200 (μs) | MI355X (μs) | B200/MI355X | 说明 |
+|------|-----------|-------------|-------------|------|
+| EP_AR (pre-MHA) | 26.7 | 19.7 | 1.36x | B200 fused allreduce; MI355X reduce_scatter+load_rmsnorm |
+| MHA | 37.7 | 59.8 | 0.63x | MI355X: 含 add_rmsnorm_quant×2 + qkv + rope + mla + batched_gemm |
+| O_proj | 20.3 | 11.8 | 1.72x | B200: FP4 quant+GEMM×2; MI355X: single BF16 GEMM |
+| EP_AR (pre-MOE) | 8.8 | 21.6 | 0.41x | MI355X: post_attn (15.9) + triton_clone (5.6) |
+| MOE | 89.6 | 89.0 | 1.01x | MoE 几乎持平 |
+| **TOTAL (kernel_sum)** | **183.1** | **201.8** | **0.91x** | |
+| **Walltime** | **122.1** | **~196** | **0.62x** | B200 overlap 61μs (33%); MI355X 无 multi-stream overlap |
+
+**关键发现 (c=4 vs c=64 对比):**
+- c=4 下 MoE GEMM 持平 (1.01x)，而 c=64 下 B200 MoE 优势更大 → bs-dependent tile efficiency
+- B200 multi-stream overlap 在 c=4 下依然提供 33% kernel_sum 缩减
+- MI355X 在 EP_AR 两个 pass 都显著慢于 B200 (reduce_scatter vs fused allreduce)
+- MHA pass MI355X 反而更慢 (0.63x)，因为 add_rmsnorm_quant 和 mla_reduce 额外开销
+
+## NCU 硬件级 Profiling 进展
+
+### 运行历史
+
+10 次 B200 NCU workflow (SGLang FP4 EP8, serve mode c=64)，**0 次产生可用 .ncu-rep**:
+
+| # | 日期 | Phase 1 (nsys) | Phase 2 (ncu) | 根因 |
+|---|------|----------------|---------------|------|
+| 1-2 | 04-10 | 失败 | - | 早期脚本 bug |
+| 3 | 04-12 | 5.7GB nsys-rep → 11GB sqlite | 未运行 | `find_decode_region.py` fetchall() OOM |
+| 4-9 | 04-13 | launch-skip=321600 ✓ | **Server TimeoutError 3600s** | ncu 跳过 32 万 kernel launch 太慢 |
+| 10 | 04-14 | 未运行 | - | zufa_sglang container 不存在 |
+
+### 根因分析
+
+**核心问题：ncu 不适合 serve 模式 c=64**
+
+ncu 逐 kernel 拦截 + replay，每个 kernel 有 10-100x overhead：
+- Phase 1 成功后得到 `--launch-skip 321,600`
+- Phase 2 需要 ncu 逐个检查并跳过 32 万个 kernel launch（warmup + prefill + ramp-up decode）
+- DeepSeek-R1 FP4 8-GPU 在 ncu 下的 server 启动速度极慢
+- 3600s timeout 内无法完成跳过 → 永远无法到达稳定态 decode kernel
+
+### 替代方案：基于 torch trace duration 推测稳定态
+
+**思路：** 已有 torch profiler trace 包含每个 decode step 的 walltime。利用这些 duration 数据推测稳定态时间段，绕过 nsys dry-run。
+
+**可行性分析：**
+
+| 方面 | 评估 |
+|------|------|
+| 稳定态识别 | **可行** — decode walltime CSV 清楚显示 ramp-up → steady → ramp-down |
+| 映射到 kernel index | **困难** — torch trace 计时和 ncu 下的 kernel 时间不一致（ncu 本身 10-100x 减速） |
+| launch-skip 计算 | **需要换算** — 知道 kernels_per_decode (26-29 per layer × 61 layers ≈ 1600/pass)，但需要准确知道 warmup+prefill 的 kernel 数 |
+
+**结论：** 直接用 torch trace 的稳定态时间段去推测 ncu launch-skip 不够可靠，因为 ncu 下执行时间完全不同。
+
+### 推荐方案：缩小问题规模
+
+改用 **c=4 TP=4 EP=4** 配置：
+- c=4 产生的 kernel launch 远少于 c=64（launch-skip 从 ~32 万降到 ~几千）
+- TP=4 EP=4 用 4 GPU，模型加载更快
+- 可用 `--skip-dry-run --launch-skip N` 手动指定，跳过 Phase 1
+- 或用 offline mode (ISL=64, OSL=8) → 完全可控的 kernel 数量
+
 ## 迭代日志
 
 | 日期 | 变更 |
@@ -517,6 +587,7 @@ bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
 | 2026-03-27 v13 | **继续精简。** 删除权重精度汇总表（与主表精度列重复）和 nvjet 源码考证（5 条证据→5 行摘要）。合并为"精度说明"注释 |
 | 2026-03-27 v12 | **精简报告。** 删除全 trace 统计表、精度判断证据、大类汇总、kernel 明细映射、耗时波动表、hf_quant_config exclude 详情、精度分布统计。保留 15 算子序列表 + 权重精度汇总表 + nvjet 源码考证。后续增加 10 层平均 + 61 层数据 |
 | 2026-03-27 v11 | **算子级重构。** 从 25+ kernel 行合并为 15 个逻辑算子，方便跨平台对比。合并 splitKreduce 到 GEMM、quantize 到目标 GEMM。增加 P1 并行组标注、关键路径时间（265.7μs）、大类汇总表、kernel 明细映射表。MI355X 列待补充 |
+| 2026-04-15 v31 | **TP=8 C=4 算子级对比表 + NCU 硬件级 profiling 进展总结。** c=4 EP8 kernel map (26 B200 rows vs 23 MI355X rows)。NCU 10 次 run 失败根因：ncu 不适合 c=64 serve mode (launch-skip=321600 timeout)。推荐改用 c=4 TP4 EP4 offline mode |
 | 2026-03-27 v10 | **NVFP4 权重精度考证完成。** 从 `hf_quant_config.json` 确认：MLA 4 投影层（q_a, q_b, kv_a, kv_b）全 61 层 exclude → BF16 权重；MoE/out_proj/shared_expert 使用 FP4 权重。解决了 `nvjet tst` kernel 的"待确认"精度：BF16×BF16。增加权重精度汇总表和精度分布统计 |
 | 2026-03-27 v9 | **nvjet E4M3 源码考证完成。** 确认 ootst kernel 的 E4M3 指 block scale factor 格式（非数据精度）。ootst 实际执行 FP4(E2M1) GEMM。增加 5 条源码证据（fp4Quantize.cpp, kernelParams.h, KernelMetaInfo.h, fp4GemmTrtllmGen.cpp, cublasScaledMM.cpp）。更新精度判断表和 kernel 表 Precision 列 |
 | 2026-03-27 v8 | 增加 B200 % 占比列 + MI355X kernel mapping（时间待补）+ 模块占比汇总表 |
