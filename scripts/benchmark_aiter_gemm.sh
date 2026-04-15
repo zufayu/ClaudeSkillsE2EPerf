@@ -48,7 +48,7 @@ discover() {
     echo "=== Discovery ==="
     python3 -c "
 import aiter
-print(f'aiter version: {aiter.__version__}')
+print(f'aiter version: {getattr(aiter, \"__version__\", \"unknown\")}')
 print(f'aiter path: {aiter.__path__[0]}')
 import torch
 print(f'torch version: {torch.__version__}')
@@ -89,13 +89,12 @@ run_benchmark() {
     echo "=== Benchmark ($TAG, warmup=$WARMUP, iters=$ITERS) ==="
 
     # Set tuned config env vars if provided
-    local ENV_PREFIX=""
     if [ -n "$EXTRA_ENV" ]; then
-        ENV_PREFIX="$EXTRA_ENV "
         echo "  Env: $EXTRA_ENV"
+        eval "export $EXTRA_ENV"
     fi
 
-    ${ENV_PREFIX}python3 - "$RESULT_DIR" "$TAG" "$WARMUP" "$ITERS" << 'PYEOF'
+    python3 - "$RESULT_DIR" "$TAG" "$WARMUP" "$ITERS" << 'PYEOF'
 import sys
 import os
 import csv
