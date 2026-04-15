@@ -1,0 +1,64 @@
+name: "B200 Re-analyze EP4 Trace (trace_layer_detail)"
+on:
+  workflow_dispatch:
+jobs:
+  reanalyze:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 30
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_sglang
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_profiling
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git fetch origin main && git reset --hard origin/main"
+
+      - name: Find TP-0 trace and fix overlaps
+        run: |
+          TRACE=$(ssh $NODE "ls -t $REPO/$RESULT_DIR/*TP-0-EP-0*.trace.json.gz 2>/dev/null | grep -v serialized | grep -v '.fix.' | head -1")
+          if [ -z "$TRACE" ]; then
+            echo "ERROR: No TP-0 trace file found"; ssh $NODE "ls -lh $REPO/$RESULT_DIR/*.json.gz 2>/dev/null || echo 'No traces'"; exit 1
+          fi
+          echo "TRACE=$TRACE" >> $GITHUB_ENV
+          echo "Using: $TRACE"
+          ssh $NODE "ls -lh $TRACE"
+
+      - name: Fix overlapping kernels
+        if: always()
+        run: |
+          FIX=$(echo "${{ env.TRACE }}" | sed 's/.trace.json.gz/.fix.json.gz/')
+          if ssh $NODE "test -f $FIX"; then
+            echo "Fixed trace already exists: $FIX"
+            echo "FIX_TRACE=$FIX" >> $GITHUB_ENV
+          else
+            ssh $NODE "docker exec $CONTAINER python3 $REPO/scripts/fix_torch_trace_pro.py ${{ env.TRACE }}"
+            echo "FIX_TRACE=$FIX" >> $GITHUB_ENV
+          fi
+
+      - name: Run trace_layer_detail.py
+        if: always()
+        run: |
+          FIX_TRACE="${{ env.FIX_TRACE }}"
+          if [ -z "$FIX_TRACE" ]; then
+            FIX_TRACE=$(ssh $NODE "ls -t $REPO/$RESULT_DIR/*TP-0-EP-0*.fix.json.gz 2>/dev/null | head -1")
+          fi
+          if [ -n "$FIX_TRACE" ]; then
+            ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && python3 scripts/trace_layer_detail.py $FIX_TRACE --output-dir ./$RESULT_DIR'"
+          else
+            echo "No fixed trace found"
+            exit 1
+          fi
+
+      - name: Show CSV
+        if: always()
+        run: |
+          ssh $NODE "cat $REPO/$RESULT_DIR/layer_kernel_avg.csv 2>/dev/null || echo 'No CSV'"
+          ssh $NODE "cat $REPO/$RESULT_DIR/allreduce_fusion_dist.csv 2>/dev/null | head -20 || echo 'No allreduce CSV'"
+
+      - name: Git commit and push
+        if: always()
+        run: |
+          ssh $NODE "cd $REPO && git config user.email ci@github.com && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && for ext in csv json log md; do git add -f $RESULT_DIR/*.\$ext 2>/dev/null || true; done && git diff --cached --name-only"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 EP4 TP4 c=64 re-analysis with trace_layer_detail.py (overlap computation)' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"

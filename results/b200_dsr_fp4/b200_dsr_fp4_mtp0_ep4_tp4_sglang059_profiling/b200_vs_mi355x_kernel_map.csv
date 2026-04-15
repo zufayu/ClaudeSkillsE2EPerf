@@ -1,41 +1,46 @@
-#,B200_Module,B200_Operator,B200_Raw_Kernel,B200_Stream,B200_Avg_us,MI355X_module,MI355X_kernel,MI355X_avg_us,Notes
-1,EP_AR,EP_AR+residual+RMSNorm(fused),allreduce_fusion_kernel_oneshot_lamport,23,25.9,input_layernorm,reduce_scatter + load_rmsnorm,29.0,B200 fuses AR+residual+RMSNorm; B200 value inflated by same-stream overlap (true ~11μs)
-,,,,,,(hipLaunchKernel),add_rmsnorm_quant ×2,5.5,MI355X only: additional quant after norm
-2,Attention,qkv_a_proj_GEMM,nvjet_splitK_TNT,23,31.9,gemm_a16w16,bf16gemm_splitk,16.1,B200 value inflated by same-stream overlap (true ~16μs)
-3,Attention,qkv_a_splitK_reduce,splitKreduce_kernel,23,3.7,,,,B200 only: splitK reduction
-4,Attention,q/k_norm_RMSNorm,RMSNormKernel (stream 23),23,3.2,,q/k_norm_RMSNormx2,10.8,MI355X combines both norms into 1 kernel
-5,Attention,q/k_norm_RMSNorm,RMSNormKernel (stream 385),385,2.4,,,,(included in MI355X row above)
-6,Attention,q_b_proj_GEMM,nvjet_v_bz_TNN,23,6.3,q_proj_and_k_up_proj,gemm_xdl (q_b),11.8,
-7,Attention,uk_gemm(K_expansion),nvjet_v_bz_TNT,23,4.4,q_proj_and_k_up_proj,batched_gemm_a8w8,5.5,
-8,Attention,RoPE+KV_cache_write,RopeQuantizeKernel,23,2.7,rope_and_kv_cache,fuse_qk_rope_concat_cache,5.3,
-9,Attention,set_mla_kv,set_mla_kv_buffer_kernel,23,1.7,,,,B200 only
-10,Attention,Attention(FMHA),fmhaSm100fKernel,23,20.3,mla_decode,mla_a8w8_qh16,25.5,
-,,,,,,(mla_decode),mla_reduce_v1,7.2,MI355X only: attention output reduction
-11,Attention,uv_gemm(V_expansion),nvjet_h_bz_TNT,23,4.0,v_up_proj_and_o_proj,batched_gemm_a8w8,6.6,
-12,Proj,o_proj_quant(BF16→FP4) #1,cvt_fp16_to_fp4,23,2.1,,,,B200 FP4 quant before o_proj
-13,Proj,o_proj_GEMM #1,DeviceGemmFp4GemmSm100,23,9.4,v_up_proj_and_o_proj,gemm_xdl (o_proj),21.4,MI355X single o_proj; B200 splits into #1+#2 (9.4+10.2=19.6)
-14,EP_AR,EP_AR+residual+RMSNorm(fused) #2,allreduce_fusion_kernel_oneshot_lamport,23,11.0,post_attn_layernorm,reduce_s,20.0,B200 fuses AR+residual+RMSNorm; overlaps with router_GEMM(cross)
-,,,,,,(post_attn_layernorm),local_device_load_rmsnorm,,MI355X only: no value listed
-,,,,,,(post_attn_layernorm),triton_fused_clone,5.7,MI355X only
-,,,,,,(post_attn_layernorm),triton_fused_clone,5.5,MI355X only
-15,MoE_Route,router_GEMM,nvjet_h_bz_splitK_TNT,385,13.5,gemm_a16w16,bf16gemm_splitk,9.2,
-16,Proj,o_proj_quant(BF16→FP4) #2,cvt_fp16_to_fp4,23,2.5,,,,B200 FP4 quant; overlaps with router(cross)
-17,MoE_Route,router_splitK_reduce,splitKreduce_kernel,385,3.6,,,,B200 only: splitK reduction
-18,Proj,o_proj_GEMM #2,DeviceGemmFp4GemmSm100,23,10.2,,,,(included in MI355X #13 above)
-19,MoE_Route,MoE_input_quant(BF16→FP4),quantize_with_block_size,385,3.8,,,,B200 only: FP4 quant for MoE input
-20,MoE_Route,tensor_copy,unrolled_elementwise_kernel,385,3.2,triton_poi,triton_fused_clone,5.5,
-21,MoE_Route,TopK_select,routingMainKernel,385,4.5,mxfp4_moe,grouped_topk_opt_sort,5.4,
-22,MoE_Route,expert_sort,routingIndicesClusterKernel,385,5.3,mxfp4_moe,MoeSorting_P0+P23,10.8,
-23,Shared_Exp,SiLU×Mul,act_and_mul_kernel,23,3.2,,,,B200 shared expert SiLU; parallel with MoE routing(cross)
-24,Shared_Exp,shared_quant(BF16→FP4),cvt_fp16_to_fp4,23,1.7,,,,B200 shared expert FP4 quant
-,,,,,,(mxfp4_moe),fused_mxfp4_quant_sort,9.5,MI355X only: MoE quant+sort before gate_up
-25,MoE_Expert,gate_up_GEMM(+SwiGLU),bmm_E2m1_E2m1E2m1,385,101.7,mxfp4_moe,moe_mxgemm(gate_up),119.5,
-,,,,,,(mxfp4_moe),fused_mxfp4_quant_sort,5.8,MI355X only: quant between gate_up and down
-26,Shared_Exp,shared_GEMM(FP4),DeviceGemmFp4GemmSm100,23,5.8,,,,B200 shared expert GEMM; parallel with gate_up(cross)
-27,MoE_Expert,down_GEMM,bmm_Bfloat16_E2m1E2m1,385,55.8,mxfp4_moe,moe_mxgemm(down),58.0,
-28,MoE_Expert,MoE_finalize+residual,finalizeKernelVecLoad,385,7.5,,,,B200 only
-29,Residual,residual_add,vectorized_elementwise_kernel,23,2.1,,,,B200 only
-,,,,,,,,
-,,B200 TOTAL (kernel_sum),,,353.2,,MI355X TOTAL,,399.4,
-,,B200 Walltime,,,286.9,,,,
-,,B200 Overlap,,,66.3,,,,
+#,B200_Module,B200_Operator,B200_Raw_Kernel,B200_Stream,B200_Avg_us,B200_Overlap_us,B200_Overlap_With,MI355X_module,MI355X_kernel,MI355X_avg_us,Notes
+1,EP_AR,EP_AR+residual+RMSNorm(fused),allreduce_fusion_kernel_oneshot_lamport,23,25.9,~14.9,qkv_a_proj_GEMM(same),input_layernorm,reduce_scatter_cross_device_store,29.01,"B200 fuses AR+residual+RMSNorm; MI355X splits into reduce_scatter + load_rmsnorm"
+,,,,,,,,(input_layernorm),local_device_load_rmsnorm,5.51,MI355X cont.: RMSNorm after device load
+2,Attention,qkv_a_proj_GEMM,nvjet_splitK_TNT,23,31.9,~18.6,EP_AR(same) | splitK_reduce(same),(gemm_a16w16),bf16gemm_splitk_clean,16.07,"B200 FP4 splitK+fused; MI355X: BF16 GEMM"
+3,Attention,qkv_a_splitK_reduce,splitKreduce_kernel,23,3.7,~3.7,qkv_a_proj_GEMM(same) | q/k_norm(same),,,,B200 only: splitK reduction
+4,Attention,q/k_norm_RMSNorm,RMSNormKernel,23,3.2,~1.7,splitK_reduce(same) | q/k_norm#2(cross),(hipLaunchKernel),add_rmsnorm_quant (256-wide),5.48,"MI355X: combined add+rmsnorm+quant"
+5,Attention,q/k_norm_RMSNorm,RMSNormKernel,385,2.4,~1.7,q/k_norm(cross),(hipLaunchKernel),add_rmsnorm_quant (64-wide),5.42,MI355X: second norm variant
+6,Attention,q_b_proj_GEMM,nvjet_v_bz_TNN,23,6.3,~2.2,uk_gemm(same),(q_proj_and_k_up_proj),gemm_xdl (q_b_proj),11.79,"B200: nvjet FP4; MI355X: BF16 GEMM"
+7,Attention,uk_gemm(K_expansion),nvjet_v_bz_TNT,23,4.4,~2.2,q_b_proj_GEMM(same),(q_proj_and_k_up_proj),batched_gemm_a8w8,5.47,"B200: K expansion; MI355X: INT8 batched"
+8,Attention,RoPE+KV_cache_write,RopeQuantizeKernel,23,2.7,0,,(rope_and_kv_cache),fuse_qk_rope_concat_cache,5.28,"MI355X fuses rope+concat+cache"
+9,Attention,set_mla_kv,set_mla_kv_buffer_kernel,23,1.7,0,,,,,"B200 only: MLA KV buffer"
+10,Attention,Attention(FMHA),fmhaSm100fKernel,23,20.3,0,,(mla_decode),mla_a8w8_qh16,25.53,"B200: Hopper FMHA; MI355X: MXFP4 MLA decode"
+,,,,,,,,(mla_decode),mla_reduce_v1,7.20,MI355X only: MLA output reduction
+11,Attention,uv_gemm(V_expansion),nvjet_h_bz_TNT,23,4.0,0,,(v_up_proj_and_o_proj),batched_gemm_a8w8,6.56,"B200: UV expansion; MI355X: V_up batched"
+12,Proj,o_proj_quant(BF16→FP4) #1,cvt_fp16_to_fp4,23,2.1,0,,,,,"B200 only: FP4 quant before o_proj"
+13,Proj,o_proj_GEMM #1,DeviceGemmFp4GemmSm100,23,9.4,0,,(v_up_proj_and_o_proj),gemm_xdl (o_proj),21.36,"MI355X single o_proj; B200 splits #1+#2"
+14,EP_AR,EP_AR+residual+RMSNorm(fused) #2,allreduce_fusion_kernel_oneshot_lamport,23,11.0,~10.0,router_GEMM(cross),(post_attn_layernorm),reduce_scatter_cross_device_store,20.01,"B200 fuses AR; overlaps with router(cross)"
+,,,,,,,,(post_attn_layernorm),local_device_load_rmsnorm,5.67,MI355X cont.: RMSNorm after device load
+15,MoE_Route,router_GEMM,nvjet_h_bz_splitK_TNT,385,13.5,~13.5,EP_AR#2(cross) | o_proj_quant#2(cross) | splitK_reduce(same) | o_proj_GEMM#2(cross),(triton_poi),triton_fused_clone,5.49,"B200: router GEMM overlaps EP_AR+o_proj"
+,,,,,,,,(triton_poi),triton_fused_clone,5.47,MI355X cont.: second clone
+16,Proj,o_proj_quant(BF16→FP4) #2,cvt_fp16_to_fp4,23,2.5,~2.5,router_GEMM(cross) | splitK_reduce(cross),,,,B200 only: FP4 quant overlaps with router
+17,MoE_Route,router_splitK_reduce,splitKreduce_kernel,385,3.6,~3.6,router_GEMM(same) | o_proj_GEMM#2(cross) | MoE_input_quant(same) | o_proj_quant(cross),,,,B200 only: splitK reduction
+18,Proj,o_proj_GEMM #2,DeviceGemmFp4GemmSm100,23,10.2,~10.2,router_GEMM(cross) | splitK_reduce(cross) | MoE_input_quant(cross) | tensor_copy(cross) | TopK(cross),(gemm_a16w16),bf16gemm_splitk_clean,9.25,"B200 FP4 GEMM massive overlap"
+19,MoE_Route,MoE_input_quant(BF16→FP4),quantize_with_block_size,385,3.8,~3.8,splitK_reduce(same) | o_proj_GEMM#2(cross),,,,B200 only: FP4 quant for MoE input
+20,MoE_Route,tensor_copy,unrolled_elementwise_kernel,385,3.2,~1.7,o_proj_GEMM#2(cross),(triton_poi),triton_fused_clone,5.49,"MI355X: data copy"
+21,MoE_Route,TopK_select,routingMainKernel,385,4.5,~3.0,expert_sort(same) | SiLU(cross) | o_proj_GEMM#2(cross),(mxfp4_moe),grouped_topk_opt_sort,5.37,
+22,MoE_Route,expert_sort,routingIndicesClusterKernel,385,5.3,~4.3,TopK(same) | SiLU(cross) | shared_quant(cross) | shared_GEMM(cross) | gate_up(same),(mxfp4_moe),MoeSorting_P0+P23,10.79,"MI355X sorting 2x slower (5.39+5.40)"
+23,Shared_Exp,SiLU×Mul,act_and_mul_kernel,23,3.2,~2.5,TopK(cross) | expert_sort(cross),(mxfp4_moe),fused_mxfp4_quant_sort,9.47,"B200: shared SiLU; MI355X: MoE quant+sort"
+24,Shared_Exp,shared_quant(BF16→FP4),cvt_fp16_to_fp4,23,1.7,~1.7,expert_sort(cross) | TopK(cross),,,,B200 only: shared expert FP4 quant
+25,MoE_Expert,gate_up_GEMM(+SwiGLU),bmm_E2m1_E2m1E2m1,385,101.7,~7.3,shared_GEMM(cross) | expert_sort(same) | down_GEMM(same),(mxfp4_moe),moe_mxgemm (gate_up),119.46,"B200: batched MoE GEMM; MI355X: CK moe_mxgemm"
+,,,,,,,,(mxfp4_moe),fused_mxfp4_quant_sort,5.82,"MI355X: quant between gate_up and down"
+26,Shared_Exp,shared_GEMM(FP4),DeviceGemmFp4GemmSm100,23,5.8,~5.8,gate_up_GEMM(cross) | expert_sort(cross),(mxfp4_moe),moe_mxgemm (down),57.97,"MI355X: MoE down GEMM"
+27,MoE_Expert,down_GEMM,bmm_Bfloat16_E2m1E2m1,385,55.8,~2.5,gate_up_GEMM(same) | MoE_finalize(same),,,,MI355X down included in row 26 moe_mxgemm
+28,MoE_Expert,MoE_finalize+residual,finalizeKernelVecLoad,385,7.5,~1.5,down_GEMM(same),,,,B200 only: MoE output finalization
+29,Residual,residual_add,vectorized_elementwise_kernel,23,2.1,0,,,,,"B200 only: explicit residual add"
+
+,,B200 TOTAL (kernel_sum),,,353.2,,,,MI355X TOTAL,399.5,
+,,B200 Walltime,,,286.9,,,,MI355X Walltime,,us
+,,B200 Overlap,,,66.3,,,,,,"66.3μs overlap = 18.8% of kernel sum"
+
+,,PASS,,B200_us,MI355X_us,B200/MI355X,,Notes,,
+,,EP_AR (pre-MHA),,25.9,34.52,0.75x,,B200: fused allreduce 25.9. MI355X: reduce_scatter+load_rmsnorm (29.01+5.51)
+,,MHA,,80.5,93.46,0.86x,,MI355X: bf16gemm(16.07)+add_rmsnorm_quant×2(10.90)+gemm_xdl(11.79)+batched(5.47)+rope(5.28)+mla(32.73)+batched(6.56)+triton_poi(5.49-调整重叠)
+,,O_proj,,24.2,21.36,1.13x,,B200: quant×2+GEMM×2 (2.1+9.4+2.5+10.2). MI355X: single gemm_xdl 21.36
+,,EP_AR (pre-MOE),,11.0,31.15,0.35x,,B200: fused allreduce overlaps router. MI355X: post_attn(25.68)+triton_clone×2(10.96)
+,,MOE,,211.3,219.56,0.96x,,B200: route(33.8)+shared(10.7)+expert(165.0)+residual(2.1). MI355X: topk+sort+quant+moe_mxgemm×2
