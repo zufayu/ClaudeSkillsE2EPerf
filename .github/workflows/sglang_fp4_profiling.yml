@@ -1,0 +1,186 @@
+name: "SGLang FP4 Profiling (Templatized)"
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "GPU platform"
+        type: choice
+        options:
+          - b200
+          - b300
+        default: b200
+      tp:
+        description: "Tensor parallel"
+        type: string
+        default: "8"
+      ep:
+        description: "Expert parallel"
+        type: string
+        default: "8"
+      concurrency:
+        description: "Concurrency"
+        type: string
+        default: "4"
+      scenario:
+        description: "Benchmark scenario"
+        type: choice
+        options:
+          - chat
+          - reasoning
+          - summarize
+        default: chat
+
+jobs:
+  sglang-fp4-profiling:
+    runs-on: [self-hosted, "${{ inputs.platform }}"]
+    timeout-minutes: 180
+    env:
+      PLATFORM: ${{ inputs.platform }}
+      TP: ${{ inputs.tp }}
+      EP: ${{ inputs.ep }}
+      CONC: ${{ inputs.concurrency }}
+      SCENARIO: ${{ inputs.scenario }}
+      # Platform-specific vars set in setup step
+    steps:
+      - name: Setup platform config
+        run: |
+          if [ "$PLATFORM" = "b200" ]; then
+            echo "NODE=hungry-hippo-fin-03-2" >> $GITHUB_ENV
+            echo "CONTAINER=zufa_sglang" >> $GITHUB_ENV
+            echo "REPO=/home/ubuntu/zufa/ClaudeSkillsE2EPerf" >> $GITHUB_ENV
+            echo "MODEL_FP4=/SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2" >> $GITHUB_ENV
+            echo "USE_SSH=true" >> $GITHUB_ENV
+          elif [ "$PLATFORM" = "b300" ]; then
+            echo "NODE=" >> $GITHUB_ENV
+            echo "CONTAINER=zufa_sglang" >> $GITHUB_ENV
+            echo "REPO=/home/zufayu/ClaudeSkillsE2EPerf" >> $GITHUB_ENV
+            echo "MODEL_FP4=/models/DeepSeek-R1-0528-NVFP4-v2" >> $GITHUB_ENV
+            echo "USE_SSH=false" >> $GITHUB_ENV
+          fi
+          echo "RESULT_DIR=results/${PLATFORM}_dsr_fp4/${PLATFORM}_dsr_fp4_mtp0_ep${EP}_tp${TP}_sglang059_profiling" >> $GITHUB_ENV
+
+      - name: Sync repo
+        run: |
+          if [ "$USE_SSH" = "true" ]; then
+            ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git reset --hard 2>/dev/null; git checkout -B main origin/main --force 2>/dev/null; git pull --rebase origin main 2>/dev/null; true"
+          else
+            cd $REPO && git fetch origin && git reset --hard origin/main
+          fi
+
+      - name: Verify container
+        run: |
+          if [ "$USE_SSH" = "true" ]; then
+            ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2"
+            ssh $NODE "docker exec $CONTAINER python3 -c 'import sglang; print(f\"SGLang {sglang.__version__}\")'"
+          else
+            docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2
+            docker exec $CONTAINER python3 -c 'import sglang; print(f"SGLang {sglang.__version__}")'
+          fi
+
+      - name: Get container image name
+        run: |
+          if [ "$USE_SSH" = "true" ]; then
+            echo "IMAGE=$(ssh $NODE "docker inspect $CONTAINER --format '{{.Config.Image}}'" 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+          else
+            echo "IMAGE=$(docker inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+          fi
+
+      - name: Clean old results
+        run: |
+          if [ "$USE_SSH" = "true" ]; then
+            ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true' && rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true"
+          else
+            docker exec -e REPO=$REPO -e RESULT_DIR=$RESULT_DIR $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true'
+          fi
+
+      - name: "Torch trace capture (${{ inputs.scenario }} c=${{ inputs.concurrency }}, TP${{ inputs.tp }} EP${{ inputs.ep }})"
+        run: |
+          if [ "$USE_SSH" = "true" ]; then
+            ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_trace.sh --model $MODEL_FP4 --tp $TP --ep $EP --scenario $SCENARIO --concurrency $CONC --env sglang059 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'"
+          else
+            docker exec -e REPO=$REPO -e MODEL_FP4=$MODEL_FP4 -e TP=$TP -e EP=$EP -e SCENARIO=$SCENARIO -e CONC=$CONC -e RESULT_DIR=$RESULT_DIR $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_trace.sh --model $MODEL_FP4 --tp $TP --ep $EP --scenario $SCENARIO --concurrency $CONC --env sglang059 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'
+          fi
+
+      - name: Show trace results
+        if: always()
+        run: |
+          if [ "$USE_SSH" = "true" ]; then
+            ssh $NODE "ls -lh $REPO/$RESULT_DIR/*.json.gz 2>/dev/null | head -10 || echo 'No trace files'"
+            ssh $NODE "cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'"
+          else
+            ls -lh $REPO/$RESULT_DIR/*.json.gz 2>/dev/null | head -10 || echo 'No trace files'
+            cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'
+          fi
+
+      - name: "Fix overlapping kernels in trace"
+        if: always()
+        run: |
+          if [ "$USE_SSH" = "true" ]; then
+            TRACE=$(ssh $NODE "ls $REPO/$RESULT_DIR/*TP-0-EP-0*.trace.json.gz 2>/dev/null | grep -v serialized | grep -v '.fix.' | head -1")
+            if [ -n "$TRACE" ]; then
+              ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && python3 scripts/fix_torch_trace_pro.py $TRACE'"
+            else
+              echo "No trace file found"
+            fi
+          else
+            TRACE=$(ls $REPO/$RESULT_DIR/*TP-0-EP-0*.trace.json.gz 2>/dev/null | grep -v serialized | grep -v '.fix.' | head -1)
+            if [ -n "$TRACE" ]; then
+              docker exec $CONTAINER bash -c "cd $REPO && python3 scripts/fix_torch_trace_pro.py $TRACE"
+            else
+              echo "No trace file found"
+            fi
+          fi
+
+      - name: "Run trace_layer_detail.py analysis"
+        if: always()
+        run: |
+          if [ "$USE_SSH" = "true" ]; then
+            TRACE=$(ssh $NODE "ls $REPO/$RESULT_DIR/*TP-0-EP-0*.fix.json.gz 2>/dev/null | head -1")
+            if [ -n "$TRACE" ]; then
+              ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && python3 scripts/trace_layer_detail.py $TRACE --output-dir ./$RESULT_DIR'"
+            else
+              echo "No fixed trace file found for analysis"
+            fi
+          else
+            TRACE=$(ls $REPO/$RESULT_DIR/*TP-0-EP-0*.fix.json.gz 2>/dev/null | head -1)
+            if [ -n "$TRACE" ]; then
+              docker exec $CONTAINER bash -c "cd $REPO && python3 scripts/trace_layer_detail.py $TRACE --output-dir ./$RESULT_DIR"
+            else
+              echo "No fixed trace file found for analysis"
+            fi
+          fi
+
+      - name: Show CSV
+        if: always()
+        run: |
+          if [ "$USE_SSH" = "true" ]; then
+            ssh $NODE "cat $REPO/$RESULT_DIR/layer_kernel_avg.csv 2>/dev/null || echo 'No CSV'"
+            ssh $NODE "cat $REPO/$RESULT_DIR/allreduce_fusion_dist.csv 2>/dev/null | head -20 || echo 'No allreduce CSV'"
+          else
+            cat $REPO/$RESULT_DIR/layer_kernel_avg.csv 2>/dev/null || echo 'No CSV'
+            cat $REPO/$RESULT_DIR/allreduce_fusion_dist.csv 2>/dev/null | head -20 || echo 'No allreduce CSV'
+          fi
+
+      - name: Git commit and push results
+        if: always()
+        run: |
+          if [ "$USE_SSH" = "true" ]; then
+            ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
+            ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name '${{ inputs.platform }} CI'"
+            ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; for ext in log yml jsonl json md csv; do git add -f $RESULT_DIR/*.\$ext 2>/dev/null; done; git diff --cached --name-only"
+            ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: ${{ inputs.platform }} SGLang FP4 TP=${{ inputs.tp }} EP=${{ inputs.ep }} profiling (${{ inputs.scenario }} c=${{ inputs.concurrency }})' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
+          else
+            docker exec -e REPO=$REPO $CONTAINER bash -c 'chown -R $(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'
+            cd $REPO && git config user.email 'ci@github.com' && git config user.name '${{ inputs.platform }} CI'
+            cd $REPO && git reset HEAD 2>/dev/null; for ext in log yml jsonl json md csv; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done; git diff --cached --name-only
+            cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: ${{ inputs.platform }} SGLang FP4 TP=${{ inputs.tp }} EP=${{ inputs.ep }} profiling (${{ inputs.scenario }} c=${{ inputs.concurrency }})' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi
+          fi
+
+      - name: Show final state
+        if: always()
+        run: |
+          if [ "$USE_SSH" = "true" ]; then
+            ssh $NODE "cd $REPO && git log --oneline -3"
+          else
+            cd $REPO && git log --oneline -3
+          fi
