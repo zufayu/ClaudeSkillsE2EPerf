@@ -352,11 +352,15 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     done
 
     # Warmup to reach steady state (CUDA graphs compiled, caches warm)
+    # Use benchmark_serving directly (NOT ncu_infer.py which has its own lifecycle)
+    case "$SCENARIO" in
+        chat)      ATTACH_ISL=1024; ATTACH_OSL=1024 ;;
+        reasoning) ATTACH_ISL=1024; ATTACH_OSL=8192 ;;
+        summarize) ATTACH_ISL=8192; ATTACH_OSL=1024 ;;
+    esac
     ATTACH_WARMUP_PROMPTS=$((CONCURRENCY * 2))
     log "=== Attach mode: Phase 2b — Warmup ($ATTACH_WARMUP_PROMPTS prompts, c=$CONCURRENCY) ==="
-    WARMUP_BENCH_CMD="python3 $SCRIPT_DIR/ncu_infer.py --backend $BACKEND --mode serve --model $MODEL --tp $TP --ep $EP --bench-only --skip-warmup --concurrency $CONCURRENCY --scenario $SCENARIO --port $PORT --num-prompts $ATTACH_WARMUP_PROMPTS"
-    if [[ -n "${QUANTIZATION:-}" ]]; then WARMUP_BENCH_CMD="$WARMUP_BENCH_CMD --quantization $QUANTIZATION"; fi
-    $WARMUP_BENCH_CMD || log "WARNING: warmup benchmark returned non-zero"
+    python3 -m sglang.bench_serving --model "$MODEL" --port "$PORT" --backend vllm --dataset-name random --random-input-len "$ATTACH_ISL" --random-output-len "$ATTACH_OSL" --random-range-ratio 0.8 --num-prompts "$ATTACH_WARMUP_PROMPTS" --max-concurrency "$CONCURRENCY" --warmup-requests 0 --output-file /tmp/ncu_warmup.jsonl 2>&1 || log "WARNING: warmup benchmark returned non-zero"
     log "Warmup complete."
 
     # Find the GPU worker process for rank 0
@@ -440,10 +444,8 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     [[ "$NUM_PROMPTS_ACTUAL" -eq 0 ]] && NUM_PROMPTS_ACTUAL=$((CONCURRENCY * 10))
     log "=== Attach mode: Phase 2e — Benchmark ($NUM_PROMPTS_ACTUAL prompts) ==="
 
-    BENCH_CMD="python3 $SCRIPT_DIR/ncu_infer.py --backend $BACKEND --mode serve --model $MODEL --tp $TP --ep $EP --bench-only --skip-warmup --concurrency $CONCURRENCY --scenario $SCENARIO --port $PORT --num-prompts $NUM_PROMPTS_ACTUAL"
-    if [[ -n "${QUANTIZATION:-}" ]]; then BENCH_CMD="$BENCH_CMD --quantization $QUANTIZATION"; fi
-    log "Running: $BENCH_CMD"
-    $BENCH_CMD || log "WARNING: benchmark returned non-zero"
+    log "Running: sglang.bench_serving --num-prompts $NUM_PROMPTS_ACTUAL --max-concurrency $CONCURRENCY"
+    python3 -m sglang.bench_serving --model "$MODEL" --port "$PORT" --backend vllm --dataset-name random --random-input-len "$ATTACH_ISL" --random-output-len "$ATTACH_OSL" --random-range-ratio 0.8 --num-prompts "$NUM_PROMPTS_ACTUAL" --max-concurrency "$CONCURRENCY" --warmup-requests 0 --output-file /tmp/ncu_profiled.jsonl 2>&1 || log "WARNING: benchmark returned non-zero"
 
     # Wait for ncu to finish collecting
     log "Waiting for ncu to complete..."
