@@ -71,7 +71,31 @@ jobs:
       - name: "Discover aiter structure"
         if: inputs.action == 'discover' || inputs.action == 'all'
         run: |
-          podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/benchmark_aiter_gemm.sh --action discover --result-dir ./${{ env.RESULT_DIR }}'
+          podman exec $CONTAINER bash -c '
+          echo "=== Find dtype validation in aiter gemm_a8w8 ==="
+          AITER_ROOT=$(python3 -c "import aiter; print(aiter.__path__[0])")
+          echo "AITER_ROOT=$AITER_ROOT"
+
+          echo ""
+          echo "=== gemm_a8w8 source files ==="
+          find $AITER_ROOT -name "*.py" | xargs grep -l "gemm_a8w8" 2>/dev/null | head -20
+
+          echo ""
+          echo "=== dtype validation code ==="
+          find $AITER_ROOT -name "*.py" | xargs grep -n "int8\|fp8\|float8\|should both be" 2>/dev/null | head -40
+
+          echo ""
+          echo "=== gemm_common.py (full) ==="
+          cat $AITER_ROOT/jit/aiter_gemm_common.py 2>/dev/null | head -100 || echo "not found"
+
+          echo ""
+          echo "=== Search for dtype check function ==="
+          find $AITER_ROOT -name "*.py" | xargs grep -n "def.*check\|assert.*dtype\|Weights and act" 2>/dev/null | head -20
+
+          echo ""
+          echo "=== op_tests/test_gemm_a8w8.py header ==="
+          head -60 $(dirname $AITER_ROOT)/op_tests/test_gemm_a8w8.py 2>/dev/null || echo "not found"
+          '
 
       - name: "Benchmark baseline"
         if: inputs.action == 'benchmark-baseline' || inputs.action == 'all'
