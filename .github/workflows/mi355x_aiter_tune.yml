@@ -71,12 +71,17 @@ jobs:
       - name: "Discover aiter structure"
         if: inputs.action == 'discover' || inputs.action == 'all'
         run: |
-          podman exec $CONTAINER bash -c '
+          podman exec $CONTAINER bash << 'DISCOVER_EOF'
           AITER_ROOT=$(python3 -c "import aiter; print(aiter.__path__[0])")
           echo "AITER_ROOT=$AITER_ROOT"
 
           echo "=== aiter.dtypes ==="
-          python3 -c "from aiter import dtypes; print(dir(dtypes)); [print(f\"  {k}={getattr(dtypes,k)}\") for k in dir(dtypes) if not k.startswith(\"_\")]"
+          python3 << 'PYEOF'
+          from aiter import dtypes
+          for k in sorted(dir(dtypes)):
+              if not k.startswith("_"):
+                  print(f"  {k} = {getattr(dtypes, k)}")
+          PYEOF
 
           echo ""
           echo "=== gemm_op_a8w8.py lines 340-400 (dtype check) ==="
@@ -92,23 +97,22 @@ jobs:
 
           echo ""
           echo "=== Quick benchmark test: calling CK variant directly ==="
-          python3 -c "
-import torch
-from aiter import dtypes
-import aiter
-print(f\"dtypes.fp8 = {dtypes.fp8}\")
-print(f\"dtypes.bf16 = {dtypes.bf16}\")
-XQ = torch.randn(4, 8, device=\"cuda\", dtype=dtypes.fp8)
-WQ = torch.randn(8, 8, device=\"cuda\", dtype=dtypes.fp8)
-xs = torch.ones(4, 1, device=\"cuda\", dtype=torch.float32)
-ws = torch.ones(1, 8, device=\"cuda\", dtype=torch.float32)
-print(f\"XQ dtype={XQ.dtype} shape={XQ.shape}\")
-print(f\"WQ dtype={WQ.dtype} shape={WQ.shape}\")
-# Try CK directly with output dtype
-result = aiter.gemm_a8w8_CK(XQ, WQ, xs, ws, None, dtypes.bf16)
-print(f\"SUCCESS: result={result.shape} {result.dtype}\")
-" 2>&1 || echo "CK test failed"
-          '
+          python3 << 'PYEOF'
+          import torch
+          from aiter import dtypes
+          import aiter
+          print(f"dtypes.fp8 = {dtypes.fp8}")
+          print(f"dtypes.bf16 = {dtypes.bf16}")
+          XQ = torch.randn(4, 8, device="cuda", dtype=dtypes.fp8)
+          WQ = torch.randn(8, 8, device="cuda", dtype=dtypes.fp8)
+          xs = torch.ones(4, 1, device="cuda", dtype=torch.float32)
+          ws = torch.ones(1, 8, device="cuda", dtype=torch.float32)
+          print(f"XQ dtype={XQ.dtype} shape={XQ.shape}")
+          print(f"WQ dtype={WQ.dtype} shape={WQ.shape}")
+          result = aiter.gemm_a8w8_CK(XQ, WQ, xs, ws, None, dtypes.bf16)
+          print(f"SUCCESS: result={result.shape} {result.dtype}")
+          PYEOF
+          DISCOVER_EOF
 
       - name: "Benchmark baseline"
         if: inputs.action == 'benchmark-baseline' || inputs.action == 'all'
