@@ -1,0 +1,215 @@
+name: MI355X aiter GEMM Tune
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to run"
+        type: choice
+        options:
+          - discover
+          - benchmark-baseline
+          - tune
+          - benchmark-tuned
+          - all
+        default: discover
+
+jobs:
+  aiter-tune:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 120
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_aiter
+      IMAGE: docker.io/rocm/atom:rocm7.1.1-ubuntu24.04-pytorch2.9-atom0.1.1-MI350x
+      ACTION: ${{ inputs.action }}
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Setup container
+        run: |
+          echo "=== Existing containers ==="
+          podman ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" | head -10
+
+          if podman ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
+            echo "Container $CONTAINER already running"
+          elif podman ps -a --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
+            echo "Container $CONTAINER exists but stopped, starting..."
+            podman start $CONTAINER
+          else
+            echo "Creating container $CONTAINER from $IMAGE..."
+            podman run -dt --group-add keep-groups --network=host \
+              --device=/dev/kfd --device=/dev/dri \
+              --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
+              -v /shared:/shared \
+              -v /shared/data/amd_int:/shared/data/amd_int \
+              -v /shared/amdgpu/home/zufa_yu_qle:/shared/amdgpu/home/zufa_yu_qle \
+              --workdir /shared/amdgpu/home/zufa_yu_qle \
+              --shm-size=64G --ulimit stack=67108864 \
+              --name $CONTAINER \
+              $IMAGE
+            echo "=== $CONTAINER created ==="
+          fi
+
+          echo ""
+          echo "=== Verify container ==="
+          podman exec $CONTAINER python3 --version
+
+      - name: Verify aiter matches zufa_atom
+        run: |
+          echo "=== zufa_aiter aiter version ==="
+          podman exec $CONTAINER python3 -c "import aiter; print(aiter.__version__)" 2>/dev/null || echo "aiter not found"
+          echo "=== zufa_atom aiter version ==="
+          podman exec zufa_atom python3 -c "import aiter; print(aiter.__version__)" 2>/dev/null || echo "zufa_atom not available"
+          echo ""
+          echo "=== ROCm version ==="
+          podman exec $CONTAINER cat /opt/rocm/.info/version 2>/dev/null || echo "unknown"
+          echo "=== GPU ==="
+          podman exec $CONTAINER rocm-smi --showproductname 2>/dev/null | head -5
+
+      - name: "Discover aiter structure"
+        if: inputs.action == 'discover' || inputs.action == 'all'
+        run: |
+          podman exec $CONTAINER bash -c '
+          echo "============================================================"
+          echo "  aiter Discovery"
+          echo "============================================================"
+
+          echo ""
+          echo "=== 1. aiter version and path ==="
+          python3 -c "
+          import aiter
+          print(f\"version: {aiter.__version__}\")
+          print(f\"path: {aiter.__path__}\")
+          print(f\"file: {aiter.__file__}\")
+          " 2>&1 || echo "FAILED to import aiter"
+
+          echo ""
+          echo "=== 2. aiter install info (pip show) ==="
+          pip show aiter 2>/dev/null || echo "aiter not in pip"
+
+          echo ""
+          echo "=== 3. aiter package location ==="
+          AITER_ROOT=$(python3 -c "import aiter; print(aiter.__path__[0])" 2>/dev/null)
+          echo "AITER_ROOT=$AITER_ROOT"
+          AITER_REPO=$(dirname "$AITER_ROOT" 2>/dev/null)
+          echo "AITER_REPO=$AITER_REPO"
+
+          echo ""
+          echo "=== 4. aiter repo top-level files ==="
+          ls -la "$AITER_REPO/" 2>/dev/null | head -30
+
+          echo ""
+          echo "=== 5. aiter/configs/ directory ==="
+          ls -la "$AITER_REPO/aiter/configs/" 2>/dev/null || echo "no configs dir"
+          echo ""
+          echo "--- model_configs/ ---"
+          ls -la "$AITER_REPO/aiter/configs/model_configs/" 2>/dev/null || echo "no model_configs dir"
+
+          echo ""
+          echo "=== 6. op_tests/ directory ==="
+          ls "$AITER_REPO/op_tests/" 2>/dev/null | head -30 || echo "no op_tests dir"
+
+          echo ""
+          echo "=== 7. GEMM-related op_tests ==="
+          ls -la "$AITER_REPO/op_tests/test_gemm"* 2>/dev/null || echo "no test_gemm* files"
+          ls -la "$AITER_REPO/op_tests/test_batched_gemm"* 2>/dev/null || echo "no test_batched_gemm* files"
+
+          echo ""
+          echo "=== 8. csrc/ tune scripts ==="
+          echo "--- ck_gemm_a8w8_bpreshuffle/ ---"
+          ls "$AITER_REPO/csrc/ck_gemm_a8w8_bpreshuffle/"*tune* 2>/dev/null || echo "no tune scripts"
+          ls "$AITER_REPO/csrc/ck_gemm_a8w8_bpreshuffle/"*.py 2>/dev/null || echo "no .py files"
+          echo ""
+          echo "--- ck_batched_gemm_a8w8/ ---"
+          ls "$AITER_REPO/csrc/ck_batched_gemm_a8w8/"*tune* 2>/dev/null || echo "no tune scripts"
+          ls "$AITER_REPO/csrc/ck_batched_gemm_a8w8/"*.py 2>/dev/null || echo "no .py files"
+
+          echo ""
+          echo "=== 9. csrc/ top-level directories ==="
+          ls -d "$AITER_REPO/csrc/"*/ 2>/dev/null | head -30 || echo "no csrc dir"
+
+          echo ""
+          echo "=== 10. aiter public API (dir(aiter)) ==="
+          python3 -c "
+          import aiter
+          attrs = [a for a in dir(aiter) if not a.startswith(\"_\")]
+          print(\"\\n\".join(attrs))
+          " 2>/dev/null | head -50
+
+          echo ""
+          echo "=== 11. aiter.ops or aiter.gemm modules ==="
+          python3 -c "
+          try:
+              from aiter import ops
+              print(\"aiter.ops exists:\", dir(ops))
+          except: print(\"no aiter.ops\")
+          try:
+              from aiter import gemm_a8w8
+              print(\"aiter.gemm_a8w8 exists\")
+          except: print(\"no aiter.gemm_a8w8 module\")
+          try:
+              from aiter import batched_gemm_a8w8
+              print(\"aiter.batched_gemm_a8w8 exists\")
+          except: print(\"no aiter.batched_gemm_a8w8 module\")
+          " 2>&1
+
+          echo ""
+          echo "=== 12. Search for gemm functions in aiter ==="
+          python3 -c "
+          import aiter
+          for name in dir(aiter):
+              if \"gemm\" in name.lower():
+                  obj = getattr(aiter, name, None)
+                  print(f\"{name}: {type(obj).__name__} — {obj.__doc__[:100] if hasattr(obj, \"__doc__\") and obj.__doc__ else \"no doc\"}\")
+          " 2>&1 || echo "FAILED"
+
+          echo ""
+          echo "=== 13. Existing tuned config CSVs (content samples) ==="
+          for csv_file in "$AITER_REPO/aiter/configs/model_configs/"*dsv3*; do
+              if [ -f "$csv_file" ]; then
+                  echo "--- $(basename $csv_file) ---"
+                  head -5 "$csv_file"
+                  echo "  ($(wc -l < "$csv_file") total lines)"
+                  echo ""
+              fi
+          done
+
+          echo ""
+          echo "=== 14. Untuned batched GEMM CSV ==="
+          cat "$AITER_REPO/aiter/configs/a8w8_untuned_batched_gemm.csv" 2>/dev/null || echo "not found"
+          echo ""
+          echo "=== 15. Tuned batched GEMM CSV ==="
+          head -10 "$AITER_REPO/aiter/configs/a8w8_tuned_batched_gemm.csv" 2>/dev/null || echo "not found"
+
+          echo ""
+          echo "=== 16. jit/core.py env var definitions ==="
+          grep -n "AITER_CONFIG\|AITER_TUNE\|AITER_LOG" "$AITER_REPO/aiter/jit/core.py" 2>/dev/null | head -20 || echo "not found"
+
+          echo ""
+          echo "=== 17. .github/scripts/ ==="
+          ls "$AITER_REPO/.github/scripts/" 2>/dev/null || echo "no .github/scripts"
+
+          echo ""
+          echo "=== 18. op_tune.sh ==="
+          cat "$AITER_REPO/.github/scripts/op_tune.sh" 2>/dev/null | head -50 || echo "not found"
+
+          echo ""
+          echo "=== 19. PTPC tune script --help ==="
+          python3 "$AITER_REPO/csrc/ck_gemm_a8w8_bpreshuffle/gemm_a8w8_bpreshuffle_tune.py" --help 2>&1 | head -30 || echo "tune script not found or no --help"
+
+          echo ""
+          echo "=== 20. Batched GEMM tune script --help ==="
+          python3 "$AITER_REPO/csrc/ck_batched_gemm_a8w8/batched_gemm_a8w8_tune.py" --help 2>&1 | head -30 || echo "tune script not found or no --help"
+
+          echo ""
+          echo "============================================================"
+          echo "  Discovery complete"
+          echo "============================================================"
+          '
+
+      - name: Show final state
+        if: always()
+        run: |
+          echo "=== Containers ==="
+          podman ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" | head -10
