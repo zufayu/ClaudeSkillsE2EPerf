@@ -1,0 +1,93 @@
+name: "MI355X Kernel Load Check"
+on:
+  workflow_dispatch:
+
+jobs:
+  kernel-check:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 30
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: "Test Pure MXFP4 kernel loading"
+        run: |
+          echo "=== Launching Pure MXFP4 server (capture startup logs) ==="
+          podman exec $CONTAINER bash -c '
+            timeout 180 python3 -m atom.entrypoints.openai_server \
+              --model /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4 \
+              --kv_cache_dtype fp8 -tp 4 \
+              --port 8010 2>&1 | tee /tmp/pure_mxfp4_startup.log
+          ' || true
+          echo ""
+          echo "=== a8w8_bpreshuffle in Pure MXFP4? ==="
+          podman exec $CONTAINER grep -c "a8w8_bpreshuffle" /tmp/pure_mxfp4_startup.log || echo "NOT FOUND"
+          echo ""
+          echo "=== Attention decorator in Pure MXFP4? ==="
+          podman exec $CONTAINER grep "AttentionImpl" /tmp/pure_mxfp4_startup.log || echo "No attention decorator lines"
+          echo ""
+          echo "=== All module imports in Pure MXFP4 ==="
+          podman exec $CONTAINER grep "import \[module" /tmp/pure_mxfp4_startup.log || echo "No module imports"
+          echo ""
+          echo "=== Tuned GEMM files loaded ==="
+          podman exec $CONTAINER grep "merge tuned file" /tmp/pure_mxfp4_startup.log || echo "No tuned files"
+
+      - name: Kill leftover servers
+        if: always()
+        run: |
+          podman exec $CONTAINER bash -c 'pkill -f "atom.entrypoints.openai_server" 2>/dev/null; sleep 5; pkill -9 -f "atom.entrypoints.openai_server" 2>/dev/null; true'
+
+      - name: "Test MXFP4-MTP-MoEFP4 kernel loading"
+        run: |
+          echo "=== Launching MXFP4-MTP-MoEFP4 server (capture startup logs) ==="
+          podman exec $CONTAINER bash -c '
+            timeout 180 python3 -m atom.entrypoints.openai_server \
+              --model /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4 \
+              --kv_cache_dtype fp8 -tp 4 \
+              --port 8010 2>&1 | tee /tmp/mtp_moefp4_startup.log
+          ' || true
+          echo ""
+          echo "=== a8w8_bpreshuffle in MXFP4-MTP-MoEFP4? ==="
+          podman exec $CONTAINER grep -c "a8w8_bpreshuffle" /tmp/mtp_moefp4_startup.log || echo "NOT FOUND"
+          echo ""
+          echo "=== Attention decorator in MXFP4-MTP-MoEFP4? ==="
+          podman exec $CONTAINER grep "AttentionImpl" /tmp/mtp_moefp4_startup.log || echo "No attention decorator lines"
+          echo ""
+          echo "=== All module imports in MXFP4-MTP-MoEFP4 ==="
+          podman exec $CONTAINER grep "import \[module" /tmp/mtp_moefp4_startup.log || echo "No module imports"
+          echo ""
+          echo "=== Tuned GEMM files loaded ==="
+          podman exec $CONTAINER grep "merge tuned file" /tmp/mtp_moefp4_startup.log || echo "No tuned files"
+
+      - name: Kill leftover servers
+        if: always()
+        run: |
+          podman exec $CONTAINER bash -c 'pkill -f "atom.entrypoints.openai_server" 2>/dev/null; sleep 5; pkill -9 -f "atom.entrypoints.openai_server" 2>/dev/null; true'
+
+      - name: "Side-by-side comparison"
+        if: always()
+        run: |
+          echo "============================================"
+          echo "=== KERNEL LOADING COMPARISON ==="
+          echo "============================================"
+          echo ""
+          echo "--- Pure MXFP4: module imports ---"
+          podman exec $CONTAINER grep "import \[module" /tmp/pure_mxfp4_startup.log 2>/dev/null | sort -u || echo "(none)"
+          echo ""
+          echo "--- MXFP4-MTP-MoEFP4: module imports ---"
+          podman exec $CONTAINER grep "import \[module" /tmp/mtp_moefp4_startup.log 2>/dev/null | sort -u || echo "(none)"
+          echo ""
+          echo "--- Pure MXFP4: tuned GEMM configs ---"
+          podman exec $CONTAINER grep "merge tuned file" /tmp/pure_mxfp4_startup.log 2>/dev/null | sort -u || echo "(none)"
+          echo ""
+          echo "--- MXFP4-MTP-MoEFP4: tuned GEMM configs ---"
+          podman exec $CONTAINER grep "merge tuned file" /tmp/mtp_moefp4_startup.log 2>/dev/null | sort -u || echo "(none)"
+          echo ""
+          echo "--- a8w8_bpreshuffle presence ---"
+          echo -n "Pure MXFP4: "
+          podman exec $CONTAINER grep -c "a8w8_bpreshuffle" /tmp/pure_mxfp4_startup.log 2>/dev/null || echo "0"
+          echo -n "MXFP4-MTP-MoEFP4: "
+          podman exec $CONTAINER grep -c "a8w8_bpreshuffle" /tmp/mtp_moefp4_startup.log 2>/dev/null || echo "0"
