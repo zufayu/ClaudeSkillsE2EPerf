@@ -1,1 +1,1 @@
-==ERROR== unrecognised option '--target-pid'. Use --help for further details.
+==ERROR== Option '--launch-mode attach' is not supported with '--replay-mode application' or '--replay-mode app-range'.
