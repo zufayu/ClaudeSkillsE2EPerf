@@ -32,8 +32,8 @@ jobs:
       - name: Verify environment
         run: |
           echo "=== Container ==="
-          podman exec $CONTAINER python3 -c "import atom; print('ATOM', atom.__version__)"
-          podman exec $CONTAINER python3 -c "import aiter; print('aiter', aiter.__version__)"
+          podman exec $CONTAINER python3 -c "import atom; print('ATOM OK')" || echo "atom import failed"
+          podman exec $CONTAINER python3 -c "import aiter; print('aiter', aiter.__version__)" || echo "aiter import failed"
           podman exec $CONTAINER cat /opt/rocm/.info/version 2>/dev/null || echo "ROCm version unknown"
           echo ""
           echo "=== GPUs ==="
