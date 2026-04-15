@@ -1,0 +1,14 @@
+name: "B200 NCU Help"
+on:
+  workflow_dispatch:
+jobs:
+  ncu-help:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 5
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_sglang
+    steps:
+      - name: ncu version and help
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'ncu --version 2>&1; echo === LAUNCH OPTIONS ===; ncu --help 2>&1 | grep -A2 -i \"launch-skip\|nvtx\|delay\|before-match\|time\|clock\|trigger\"; echo === FULL HELP ===; ncu --help 2>&1 | grep -E \"^  --\" | head -60'"
