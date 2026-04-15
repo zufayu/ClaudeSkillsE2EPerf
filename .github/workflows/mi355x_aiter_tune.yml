@@ -71,48 +71,36 @@ jobs:
       - name: "Discover aiter structure"
         if: inputs.action == 'discover' || inputs.action == 'all'
         run: |
-          podman exec $CONTAINER bash << 'DISCOVER_EOF'
+          cat > /tmp/aiter_discover.sh << 'SCRIPT_EOF'
+          #!/bin/bash
+          set -x
           AITER_ROOT=$(python3 -c "import aiter; print(aiter.__path__[0])")
           echo "AITER_ROOT=$AITER_ROOT"
-
           echo "=== aiter.dtypes ==="
-          python3 << 'PYEOF'
-          from aiter import dtypes
-          for k in sorted(dir(dtypes)):
-              if not k.startswith("_"):
-                  print(f"  {k} = {getattr(dtypes, k)}")
-          PYEOF
-
-          echo ""
-          echo "=== gemm_op_a8w8.py lines 340-400 (dtype check) ==="
-          sed -n "340,400p" $AITER_ROOT/ops/gemm_op_a8w8.py 2>/dev/null || echo "not found"
-
-          echo ""
-          echo "=== gemm_op_a8w8.py lines 1-40 (imports) ==="
+          python3 -c "from aiter import dtypes; [print(f'  {k} = {getattr(dtypes, k)}') for k in sorted(dir(dtypes)) if not k.startswith('_')]"
+          echo "=== gemm_op_a8w8.py lines 340-400 ==="
+          sed -n '340,400p' $AITER_ROOT/ops/gemm_op_a8w8.py 2>/dev/null
+          echo "=== gemm_op_a8w8.py lines 1-40 ==="
           head -40 $AITER_ROOT/ops/gemm_op_a8w8.py 2>/dev/null
-
-          echo ""
-          echo "=== batched_gemm_op_a8w8.py lines 90-130 (dtype check) ==="
-          sed -n "90,130p" $AITER_ROOT/ops/batched_gemm_op_a8w8.py 2>/dev/null || echo "not found"
-
-          echo ""
-          echo "=== Quick benchmark test: calling CK variant directly ==="
-          python3 << 'PYEOF'
-          import torch
-          from aiter import dtypes
-          import aiter
-          print(f"dtypes.fp8 = {dtypes.fp8}")
-          print(f"dtypes.bf16 = {dtypes.bf16}")
-          XQ = torch.randn(4, 8, device="cuda", dtype=dtypes.fp8)
-          WQ = torch.randn(8, 8, device="cuda", dtype=dtypes.fp8)
-          xs = torch.ones(4, 1, device="cuda", dtype=torch.float32)
-          ws = torch.ones(1, 8, device="cuda", dtype=torch.float32)
-          print(f"XQ dtype={XQ.dtype} shape={XQ.shape}")
-          print(f"WQ dtype={WQ.dtype} shape={WQ.shape}")
+          echo "=== batched_gemm_op_a8w8.py lines 90-130 ==="
+          sed -n '90,130p' $AITER_ROOT/ops/batched_gemm_op_a8w8.py 2>/dev/null
+          echo "=== Quick test: CK variant with dtypes.fp8 ==="
+          python3 -c "
+          import torch; from aiter import dtypes; import aiter
+          print('dtypes.fp8 =', dtypes.fp8)
+          print('dtypes.bf16 =', dtypes.bf16)
+          XQ = torch.randn(4, 8, device='cuda', dtype=dtypes.fp8)
+          WQ = torch.randn(8, 8, device='cuda', dtype=dtypes.fp8)
+          xs = torch.ones(4, 1, device='cuda', dtype=torch.float32)
+          ws = torch.ones(1, 8, device='cuda', dtype=torch.float32)
+          print('XQ dtype=', XQ.dtype, 'shape=', XQ.shape)
           result = aiter.gemm_a8w8_CK(XQ, WQ, xs, ws, None, dtypes.bf16)
-          print(f"SUCCESS: result={result.shape} {result.dtype}")
-          PYEOF
-          DISCOVER_EOF
+          print('SUCCESS: result=', result.shape, result.dtype)
+          " 2>&1 || echo "CK test failed"
+          SCRIPT_EOF
+          chmod +x /tmp/aiter_discover.sh
+          podman cp /tmp/aiter_discover.sh $CONTAINER:/tmp/aiter_discover.sh
+          podman exec $CONTAINER bash /tmp/aiter_discover.sh
 
       - name: "Benchmark baseline"
         if: inputs.action == 'benchmark-baseline' || inputs.action == 'all'
