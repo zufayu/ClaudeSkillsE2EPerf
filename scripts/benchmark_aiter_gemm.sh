@@ -113,11 +113,11 @@ OUT_DTYPE = dtypes.bf16
 print(f"FP8 dtype: {FP8}")
 print(f"Output dtype: {OUT_DTYPE}")
 
-# Quick sanity check
-test_xq = torch.randint(0, 127, (4, 8), dtype=torch.uint8, device="cuda").view(FP8)
-test_wq = torch.randint(0, 127, (8, 8), dtype=torch.uint8, device="cuda").view(FP8)
-test_xs = torch.ones(4, 1, device="cuda", dtype=torch.float32)
-test_ws = torch.ones(1, 8, device="cuda", dtype=torch.float32)
+# Quick sanity check with realistic shape (small shapes rejected by CK kernel)
+test_xq = torch.randint(0, 127, (64, 512), dtype=torch.uint8, device="cuda").view(FP8)
+test_wq = torch.randint(0, 127, (512, 512), dtype=torch.uint8, device="cuda").view(FP8)
+test_xs = torch.ones(64, 1, device="cuda", dtype=torch.float32)
+test_ws = torch.ones(1, 512, device="cuda", dtype=torch.float32)
 result = aiter.gemm_a8w8(test_xq, test_wq, test_xs, test_ws, None, OUT_DTYPE)
 print(f"Sanity check: gemm_a8w8 -> {result.shape} {result.dtype}")
 
