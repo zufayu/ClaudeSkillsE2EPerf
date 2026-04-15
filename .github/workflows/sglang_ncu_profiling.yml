@@ -85,6 +85,10 @@ jobs:
           ssh $NODE "docker exec $CONTAINER ncu --version 2>/dev/null | head -1 || echo 'NCU not found in container'"
           ssh $NODE "docker exec $CONTAINER which ncu 2>/dev/null || echo 'ncu not in PATH'"
 
+      - name: Install Nsight Compute (for libcuinj64.so)
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'if find /usr -name libcuinj64.so 2>/dev/null | grep -q .; then echo \"libcuinj64.so already installed\"; else echo \"Installing nsight-compute...\"; apt-get update -qq && apt-get install -y -qq nsight-compute 2>&1 | tail -5; echo \"Verifying:\"; find /usr -name libcuinj64.so 2>/dev/null; fi'"
+
       - name: Clean old results
         run: |
           ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true' && rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true"
