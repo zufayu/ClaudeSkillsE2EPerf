@@ -382,6 +382,7 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     # goes through injection shim). Timeout is ${NCU_ATTACH_TIMEOUT:-3600}s.
     # Override with NCU_ATTACH_TIMEOUT env var if needed.
     ATTACH_SERVER_CMD="$INFER_CMD --server-only"
+    ATTACH_TIMEOUT=${NCU_ATTACH_TIMEOUT:-3600}
     log "Launching server with CUDA_INJECTION64_PATH: $ATTACH_SERVER_CMD"
     log "  Timeout: ${ATTACH_TIMEOUT}s (set NCU_ATTACH_TIMEOUT to override)"
     CUDA_INJECTION64_PATH="$NCU_INJECTION_PATH" $ATTACH_SERVER_CMD &
@@ -391,7 +392,6 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     # Wait for server ready via health endpoint
     log "Waiting for server to be ready..."
     ATTACH_WAIT=0
-    ATTACH_TIMEOUT=${NCU_ATTACH_TIMEOUT:-3600}
     while true; do
         if curl -sf "http://localhost:${PORT}/health" > /dev/null 2>&1; then
             log "Server is ready (${ATTACH_WAIT}s)"
