@@ -325,8 +325,8 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
 
     log "=== Attach mode: Phase 2a — Start server normally ==="
 
-    # Build server launch command (reuse ncu_infer.py but only for server launch + warmup)
-    ATTACH_SERVER_CMD="$INFER_CMD --skip-warmup"
+    # Launch server using --server-only: starts server and blocks (no warmup/benchmark)
+    ATTACH_SERVER_CMD="$INFER_CMD --server-only"
     log "Launching server (no ncu wrapper): $ATTACH_SERVER_CMD"
     $ATTACH_SERVER_CMD &
     ATTACH_SERVER_PID=$!

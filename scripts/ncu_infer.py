@@ -50,6 +50,7 @@ def main():
     parser.add_argument("--num-prompts", type=int, default=0, help="Benchmark prompts (default: concurrency*10)")
     parser.add_argument("--bench-only", action="store_true", help="Serve mode: skip server launch, assume server is already running")
     parser.add_argument("--skip-warmup", action="store_true", help="Serve mode: skip warmup phase")
+    parser.add_argument("--server-only", action="store_true", help="Serve mode: launch server and block (no warmup/benchmark). For NCU attach mode.")
     # SGLang server params
     parser.add_argument("--mem-fraction-static", type=float, default=0.85)
     parser.add_argument("--chunked-prefill-size", type=int, default=16384)
@@ -115,6 +116,7 @@ def run_serve(args):
     print(f"  Concurrency: {args.concurrency}")
     print(f"  Bench-only: {args.bench_only}")
     print(f"  Skip-warmup: {args.skip_warmup}")
+    print(f"  Server-only: {args.server_only}")
     print(f"  Warmup: {warmup_prompts} prompts")
     print(f"  Benchmark: {num_prompts} prompts")
 
@@ -128,6 +130,31 @@ def run_serve(args):
         # Launch server (may be under ncu — slow!)
         server_proc = _launch_server(args)
         _wait_for_server(args.port, timeout=1200)
+
+    if args.server_only:
+        # Server-only mode: block until killed (for NCU attach mode)
+        print(f"\n=== Server-only mode: server running on port {args.port}, waiting for SIGTERM ===")
+        print(f"  PID: {server_proc.pid if server_proc else 'external'}")
+        try:
+            if server_proc:
+                server_proc.wait()
+            else:
+                signal.pause()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if server_proc and server_proc.poll() is None:
+                server_proc.terminate()
+                try:
+                    server_proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    server_proc.kill()
+                    server_proc.wait()
+            subprocess.run(["pkill", "-f", "sglang.launch_server"], capture_output=True)
+            subprocess.run(["pkill", "-f", "trtllm-serve"], capture_output=True)
+            time.sleep(3)
+        print("Server-only mode: done.")
+        return
 
     try:
         if not args.skip_warmup:
