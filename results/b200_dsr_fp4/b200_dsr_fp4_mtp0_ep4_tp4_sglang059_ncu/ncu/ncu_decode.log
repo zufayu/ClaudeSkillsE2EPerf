@@ -1,1 +1,3 @@
-==ERROR== Option '--launch-mode attach' is not supported with '--replay-mode application' or '--replay-mode app-range'.
+==ERROR== Invalid option --target-processes specified for --mode attach
+Use --help for further details.
+
