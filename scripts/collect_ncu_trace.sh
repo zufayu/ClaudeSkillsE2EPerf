@@ -335,18 +335,27 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     log "GPU processes after cleanup:"
     nvidia-smi --query-compute-apps=pid,name,used_memory --format=csv,noheader 2>/dev/null | head -5 || echo "  (none)"
 
-    # Phase 2a: Query injection path and start server with passive injection
+    # Phase 2a: Find injection library and start server with passive injection
     log "=== Attach mode: Phase 2a — Start server with NCU injection (passive) ==="
-    NCU_INJECTION_PATH=$(ncu --query-injection-path 2>/dev/null || true)
-    if [[ -z "$NCU_INJECTION_PATH" ]]; then
-        log "ERROR: ncu --query-injection-path returned empty"
-        log "  Trying fallback paths..."
-        for p in /usr/local/cuda/nsight-compute/host/linux-desktop-glibc_2_11_3-x64/libcuinj64.so /usr/local/cuda/extras/CUPTI/lib64/libcuinj64.so; do
-            if [[ -f "$p" ]]; then NCU_INJECTION_PATH="$p"; break; fi
+    # Derive injection library path from ncu binary location
+    NCU_BIN=$(which ncu 2>/dev/null || true)
+    NCU_INJECTION_PATH=""
+    if [[ -n "$NCU_BIN" ]]; then
+        NCU_DIR_REAL=$(dirname "$(readlink -f "$NCU_BIN")")
+        # libcuinj64.so is typically in the same directory as ncu or in target/linux-desktop-*/
+        for p in "$NCU_DIR_REAL/libcuinj64.so" "$NCU_DIR_REAL"/../target/linux-desktop-*/libcuinj64.so "$NCU_DIR_REAL"/../host/linux-desktop-*/libcuinj64.so; do
+            if [[ -f "$p" ]]; then NCU_INJECTION_PATH="$(readlink -f "$p")"; break; fi
         done
     fi
+    # Broader fallback: search common CUDA paths
     if [[ -z "$NCU_INJECTION_PATH" ]]; then
-        log "ERROR: Could not find NCU injection library"
+        log "Searching for libcuinj64.so..."
+        NCU_INJECTION_PATH=$(find /usr/local/cuda /opt/nvidia 2>/dev/null -name "libcuinj64.so" -print -quit 2>/dev/null || true)
+    fi
+    if [[ -z "$NCU_INJECTION_PATH" ]]; then
+        log "ERROR: Could not find NCU injection library (libcuinj64.so)"
+        log "  ncu binary: $NCU_BIN"
+        log "  ncu dir: ${NCU_DIR_REAL:-unknown}"
         exit 1
     fi
     log "NCU injection library: $NCU_INJECTION_PATH"
@@ -397,7 +406,6 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
 
     NCU_ATTACH_OPTS=(
         --mode attach
-        --target-processes all
         --graph-profiling node
         --pm-sampling-interval 1000
         -k "regex:$KERNEL_REGEX"
