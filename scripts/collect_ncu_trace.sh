@@ -378,8 +378,12 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     log "NCU injection library: $NCU_INJECTION_PATH"
 
     # Launch server with injection library (passive — no profiling yet)
+    # NOTE: CUDA_INJECTION64_PATH causes ~5-10x slower startup (model load
+    # goes through injection shim). Timeout is ${NCU_ATTACH_TIMEOUT:-3600}s.
+    # Override with NCU_ATTACH_TIMEOUT env var if needed.
     ATTACH_SERVER_CMD="$INFER_CMD --server-only"
     log "Launching server with CUDA_INJECTION64_PATH: $ATTACH_SERVER_CMD"
+    log "  Timeout: ${ATTACH_TIMEOUT}s (set NCU_ATTACH_TIMEOUT to override)"
     CUDA_INJECTION64_PATH="$NCU_INJECTION_PATH" $ATTACH_SERVER_CMD &
     ATTACH_SERVER_PID=$!
     log "Server launcher PID=$ATTACH_SERVER_PID"
@@ -387,7 +391,7 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     # Wait for server ready via health endpoint
     log "Waiting for server to be ready..."
     ATTACH_WAIT=0
-    ATTACH_TIMEOUT=900
+    ATTACH_TIMEOUT=${NCU_ATTACH_TIMEOUT:-3600}
     while true; do
         if curl -sf "http://localhost:${PORT}/health" > /dev/null 2>&1; then
             log "Server is ready (${ATTACH_WAIT}s)"
