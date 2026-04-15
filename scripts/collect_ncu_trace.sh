@@ -398,7 +398,6 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     NCU_ATTACH_OPTS=(
         --mode attach
         --target-processes all
-        --replay-mode application
         --graph-profiling node
         --pm-sampling-interval 1000
         -k "regex:$KERNEL_REGEX"
