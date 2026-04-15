@@ -85,9 +85,27 @@ jobs:
           ssh $NODE "docker exec $CONTAINER ncu --version 2>/dev/null | head -1 || echo 'NCU not found in container'"
           ssh $NODE "docker exec $CONTAINER which ncu 2>/dev/null || echo 'ncu not in PATH'"
 
-      - name: Install Nsight Compute (for libcuinj64.so)
+      - name: Find and inject libcuinj64.so for NCU attach mode
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'if find /usr -name libcuinj64.so 2>/dev/null | grep -q .; then echo \"libcuinj64.so already installed\"; else echo \"Installing nsight-compute...\"; apt-get update -qq && apt-get install -y -qq nsight-compute 2>&1 | tail -5; echo \"Verifying:\"; find /usr -name libcuinj64.so 2>/dev/null; fi'"
+          echo "=== Search host for libcuinj64.so ==="
+          HOST_LIB=$(ssh $NODE "find /usr -name 'libcuinj64.so' 2>/dev/null | head -1")
+          if [ -z "$HOST_LIB" ]; then
+            echo "Not in /usr, searching broader..."
+            HOST_LIB=$(ssh $NODE "find /opt /usr/local -name 'libcuinj64.so' 2>/dev/null | head -1")
+          fi
+          if [ -z "$HOST_LIB" ]; then
+            echo "WARNING: libcuinj64.so not found on host. NCU attach mode will fail."
+            echo "Searching for any nsight-compute directory..."
+            ssh $NODE "find /usr /opt -type d -name 'nsight-compute*' 2>/dev/null | head -5"
+            ssh $NODE "dpkg -l 2>/dev/null | grep -i nsight || rpm -qa 2>/dev/null | grep -i nsight || echo 'No nsight packages found'"
+          else
+            echo "Found on host: $HOST_LIB"
+            HOST_DIR=$(ssh $NODE "dirname $HOST_LIB")
+            echo "Copying into container..."
+            ssh $NODE "docker cp $HOST_LIB $CONTAINER:/usr/local/lib/libcuinj64.so"
+            echo "Verify in container:"
+            ssh $NODE "docker exec $CONTAINER ls -la /usr/local/lib/libcuinj64.so"
+          fi
 
       - name: Clean old results
         run: |
