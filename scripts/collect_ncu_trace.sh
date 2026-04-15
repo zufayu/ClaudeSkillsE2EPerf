@@ -318,10 +318,15 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     # This bypasses IPC timeout issues that crash multi-TP frameworks
     # (e.g., TRT-LLM's _create_ipc_executor) under ncu launch mode.
 
-    # Kill any leftover server
-    pids=$(pgrep -f "python3.*sglang.launch_server" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
-    pids=$(pgrep -f "trtllm-serve" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill $pids 2>/dev/null || true
-    sleep 2
+    # Kill any leftover server and free GPU/port
+    log "Cleaning up leftover processes..."
+    pids=$(pgrep -f "python3.*sglang.launch_server" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+    pids=$(pgrep -f "python3.*sglang" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+    pids=$(pgrep -f "trtllm-serve" 2>/dev/null | grep -v $$ || true); [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+    fuser -k -9 "${PORT}/tcp" 2>/dev/null || true
+    sleep 5
+    log "GPU processes after cleanup:"
+    nvidia-smi --query-compute-apps=pid,name,used_memory --format=csv,noheader 2>/dev/null | head -5 || echo "  (none)"
 
     log "=== Attach mode: Phase 2a — Start server normally ==="
 
@@ -335,7 +340,7 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     # Wait for server ready via health endpoint
     log "Waiting for server to be ready..."
     ATTACH_WAIT=0
-    ATTACH_TIMEOUT=600
+    ATTACH_TIMEOUT=900
     while true; do
         if curl -sf "http://localhost:${PORT}/health" > /dev/null 2>&1; then
             log "Server is ready (${ATTACH_WAIT}s)"
