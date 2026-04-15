@@ -481,7 +481,7 @@ def generate_map(b200_rows, b200_totals, mi355x_rows, mi355x_total, b200_csv_pat
         checksum_notes.append(f"WARNING: {len(unmapped_mi355x)} MI355X operators unmapped")
 
     # ── Write CSV ──
-    with open(output_path, "w", newline="") as f:
+    with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
 
         # Header

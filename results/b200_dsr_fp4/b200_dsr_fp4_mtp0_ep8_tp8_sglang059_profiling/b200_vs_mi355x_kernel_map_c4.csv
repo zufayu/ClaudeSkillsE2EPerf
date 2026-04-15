@@ -1,4 +1,4 @@
-B200_Operator,B200_Raw_Kernel,B200_Stream,B200_Avg_us,B200_Overlap_us,B200_Overlap_With,MI355X_Module,MI355X_Kernel,MI355X_Avg_us,Notes
+﻿B200_Operator,B200_Raw_Kernel,B200_Stream,B200_Avg_us,B200_Overlap_us,B200_Overlap_With,MI355X_Module,MI355X_Kernel,MI355X_Avg_us,Notes
 EP_AR+residual+RMSNorm(fused),flashinfer::trtllm_allreduce_fusion::allreduce_fusion_kernel_oneshot_lamport<...,27,26.7,25.1,"other:void fused_a_gemm_kernel<1, 2112, 7168, 16, 8, 256, 16>(__nv(cross):25.1μs",input_layernorm,"void aiter::reduce_scatter_cross_device_store<std::bfloat16_t, 8>(aiter::RankData*, aiter::RankSignals, aiter::Signal*, int, int)",13.98,
 ,,,,,,,"void aiter::local_device_load_rmsnorm<std::bfloat16_t, 512, 2>(aiter::RankSignals, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, float, int, int, int)",5.70,(input_layernorm cont.)
 "other:void fused_a_gemm_kernel<1, 2112, 7168, 16, 8, 256, 16>(__nv",fused_a_gemm_kernel<...>,stream 27 27_overlap,29.6,26.7,EP_AR+residual+RMSNorm(fused)(cross):25.1μs | q/k_norm_RMSNorm(cross):1.6μs,,,,B200 only

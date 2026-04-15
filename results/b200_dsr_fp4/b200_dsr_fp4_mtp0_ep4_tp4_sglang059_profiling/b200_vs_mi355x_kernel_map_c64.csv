@@ -1,4 +1,4 @@
-B200_Operator,B200_Raw_Kernel,B200_Stream,B200_Avg_us,B200_Overlap_us,B200_Overlap_With,MI355X_Module,MI355X_Kernel,MI355X_Avg_us,Notes
+﻿B200_Operator,B200_Raw_Kernel,B200_Stream,B200_Avg_us,B200_Overlap_us,B200_Overlap_With,MI355X_Module,MI355X_Kernel,MI355X_Avg_us,Notes
 EP_AR+residual+RMSNorm(fused),flashinfer::trtllm_allreduce_fusion::allreduce_fusion_kernel_oneshot_lamport<...,23,25.9,0.0,qkv_a_proj_GEMM(same),input_layernorm,"void aiter::reduce_scatter_cross_device_store<std::bfloat16_t, 4>(aiter::RankData*, aiter::RankSignals, aiter::Signal*, int, int)",29.01,
 ,,,,,,,"void aiter::local_device_load_rmsnorm<std::bfloat16_t, 512, 2>(aiter::RankSignals, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, float, int, int, int)",5.51,(input_layernorm cont.)
 qkv_a_proj_GEMM,nvjet_tst_64x32_64x16_2x1_2cta_v_bz_splitK_TNT,23,31.9,0.0,EP_AR+residual+RMSNorm(same) | qkv_a_splitK_reduce(same),gemm_a16w16,aiter::bf16gemm_fp32bf16_tn_64x64_splitk_clean,16.07,
