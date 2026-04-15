@@ -113,100 +113,42 @@ def benchmark_gemm(name, M, N, K, warmup=WARMUP, iters=ITERS):
     """Benchmark aiter PTPC (per-token-per-channel) GEMM a8w8."""
     import aiter
 
-    # A: [M, K] fp8, B: [N, K] fp8 (note: B is [N,K] not [K,N] for aiter)
-    A = torch.randn(M, K, device="cuda").to(FP8)
-    B = torch.randn(N, K, device="cuda").to(FP8)
+    # A: [M, K] fp8, B: [N, K] fp8 — use view to cast to fp8
+    A = torch.randn(M, K, device="cuda", dtype=torch.bfloat16).view(FP8)
+    B = torch.randn(N, K, device="cuda", dtype=torch.bfloat16).view(FP8)
     # Per-token scale for A: [M, 1], per-channel scale for B: [1, N]
     scale_a = torch.ones(M, 1, device="cuda", dtype=torch.float32)
     scale_b = torch.ones(1, N, device="cuda", dtype=torch.float32)
 
-    # Try different API signatures
+    # Try using the gen_*_fake_tensors helper if available, else manual
     result = None
     api_used = "unknown"
+    call_fn = None
 
-    # Strategy 1: aiter.gemm_a8w8 with bias=None
+    # Strategy 1: use gen_gemm_a8w8_ck_fake_tensors for proper tensor setup
     try:
-        result = aiter.gemm_a8w8(A, B, scale_a, scale_b, None)
-        api_used = "aiter.gemm_a8w8(A,B,sa,sb,bias=None)"
+        tensors = aiter.gen_gemm_a8w8_ck_fake_tensors(M, N, K)
+        XQ, WQ, x_scale, w_scale = tensors[0], tensors[1], tensors[2], tensors[3]
+        result = aiter.gemm_a8w8(XQ, WQ, x_scale, w_scale)
+        call_fn = lambda: aiter.gemm_a8w8(XQ, WQ, x_scale, w_scale)
+        api_used = "gen_gemm_a8w8_ck_fake_tensors + gemm_a8w8"
     except Exception as e1:
-        # Strategy 2: without bias
+        # Strategy 2: direct with view-cast tensors
         try:
             result = aiter.gemm_a8w8(A, B, scale_a, scale_b)
-            api_used = "aiter.gemm_a8w8(A,B,sa,sb)"
+            call_fn = lambda: aiter.gemm_a8w8(A, B, scale_a, scale_b)
+            api_used = "gemm_a8w8(view-cast)"
         except Exception as e2:
-            print(f"  ERROR {name}: gemm_a8w8 failed")
-            print(f"    Attempt 1: {e1}")
-            print(f"    Attempt 2: {e2}")
-            return None
-
-    print(f"  {name}: API={api_used}, output shape={result.shape}, dtype={result.dtype}")
-
-    # Warmup
-    torch.cuda.synchronize()
-    for _ in range(warmup):
-        try:
-            aiter.gemm_a8w8(A, B, scale_a, scale_b, None)
-        except:
-            aiter.gemm_a8w8(A, B, scale_a, scale_b)
-    torch.cuda.synchronize()
-
-    # Timed runs
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
-
-    torch.cuda.synchronize()
-    for i in range(iters):
-        start_events[i].record()
-        try:
-            aiter.gemm_a8w8(A, B, scale_a, scale_b, None)
-        except:
-            aiter.gemm_a8w8(A, B, scale_a, scale_b)
-        end_events[i].record()
-    torch.cuda.synchronize()
-
-    times = [start_events[i].elapsed_time(end_events[i]) * 1000 for i in range(iters)]  # μs
-    avg_us = sum(times) / len(times)
-    min_us = min(times)
-    max_us = max(times)
-    print(f"  {name}: M={M} N={N} K={K} → avg={avg_us:.1f}μs min={min_us:.1f}μs max={max_us:.1f}μs")
-    return {"op": name, "type": "ptpc", "M": M, "N": N, "K": K, "B": "", "avg_us": f"{avg_us:.1f}", "min_us": f"{min_us:.1f}", "max_us": f"{max_us:.1f}"}
-
-
-def benchmark_batched_gemm(name, B_count, M, N, K, warmup=WARMUP, iters=ITERS):
-    """Benchmark aiter batched GEMM a8w8."""
-    import aiter
-
-    # A: [B, M, K] fp8, B_mat: [B, N, K] fp8
-    A = torch.randn(B_count, M, K, device="cuda").to(FP8)
-    B_mat = torch.randn(B_count, N, K, device="cuda").to(FP8)
-    # Scales
-    scale_a = torch.ones(B_count, M, 1, device="cuda", dtype=torch.float32)
-    scale_b = torch.ones(B_count, 1, N, device="cuda", dtype=torch.float32)
-
-    result = None
-    api_used = "unknown"
-
-    # Strategy 1: aiter.batched_gemm_a8w8 with bias=None
-    try:
-        result = aiter.batched_gemm_a8w8(A, B_mat, scale_a, scale_b, None)
-        api_used = "aiter.batched_gemm_a8w8(A,B,sa,sb,bias=None)"
-    except Exception as e1:
-        # Strategy 2: without bias
-        try:
-            result = aiter.batched_gemm_a8w8(A, B_mat, scale_a, scale_b)
-            api_used = "aiter.batched_gemm_a8w8(A,B,sa,sb)"
-        except Exception as e2:
-            # Strategy 3: 2D scales
+            # Strategy 3: with bias=None
             try:
-                sa2 = torch.ones(M, 1, device="cuda", dtype=torch.float32)
-                sb2 = torch.ones(1, N, device="cuda", dtype=torch.float32)
-                result = aiter.batched_gemm_a8w8(A, B_mat, sa2, sb2)
-                api_used = "aiter.batched_gemm_a8w8(A,B,sa2d,sb2d)"
+                result = aiter.gemm_a8w8(A, B, scale_a, scale_b, None)
+                call_fn = lambda: aiter.gemm_a8w8(A, B, scale_a, scale_b, None)
+                api_used = "gemm_a8w8(view-cast,bias=None)"
             except Exception as e3:
-                print(f"  ERROR {name}: batched_gemm_a8w8 failed")
-                print(f"    Attempt 1: {e1}")
-                print(f"    Attempt 2: {e2}")
-                print(f"    Attempt 3: {e3}")
+                print(f"  ERROR {name}: gemm_a8w8 failed")
+                print(f"    Strategy 1 (fake_tensors): {e1}")
+                print(f"    Strategy 2 (view-cast): {e2}")
+                print(f"    Strategy 3 (view-cast+bias): {e3}")
                 return None
 
     print(f"  {name}: API={api_used}, output shape={result.shape}, dtype={result.dtype}")
@@ -214,15 +156,7 @@ def benchmark_batched_gemm(name, B_count, M, N, K, warmup=WARMUP, iters=ITERS):
     # Warmup
     torch.cuda.synchronize()
     for _ in range(warmup):
-        try:
-            aiter.batched_gemm_a8w8(A, B_mat, scale_a, scale_b, None)
-        except:
-            try:
-                aiter.batched_gemm_a8w8(A, B_mat, scale_a, scale_b)
-            except:
-                sa2 = torch.ones(M, 1, device="cuda", dtype=torch.float32)
-                sb2 = torch.ones(1, N, device="cuda", dtype=torch.float32)
-                aiter.batched_gemm_a8w8(A, B_mat, sa2, sb2)
+        call_fn()
     torch.cuda.synchronize()
 
     # Timed runs
@@ -232,23 +166,91 @@ def benchmark_batched_gemm(name, B_count, M, N, K, warmup=WARMUP, iters=ITERS):
     torch.cuda.synchronize()
     for i in range(iters):
         start_events[i].record()
-        try:
-            aiter.batched_gemm_a8w8(A, B_mat, scale_a, scale_b, None)
-        except:
-            try:
-                aiter.batched_gemm_a8w8(A, B_mat, scale_a, scale_b)
-            except:
-                sa2 = torch.ones(M, 1, device="cuda", dtype=torch.float32)
-                sb2 = torch.ones(1, N, device="cuda", dtype=torch.float32)
-                aiter.batched_gemm_a8w8(A, B_mat, sa2, sb2)
+        call_fn()
         end_events[i].record()
     torch.cuda.synchronize()
 
-    times = [start_events[i].elapsed_time(end_events[i]) * 1000 for i in range(iters)]  # μs
+    times = [start_events[i].elapsed_time(end_events[i]) * 1000 for i in range(iters)]  # us
     avg_us = sum(times) / len(times)
     min_us = min(times)
     max_us = max(times)
-    print(f"  {name}: B={B_count} M={M} N={N} K={K} → avg={avg_us:.1f}μs min={min_us:.1f}μs max={max_us:.1f}μs")
+    print(f"  {name}: M={M} N={N} K={K} -> avg={avg_us:.1f}us min={min_us:.1f}us max={max_us:.1f}us")
+    return {"op": name, "type": "ptpc", "M": M, "N": N, "K": K, "B": "", "avg_us": f"{avg_us:.1f}", "min_us": f"{min_us:.1f}", "max_us": f"{max_us:.1f}"}
+
+
+def benchmark_batched_gemm(name, B_count, M, N, K, warmup=WARMUP, iters=ITERS):
+    """Benchmark aiter batched GEMM a8w8.
+
+    API: aiter::batched_gemm_a8w8(XQ, WQ, x_scale, w_scale, out, bias=None, splitK=0)
+    Requires pre-allocated output tensor.
+    """
+    import aiter
+
+    # A: [B, M, K] fp8, B_mat: [B, N, K] fp8 — use view to cast
+    A = torch.randn(B_count, M, K, device="cuda", dtype=torch.bfloat16).view(FP8)
+    B_mat = torch.randn(B_count, N, K, device="cuda", dtype=torch.bfloat16).view(FP8)
+    # Pre-allocate output: [B, M, N] in bf16
+    out = torch.empty(B_count, M, N, device="cuda", dtype=torch.bfloat16)
+
+    result = None
+    api_used = "unknown"
+    call_fn = None
+
+    # Strategy 1: use gen_batched_gemm_a8w8_fake_tensors
+    try:
+        tensors = aiter.gen_batched_gemm_a8w8_fake_tensors(B_count, M, N, K)
+        XQ, WQ, x_scale, w_scale = tensors[0], tensors[1], tensors[2], tensors[3]
+        out_t = torch.empty(B_count, M, N, device="cuda", dtype=torch.bfloat16)
+        result = aiter.batched_gemm_a8w8(XQ, WQ, x_scale, w_scale, out_t)
+        call_fn = lambda: aiter.batched_gemm_a8w8(XQ, WQ, x_scale, w_scale, out_t)
+        api_used = "gen_batched_gemm_a8w8_fake_tensors + batched_gemm_a8w8"
+    except Exception as e1:
+        # Strategy 2: manual tensors with out, 3D scales
+        try:
+            scale_a = torch.ones(B_count, M, 1, device="cuda", dtype=torch.float32)
+            scale_b = torch.ones(B_count, 1, N, device="cuda", dtype=torch.float32)
+            result = aiter.batched_gemm_a8w8(A, B_mat, scale_a, scale_b, out)
+            call_fn = lambda: aiter.batched_gemm_a8w8(A, B_mat, scale_a, scale_b, out)
+            api_used = "batched_gemm_a8w8(view-cast,3d-scales,out)"
+        except Exception as e2:
+            # Strategy 3: 2D scales with out
+            try:
+                scale_a = torch.ones(M, 1, device="cuda", dtype=torch.float32)
+                scale_b = torch.ones(1, N, device="cuda", dtype=torch.float32)
+                result = aiter.batched_gemm_a8w8(A, B_mat, scale_a, scale_b, out)
+                call_fn = lambda: aiter.batched_gemm_a8w8(A, B_mat, scale_a, scale_b, out)
+                api_used = "batched_gemm_a8w8(view-cast,2d-scales,out)"
+            except Exception as e3:
+                print(f"  ERROR {name}: batched_gemm_a8w8 failed")
+                print(f"    Strategy 1 (fake_tensors): {e1}")
+                print(f"    Strategy 2 (3d-scales+out): {e2}")
+                print(f"    Strategy 3 (2d-scales+out): {e3}")
+                return None
+
+    print(f"  {name}: API={api_used}, output shape={result.shape}, dtype={result.dtype}")
+
+    # Warmup
+    torch.cuda.synchronize()
+    for _ in range(warmup):
+        call_fn()
+    torch.cuda.synchronize()
+
+    # Timed runs
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
+
+    torch.cuda.synchronize()
+    for i in range(iters):
+        start_events[i].record()
+        call_fn()
+        end_events[i].record()
+    torch.cuda.synchronize()
+
+    times = [start_events[i].elapsed_time(end_events[i]) * 1000 for i in range(iters)]  # us
+    avg_us = sum(times) / len(times)
+    min_us = min(times)
+    max_us = max(times)
+    print(f"  {name}: B={B_count} M={M} N={N} K={K} -> avg={avg_us:.1f}us min={min_us:.1f}us max={max_us:.1f}us")
     return {"op": name, "type": "batched", "M": M, "N": N, "K": K, "B": B_count, "avg_us": f"{avg_us:.1f}", "min_us": f"{min_us:.1f}", "max_us": f"{max_us:.1f}"}
 
 
