@@ -72,29 +72,42 @@ jobs:
         if: inputs.action == 'discover' || inputs.action == 'all'
         run: |
           podman exec $CONTAINER bash -c '
-          echo "=== Find dtype validation in aiter gemm_a8w8 ==="
           AITER_ROOT=$(python3 -c "import aiter; print(aiter.__path__[0])")
           echo "AITER_ROOT=$AITER_ROOT"
 
-          echo ""
-          echo "=== gemm_a8w8 source files ==="
-          find $AITER_ROOT -name "*.py" | xargs grep -l "gemm_a8w8" 2>/dev/null | head -20
+          echo "=== aiter.dtypes ==="
+          python3 -c "from aiter import dtypes; print(dir(dtypes)); [print(f\"  {k}={getattr(dtypes,k)}\") for k in dir(dtypes) if not k.startswith(\"_\")]"
 
           echo ""
-          echo "=== dtype validation code ==="
-          find $AITER_ROOT -name "*.py" | xargs grep -n "int8\|fp8\|float8\|should both be" 2>/dev/null | head -40
+          echo "=== gemm_op_a8w8.py lines 340-400 (dtype check) ==="
+          sed -n "340,400p" $AITER_ROOT/ops/gemm_op_a8w8.py 2>/dev/null || echo "not found"
 
           echo ""
-          echo "=== gemm_common.py (full) ==="
-          cat $AITER_ROOT/jit/aiter_gemm_common.py 2>/dev/null | head -100 || echo "not found"
+          echo "=== gemm_op_a8w8.py lines 1-40 (imports) ==="
+          head -40 $AITER_ROOT/ops/gemm_op_a8w8.py 2>/dev/null
 
           echo ""
-          echo "=== Search for dtype check function ==="
-          find $AITER_ROOT -name "*.py" | xargs grep -n "def.*check\|assert.*dtype\|Weights and act" 2>/dev/null | head -20
+          echo "=== batched_gemm_op_a8w8.py lines 90-130 (dtype check) ==="
+          sed -n "90,130p" $AITER_ROOT/ops/batched_gemm_op_a8w8.py 2>/dev/null || echo "not found"
 
           echo ""
-          echo "=== op_tests/test_gemm_a8w8.py header ==="
-          head -60 $(dirname $AITER_ROOT)/op_tests/test_gemm_a8w8.py 2>/dev/null || echo "not found"
+          echo "=== Quick benchmark test: calling CK variant directly ==="
+          python3 -c "
+import torch
+from aiter import dtypes
+import aiter
+print(f\"dtypes.fp8 = {dtypes.fp8}\")
+print(f\"dtypes.bf16 = {dtypes.bf16}\")
+XQ = torch.randn(4, 8, device=\"cuda\", dtype=dtypes.fp8)
+WQ = torch.randn(8, 8, device=\"cuda\", dtype=dtypes.fp8)
+xs = torch.ones(4, 1, device=\"cuda\", dtype=torch.float32)
+ws = torch.ones(1, 8, device=\"cuda\", dtype=torch.float32)
+print(f\"XQ dtype={XQ.dtype} shape={XQ.shape}\")
+print(f\"WQ dtype={WQ.dtype} shape={WQ.shape}\")
+# Try CK directly with output dtype
+result = aiter.gemm_a8w8_CK(XQ, WQ, xs, ws, None, dtypes.bf16)
+print(f\"SUCCESS: result={result.shape} {result.dtype}\")
+" 2>&1 || echo "CK test failed"
           '
 
       - name: "Benchmark baseline"
