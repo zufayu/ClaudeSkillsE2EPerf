@@ -91,7 +91,7 @@ jobs:
 
       - name: "NCU profiling (${{ inputs.ncu_mode }} mode, ${{ inputs.scenario }} c=${{ inputs.concurrency }}, TP${{ inputs.tp }} EP${{ inputs.ep }})"
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_ncu_trace.sh --model $MODEL_FP4 --backend sglang --mode serve --tp $TP --ep $EP --quantization modelopt_fp4 --scenario $SCENARIO --concurrency $CONC --ncu-set $NCU_SET --ncu-mode $NCU_MODE --launch-count $LAUNCH_COUNT --result-dir ./$RESULT_DIR'" 2>&1 | tail -100
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO && bash scripts/collect_ncu_trace.sh --model $MODEL_FP4 --backend sglang --mode serve --tp $TP --ep $EP --quantization modelopt_fp4 --scenario $SCENARIO --concurrency $CONC --ncu-set $NCU_SET --ncu-mode $NCU_MODE --launch-count $LAUNCH_COUNT --result-dir ./$RESULT_DIR'" 2>&1 | tail -200
 
       - name: Show NCU results
         if: always()

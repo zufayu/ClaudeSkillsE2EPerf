@@ -372,23 +372,28 @@ if [[ "$NCU_MODE" == "attach" ]] && [[ "$MODE" == "serve" ]]; then
     log "=== Attach mode: Phase 2c — Find GPU worker PID ==="
     sleep 2
 
+    # Debug: show all GPU processes and sglang processes
+    log "GPU compute processes:"
+    nvidia-smi --query-compute-apps=pid,name,used_memory --format=csv,noheader 2>/dev/null || log "  nvidia-smi query failed"
+    log "SGLang processes:"
+    pgrep -af "sglang" 2>/dev/null || log "  no sglang processes found"
+    log "Server launcher PID=$ATTACH_SERVER_PID alive=$(kill -0 $ATTACH_SERVER_PID 2>/dev/null && echo yes || echo no)"
+
+    # Temporarily disable set -e for PID discovery (pipefail can cause issues)
+    set +e
+    TARGET_PID=""
     if [[ "$BACKEND" == "sglang" ]]; then
-        # SGLang uses torch.distributed — look for the sglang worker processes
-        # The main process is the scheduler; GPU workers are child processes
-        # Use nvidia-smi to find processes using GPU 0
-        TARGET_PID=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | head -1)
+        TARGET_PID=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')
         if [[ -z "$TARGET_PID" ]]; then
-            # Fallback: find sglang tp_worker or model_runner processes
             TARGET_PID=$(pgrep -f "sglang.*worker" 2>/dev/null | head -1)
         fi
         if [[ -z "$TARGET_PID" ]]; then
-            # Fallback 2: any python process using sglang
             TARGET_PID=$(pgrep -f "python.*sglang" 2>/dev/null | head -1)
         fi
     elif [[ "$BACKEND" == "trtllm" ]]; then
-        # TRT-LLM: look for the executor worker process on GPU 0
-        TARGET_PID=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | head -1)
+        TARGET_PID=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')
     fi
+    set -e
 
     if [[ -z "$TARGET_PID" ]]; then
         log "ERROR: Could not find GPU worker PID"
