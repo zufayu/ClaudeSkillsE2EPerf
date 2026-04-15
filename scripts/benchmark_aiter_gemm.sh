@@ -108,32 +108,97 @@ TAG = sys.argv[2]
 WARMUP = int(sys.argv[3])
 ITERS = int(sys.argv[4])
 
-# FP8 dtype for MI300/MI355 (fnuz variant)
-FP8 = torch.float8_e4m3fnuz
+# Discover which fp8 dtype works on this platform
+FP8_CANDIDATES = []
+for dtype_name in ["float8_e4m3fnuz", "float8_e4m3fn", "float8_e5m2fnuz", "float8_e5m2"]:
+    if hasattr(torch, dtype_name):
+        FP8_CANDIDATES.append(getattr(torch, dtype_name))
 
-def make_fp8(shape, device="cuda"):
-    """Create fp8 tensor with correct shape using randint+view (1 byte per element)."""
-    return torch.randint(0, 127, shape, dtype=torch.uint8, device=device).view(FP8)
+print("=== FP8 dtype discovery ===")
+print(f"  Candidates: {[str(d) for d in FP8_CANDIDATES]}")
 
-# Print API signatures for debugging
-print("=== API signatures ===")
-for fn_name in ["gemm_a8w8", "batched_gemm_a8w8", "gen_gemm_a8w8_ck_fake_tensors", "gen_batched_gemm_a8w8_fake_tensors"]:
-    fn = getattr(aiter, fn_name, None)
-    if fn:
+# Also check what aiter considers valid by inspecting source
+try:
+    import aiter.jit.aiter_gemm_a8w8 as gemm_mod
+    src_file = inspect.getfile(gemm_mod)
+    print(f"  gemm_a8w8 source: {src_file}")
+    with open(src_file) as f:
+        for line in f:
+            if "int8" in line.lower() or "fp8" in line.lower() or "float8" in line.lower():
+                print(f"    {line.rstrip()}")
+except Exception as e:
+    print(f"  Could not inspect gemm source: {e}")
+
+# Try each fp8 dtype to find which one aiter accepts
+FP8 = None
+for candidate in FP8_CANDIDATES:
+    try:
+        test_xq = torch.randint(0, 127, (4, 8), dtype=torch.uint8, device="cuda").view(candidate)
+        test_wq = torch.randint(0, 127, (8, 8), dtype=torch.uint8, device="cuda").view(candidate)
+        test_xs = torch.ones(4, 1, device="cuda", dtype=torch.float32)
+        test_ws = torch.ones(1, 8, device="cuda", dtype=torch.float32)
+        test_out = torch.empty(4, 8, device="cuda", dtype=torch.bfloat16)
+        # Try gemm_a8w8
+        aiter.gemm_a8w8(test_xq, test_wq, test_xs, test_ws, test_out)
+        FP8 = candidate
+        print(f"  FOUND working dtype: {FP8}")
+        break
+    except Exception as e:
+        print(f"  {candidate}: {e}")
+
+# If no fp8 works, try torch.int8
+if FP8 is None:
+    print("  No fp8 dtype worked, trying torch.int8...")
+    try:
+        test_xq = torch.randint(-128, 127, (4, 8), dtype=torch.int8, device="cuda")
+        test_wq = torch.randint(-128, 127, (8, 8), dtype=torch.int8, device="cuda")
+        test_xs = torch.ones(4, 1, device="cuda", dtype=torch.float32)
+        test_ws = torch.ones(1, 8, device="cuda", dtype=torch.float32)
+        test_out = torch.empty(4, 8, device="cuda", dtype=torch.bfloat16)
+        aiter.gemm_a8w8(test_xq, test_wq, test_xs, test_ws, test_out)
+        FP8 = torch.int8
+        print(f"  FOUND working dtype: torch.int8")
+    except Exception as e:
+        print(f"  torch.int8: {e}")
+
+if FP8 is None:
+    # Last resort: try the _CK variants directly
+    print("  Trying gemm_a8w8_CK directly...")
+    for candidate in FP8_CANDIDATES:
         try:
-            sig = inspect.signature(fn)
-            print(f"  {fn_name}{sig}")
-        except:
-            print(f"  {fn_name}: (signature unavailable)")
+            test_xq = torch.randint(0, 127, (4, 8), dtype=torch.uint8, device="cuda").view(candidate)
+            test_wq = torch.randint(0, 127, (8, 8), dtype=torch.uint8, device="cuda").view(candidate)
+            test_xs = torch.ones(4, 1, device="cuda", dtype=torch.float32)
+            test_ws = torch.ones(1, 8, device="cuda", dtype=torch.float32)
+            test_out = torch.empty(4, 8, device="cuda", dtype=torch.bfloat16)
+            aiter.gemm_a8w8_CK(test_xq, test_wq, test_xs, test_ws, test_out)
+            FP8 = candidate
+            print(f"  gemm_a8w8_CK works with {FP8}")
+            # Override: use CK variant
+            break
+        except Exception as e:
+            print(f"  gemm_a8w8_CK {candidate}: {e}")
+
+if FP8 is None:
+    print("ERROR: No dtype accepted by aiter gemm_a8w8. Cannot benchmark.")
+    sys.exit(1)
+
+print(f"\nUsing dtype: {FP8}")
 print()
+
+def make_tensor(shape, device="cuda"):
+    """Create tensor with the working dtype."""
+    if FP8 == torch.int8:
+        return torch.randint(-128, 127, shape, dtype=torch.int8, device=device)
+    else:
+        return torch.randint(0, 127, shape, dtype=torch.uint8, device=device).view(FP8)
 
 
 def benchmark_gemm(name, M, N, K, warmup=WARMUP, iters=ITERS):
-    """Benchmark aiter PTPC (per-token-per-channel) GEMM a8w8."""
+    """Benchmark aiter PTPC GEMM a8w8."""
 
-    # Create fp8 tensors: A [M,K], B [N,K]
-    XQ = make_fp8((M, K))
-    WQ = make_fp8((N, K))
+    XQ = make_tensor((M, K))
+    WQ = make_tensor((N, K))
     x_scale = torch.ones(M, 1, device="cuda", dtype=torch.float32)
     w_scale = torch.ones(1, N, device="cuda", dtype=torch.float32)
     Out = torch.empty(M, N, device="cuda", dtype=torch.bfloat16)
@@ -144,52 +209,31 @@ def benchmark_gemm(name, M, N, K, warmup=WARMUP, iters=ITERS):
     call_fn = None
     api_used = "unknown"
 
-    # Strategy 1: gen_gemm_a8w8_ck_fake_tensors (pass all required args)
+    # Try gemm_a8w8 with Out
     try:
-        sig = inspect.signature(aiter.gen_gemm_a8w8_ck_fake_tensors)
-        nparams = len(sig.parameters)
-        print(f"    gen_gemm_a8w8_ck_fake_tensors has {nparams} params: {sig}")
-        if nparams <= 3:
-            tensors = aiter.gen_gemm_a8w8_ck_fake_tensors(M, N, K)
-        elif nparams <= 5:
-            tensors = aiter.gen_gemm_a8w8_ck_fake_tensors(M, N, K, w_scale, Out)
-        else:
-            tensors = aiter.gen_gemm_a8w8_ck_fake_tensors(M, N, K, x_scale, w_scale, Out)
-        if isinstance(tensors, (tuple, list)):
-            print(f"    returned {len(tensors)} tensors: {[t.shape for t in tensors if hasattr(t, 'shape')]}")
-            # Try calling gemm_a8w8 with returned tensors
-            result = aiter.gemm_a8w8(*tensors)
-            call_fn = lambda: aiter.gemm_a8w8(*tensors)
-            api_used = "gen_fake_tensors"
-        else:
-            raise ValueError(f"Unexpected return type: {type(tensors)}")
+        result = aiter.gemm_a8w8(XQ, WQ, x_scale, w_scale, Out)
+        call_fn = lambda: aiter.gemm_a8w8(XQ, WQ, x_scale, w_scale, Out)
+        api_used = "gemm_a8w8(XQ,WQ,xs,ws,Out)"
     except Exception as e1:
-        # Strategy 2: direct call with out
+        # Try without Out
         try:
-            result = aiter.gemm_a8w8(XQ, WQ, x_scale, w_scale, Out)
-            call_fn = lambda: aiter.gemm_a8w8(XQ, WQ, x_scale, w_scale, Out)
-            api_used = "gemm_a8w8(XQ,WQ,xs,ws,Out)"
+            result = aiter.gemm_a8w8(XQ, WQ, x_scale, w_scale)
+            call_fn = lambda: aiter.gemm_a8w8(XQ, WQ, x_scale, w_scale)
+            api_used = "gemm_a8w8(XQ,WQ,xs,ws)"
         except Exception as e2:
-            # Strategy 3: without out
+            # Try CK variant
             try:
-                result = aiter.gemm_a8w8(XQ, WQ, x_scale, w_scale)
-                call_fn = lambda: aiter.gemm_a8w8(XQ, WQ, x_scale, w_scale)
-                api_used = "gemm_a8w8(XQ,WQ,xs,ws)"
+                result = aiter.gemm_a8w8_CK(XQ, WQ, x_scale, w_scale, Out)
+                call_fn = lambda: aiter.gemm_a8w8_CK(XQ, WQ, x_scale, w_scale, Out)
+                api_used = "gemm_a8w8_CK(XQ,WQ,xs,ws,Out)"
             except Exception as e3:
-                # Strategy 4: with bias=None
-                try:
-                    result = aiter.gemm_a8w8(XQ, WQ, x_scale, w_scale, None)
-                    call_fn = lambda: aiter.gemm_a8w8(XQ, WQ, x_scale, w_scale, None)
-                    api_used = "gemm_a8w8(XQ,WQ,xs,ws,None)"
-                except Exception as e4:
-                    print(f"  ERROR {name}: all strategies failed")
-                    print(f"    S1 (fake_tensors): {e1}")
-                    print(f"    S2 (with out): {e2}")
-                    print(f"    S3 (no out): {e3}")
-                    print(f"    S4 (bias=None): {e4}")
-                    return None
+                print(f"  ERROR {name}: all strategies failed")
+                print(f"    gemm_a8w8+Out: {e1}")
+                print(f"    gemm_a8w8: {e2}")
+                print(f"    gemm_a8w8_CK+Out: {e3}")
+                return None
 
-    print(f"  {name}: API={api_used}, output shape={result.shape}, dtype={result.dtype}")
+    print(f"  {name}: API={api_used}, output={result.shape} {result.dtype}")
 
     # Warmup + timed runs
     torch.cuda.synchronize()
@@ -217,8 +261,8 @@ def benchmark_gemm(name, M, N, K, warmup=WARMUP, iters=ITERS):
 def benchmark_batched_gemm(name, B_count, M, N, K, warmup=WARMUP, iters=ITERS):
     """Benchmark aiter batched GEMM a8w8."""
 
-    XQ = make_fp8((B_count, M, K))
-    WQ = make_fp8((B_count, N, K))
+    XQ = make_tensor((B_count, M, K))
+    WQ = make_tensor((B_count, N, K))
     x_scale = torch.ones(B_count, M, 1, device="cuda", dtype=torch.float32)
     w_scale = torch.ones(B_count, 1, N, device="cuda", dtype=torch.float32)
     Out = torch.empty(B_count, M, N, device="cuda", dtype=torch.bfloat16)
@@ -229,30 +273,19 @@ def benchmark_batched_gemm(name, B_count, M, N, K, warmup=WARMUP, iters=ITERS):
     call_fn = None
     api_used = "unknown"
 
-    # Strategy 1: gen_batched_gemm_a8w8_fake_tensors
+    # Try batched_gemm_a8w8 with Out
     try:
-        sig = inspect.signature(aiter.gen_batched_gemm_a8w8_fake_tensors)
-        nparams = len(sig.parameters)
-        print(f"    gen_batched_gemm_a8w8_fake_tensors has {nparams} params: {sig}")
-        if nparams <= 4:
-            tensors = aiter.gen_batched_gemm_a8w8_fake_tensors(B_count, M, N, K)
-        else:
-            tensors = aiter.gen_batched_gemm_a8w8_fake_tensors(B_count, M, N, K, Out)
-        if isinstance(tensors, (tuple, list)):
-            print(f"    returned {len(tensors)} tensors: {[t.shape for t in tensors if hasattr(t, 'shape')]}")
-            result = aiter.batched_gemm_a8w8(*tensors)
-            call_fn = lambda: aiter.batched_gemm_a8w8(*tensors)
-            api_used = "gen_fake_tensors"
-        else:
-            raise ValueError(f"Unexpected return: {type(tensors)}")
+        result = aiter.batched_gemm_a8w8(XQ, WQ, x_scale, w_scale, Out)
+        call_fn = lambda: aiter.batched_gemm_a8w8(XQ, WQ, x_scale, w_scale, Out)
+        api_used = "batched_gemm_a8w8(XQ,WQ,xs,ws,Out)"
     except Exception as e1:
-        # Strategy 2: direct with Out
+        # Try CK variant
         try:
-            result = aiter.batched_gemm_a8w8(XQ, WQ, x_scale, w_scale, Out)
-            call_fn = lambda: aiter.batched_gemm_a8w8(XQ, WQ, x_scale, w_scale, Out)
-            api_used = "batched_gemm_a8w8(XQ,WQ,xs,ws,Out)"
+            result = aiter.batched_gemm_a8w8_CK(XQ, WQ, x_scale, w_scale, Out)
+            call_fn = lambda: aiter.batched_gemm_a8w8_CK(XQ, WQ, x_scale, w_scale, Out)
+            api_used = "batched_gemm_a8w8_CK(XQ,WQ,xs,ws,Out)"
         except Exception as e2:
-            # Strategy 3: 2D scales
+            # Try 2D scales
             try:
                 xs2 = torch.ones(M, 1, device="cuda", dtype=torch.float32)
                 ws2 = torch.ones(1, N, device="cuda", dtype=torch.float32)
@@ -261,12 +294,12 @@ def benchmark_batched_gemm(name, B_count, M, N, K, warmup=WARMUP, iters=ITERS):
                 api_used = "batched_gemm_a8w8(XQ,WQ,xs2d,ws2d,Out)"
             except Exception as e3:
                 print(f"  ERROR {name}: all strategies failed")
-                print(f"    S1 (fake_tensors): {e1}")
-                print(f"    S2 (3d-scales+Out): {e2}")
-                print(f"    S3 (2d-scales+Out): {e3}")
+                print(f"    batched+Out: {e1}")
+                print(f"    batched_CK+Out: {e2}")
+                print(f"    batched+2d: {e3}")
                 return None
 
-    print(f"  {name}: API={api_used}, output shape={result.shape}, dtype={result.dtype}")
+    print(f"  {name}: API={api_used}, output={result.shape} {result.dtype}")
 
     # Warmup + timed runs
     torch.cuda.synchronize()
