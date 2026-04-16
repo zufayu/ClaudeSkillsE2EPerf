@@ -187,7 +187,18 @@ def main():
     kernels = extract_kernels_in_window(evts, ts0, ts0 + dur)
     print(f"  Kernels in window: {len(kernels)}")
 
-    layers = split_layers(kernels)
+    all_layers = split_layers(kernels)
+    # First "layer" may be partial (tail of previous layer). Skip if it starts
+    # with MoE kernels instead of pre-attn reduce_scatter.
+    if all_layers and any(p in all_layers[0][0].get("name", "")
+                          for p in ["reduce_scatter"]):
+        # Check if this RS is post-attn (followed by router/moe)
+        if len(all_layers[0]) > 2:
+            third = all_layers[0][min(2, len(all_layers[0])-1)].get("name", "")
+            if any(p in third for p in ["bf16gemm", "grouped_topk", "moe"]):
+                print(f"  Skipping partial first layer ({len(all_layers[0])} kernels, starts with post-attn RS)")
+                all_layers = all_layers[1:]
+    layers = all_layers
     print(f"  Layers detected: {len(layers)}")
 
     if len(layers) <= layer_end:
