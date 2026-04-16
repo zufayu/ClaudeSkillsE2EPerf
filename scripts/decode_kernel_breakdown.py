@@ -12,7 +12,6 @@ Usage:
 
 import argparse
 import collections
-import csv
 import gzip
 import json
 import os
@@ -63,18 +62,32 @@ def extract_kernels_in_window(evts, ts_start, ts_end):
     return sorted(kernels, key=lambda e: e["ts"])
 
 
-def extract_modules_in_window(evts, ts_start, ts_end):
-    """Get all user_annotation module markers within a time window."""
-    modules = [
-        e for e in evts
-        if e.get("cat") == "user_annotation"
-        and e.get("ph") == "X"
-        and e["ts"] >= ts_start
-        and e["ts"] <= ts_end
-        and not e.get("name", "").startswith("decode[")
-        and not e.get("name", "").startswith("prefill[")
+def classify_kernel(name):
+    """Map kernel name to cpu_module (matching old parse_trace.py format)."""
+    patterns = [
+        ("reduce_scatter_cross_device", "input_layernorm"),
+        ("local_device_load_rmsnorm", "input_layernorm"),
+        ("add_rmsnorm_quant", "hipLaunchKernel"),
+        ("dynamic_per_token_scaled_quant", "per_token_quant_hip"),
+        ("fused_qk_rmsnorm_group_quant", "q_proj_and_k_up_proj"),
+        ("FlatmmKernel", "q_proj_and_k_up_proj"),
+        ("Cijk_BBS", "q_proj_and_k_up_proj"),
+        ("bf16gemm", "gemm_a16w16"),
+        ("fuse_qk_rope_concat", "rope_and_kv_cache"),
+        ("mla_a8w8", "mla_decode"),
+        ("kn_mla_reduce", "mla_decode"),
+        ("batched_gemm_a8w8", "v_up_proj_and_o_proj"),
+        ("kernel_moe_mxgemm", "mxfp4_moe"),
+        ("mxfp4_quant_moe_sort", "mxfp4_moe"),
+        ("MoeSortingMultiPhase", "mxfp4_moe"),
+        ("grouped_topk_opt_sort", "mxfp4_moe"),
+        ("triton_poi_fused", "triton_poi"),
+        ("gemm_xdl_cshuffle_v3_multi_d_b_preshuffle", "gemm_a8w8_bpreshuffle"),
     ]
-    return sorted(modules, key=lambda e: e["ts"])
+    for pattern, module in patterns:
+        if pattern in name:
+            return module
+    return "other"
 
 
 def identify_layers_by_kernel(kernels):
@@ -112,14 +125,14 @@ def main():
     parser.add_argument("--target-bs", type=int, default=64)
     parser.add_argument("--skip-ratio", type=float, default=0.5)
     parser.add_argument("--layers", type=str, default="10-40", help="Layer range (e.g., 10-40)")
-    parser.add_argument("--output", type=str, default=None, help="Output CSV path")
+    parser.add_argument("--output", type=str, default=None, help="Output xlsx path")
     args = parser.parse_args()
 
     # Auto-detect output filename
     if args.output is None:
         m = re.search(r'_(c\d+)[_.]', os.path.basename(args.trace))
         suffix = m.group(1) if m else f"c{args.target_bs}"
-        args.output = f"decode_breakdown_{suffix}.csv"
+        args.output = f"decode_breakdown_{suffix}.xlsx"
 
     layer_start, layer_end = map(int, args.layers.split("-"))
 
@@ -191,35 +204,61 @@ def main():
     for k_name, avg, cnt, pct in flat[:25]:
         print(f"  {k_name[:73]:<73} {avg:>7.1f} {cnt:>5.1f}x {pct:>5.1f}%")
 
-    # Write CSV
+    # Classify kernels into modules
+    classified = []
+    for k_name, avg, cnt, pct in flat:
+        module = classify_kernel(k_name)
+        classified.append((module, k_name, avg, cnt, pct))
+
+    # Group by module (preserve order of first appearance)
+    module_order = []
+    module_kernels = collections.defaultdict(list)
+    for module, k_name, avg, cnt, pct in classified:
+        if module not in module_order:
+            module_order.append(module)
+        module_kernels[module].append((k_name, avg, cnt, pct))
+
+    # Write xlsx (matching old parse_trace.py format)
+    from openpyxl import Workbook
+    wb = Workbook()
+
+    # Sheet 1: "decode" — grouped by module
+    ws = wb.active
+    ws.title = "decode"
+    ws.append(["cpu_module", "gpu_kernel", "duration_us", "pct%",
+               "sum per module", "module_pct%", "avg duration_us", "avg sum per module"])
+
+    for module in module_order:
+        kernels_list = module_kernels[module]
+        mod_sum = sum(k[1] for k in kernels_list)
+        mod_pct = mod_sum / per_layer_dur * 100 if per_layer_dur else 0
+        first = True
+        for k_name, avg, cnt, pct in kernels_list:
+            row = [
+                module if first else "",
+                k_name,
+                round(avg, 3),
+                round(pct, 1),
+                round(mod_sum, 3) if first else "",
+                round(mod_pct, 1) if first else "",
+                round(avg, 3),
+                round(mod_sum, 3) if first else "",
+            ]
+            ws.append(row)
+            first = False
+
+    ws.append(["TOTAL", "", round(per_layer_dur, 3), "100", "", "100",
+               round(per_layer_dur, 3), ""])
+
+    # Sheet 2: "kernel_summary" — flat sorted by duration
+    ws2 = wb.create_sheet("kernel_summary")
+    ws2.append(["gpu_kernel", "calls", "total_duration_us", "avg_duration_us", "pct%"])
+    for k_name, avg, cnt, pct in flat:
+        ws2.append([k_name, round(cnt, 1), round(avg * cnt, 1), round(avg, 1), round(pct, 1)])
+
     print(f"\nWriting {args.output}...")
-    with open(args.output, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["kernel_name", "avg_us", "count_per_layer", "pct"])
-        for k_name, avg, cnt, pct in flat:
-            writer.writerow([k_name, f"{avg:.1f}", f"{cnt:.1f}", f"{pct:.1f}"])
-
-    # Write xlsx
-    xlsx_path = args.output.replace(".csv", ".xlsx")
-    try:
-        from openpyxl import Workbook
-        wb = Workbook()
-        ws = wb.active
-        ws.title = f"decode_breakdown_layers{layer_start}-{layer_end}"
-        ws.append(["kernel_name", "avg_us", "count_per_layer", "pct"])
-        for k_name, avg, cnt, pct in flat:
-            ws.append([k_name, round(avg, 1), round(cnt, 1), round(pct, 1)])
-        ws.append([])
-        ws.append(["TOTAL", round(per_layer_dur, 1), "", "100.0"])
-        ws.append(["decode_walltime_ms", round(dur_ms, 2)])
-        ws.append(["est_decode_ms (x61)", round(per_layer_dur * 61 / 1000, 1)])
-        ws.append(["n_layers_analyzed", n_layers])
-        wb.save(xlsx_path)
-        print(f"  {xlsx_path} written")
-    except ImportError:
-        print("  openpyxl not available, xlsx skipped")
-
-    print(f"Done. {len(flat)} kernels written.")
+    wb.save(args.output)
+    print(f"Done. {len(flat)} kernels, {len(module_order)} modules.")
 
 
 if __name__ == "__main__":
