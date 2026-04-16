@@ -19,7 +19,7 @@ jobs:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
       CONTAINER: zufa_atom
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
-      RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm711_profiling
+      RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm722_profiling
     steps:
       - name: Kill residual GPU processes
         continue-on-error: true
@@ -34,7 +34,7 @@ jobs:
         run: podman exec $CONTAINER bash -c "rm -rf $REPO/$RESULT_DIR/result_profiled_*.json $REPO/$RESULT_DIR/decode_walltime_*.csv $REPO/$RESULT_DIR/summary.md $REPO/$RESULT_DIR/*.log 2>/dev/null; true"
 
       - name: Run MXFP4 EP4 TP4 profiling (chat c=64)
-        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/collect_atom_trace.sh --model $MODEL --scenario chat --concurrency 64 --tp 4 --ep --profile-prompts 640 --roctracer-max-events 20000000 --env rocm711 --result-dir ./$RESULT_DIR"
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/collect_atom_trace.sh --model $MODEL --scenario chat --concurrency 64 --tp 4 --ep --profile-prompts 640 --roctracer-max-events 20000000 --env rocm722 --result-dir ./$RESULT_DIR"
 
       - name: Show profiling results
         if: always()
