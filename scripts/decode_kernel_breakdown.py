@@ -188,16 +188,20 @@ def main():
     print(f"  Kernels in window: {len(kernels)}")
 
     all_layers = split_layers(kernels)
-    # First "layer" may be partial (tail of previous layer). Skip if it starts
-    # with MoE kernels instead of pre-attn reduce_scatter.
-    if all_layers and any(p in all_layers[0][0].get("name", "")
-                          for p in ["reduce_scatter"]):
-        # Check if this RS is post-attn (followed by router/moe)
-        if len(all_layers[0]) > 2:
-            third = all_layers[0][min(2, len(all_layers[0])-1)].get("name", "")
-            if any(p in third for p in ["bf16gemm", "grouped_topk", "moe"]):
-                print(f"  Skipping partial first layer ({len(all_layers[0])} kernels, starts with post-attn RS)")
-                all_layers = all_layers[1:]
+    # First "layer" may be partial (starts mid-layer). Check if layer starts
+    # with post-attn phase (RS → rmsnorm → router/moe) instead of pre-attn
+    # phase (RS → rmsnorm → quant → qkv_a).
+    # A proper layer should have RS → rmsnorm → quant/gemm_xdl (pre-attn).
+    # If we see RS → rmsnorm → bf16gemm/topk, this is post-attn → skip it.
+    if len(all_layers) > 1:
+        first_names = [k.get("name", "") for k in all_layers[0][:5]]
+        is_post_attn_start = any(
+            any(p in n for p in ["bf16gemm", "grouped_topk", "kernel_moe"])
+            for n in first_names
+        )
+        if is_post_attn_start:
+            print(f"  Skipping partial first layer ({len(all_layers[0])} kernels, starts in MoE phase)")
+            all_layers = all_layers[1:]
     layers = all_layers
     print(f"  Layers detected: {len(layers)}")
 
