@@ -1,0 +1,114 @@
+name: "MI355X MXFP4 ROCm722 Bench"
+on:
+  workflow_dispatch:
+jobs:
+  ep1-tp8-c4:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 60
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
+      RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp8_rocm722
+    steps:
+      - name: Kill residual GPU processes
+        continue-on-error: true
+        run: podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom.*serve|model_executor" 2>/dev/null; true'
+
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Get container image name
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: Run MXFP4 EP1 TP8 bench (chat c=4)
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 4 --tp 8 --container-image '${{ env.IMAGE }}' --result-dir ./$RESULT_DIR"
+
+      - name: Show results
+        if: always()
+        run: cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo "No summary"
+
+  ep1-tp4-c64:
+    runs-on: [self-hosted, mi355x]
+    needs: ep1-tp8-c4
+    timeout-minutes: 60
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
+      RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp4_rocm722
+    steps:
+      - name: Kill residual GPU processes
+        continue-on-error: true
+        run: podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom.*serve|model_executor" 2>/dev/null; true'
+
+      - name: Get container image name
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: Run MXFP4 EP1 TP4 bench (chat c=64)
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 4 --container-image '${{ env.IMAGE }}' --result-dir ./$RESULT_DIR"
+
+      - name: Show results
+        if: always()
+        run: cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo "No summary"
+
+  ep4-tp4-c64:
+    runs-on: [self-hosted, mi355x]
+    needs: ep1-tp4-c64
+    timeout-minutes: 60
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
+      RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm722
+    steps:
+      - name: Kill residual GPU processes
+        continue-on-error: true
+        run: podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom.*serve|model_executor" 2>/dev/null; true'
+
+      - name: Get container image name
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: Run MXFP4 EP4 TP4 bench (chat c=64)
+        run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh --model-mxfp4 $MODEL --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 4 --ep --container-image '${{ env.IMAGE }}' --result-dir ./$RESULT_DIR"
+
+      - name: Show results
+        if: always()
+        run: cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo "No summary"
+
+  commit-results:
+    runs-on: [self-hosted, mi355x]
+    needs: ep4-tp4-c64
+    if: always()
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Commit and push all results
+        run: |
+          cd $REPO
+          git config user.email "ci@github.com"
+          git config user.name "MI355X CI"
+          git add -f results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_*_rocm722/ 2>/dev/null || true
+          echo "=== Staged files ==="
+          git diff --cached --name-only
+          if ! git diff --cached --quiet; then
+            git commit -m "data: MI355X MXFP4 ROCm722 bench — EP1 TP8 c=4, EP1/EP4 TP4 c=64
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+            git push
+          else
+            echo "Nothing to commit"
+          fi
+
+      - name: Show all summaries
+        if: always()
+        run: |
+          cd $REPO
+          for d in results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_*_rocm722/; do
+            echo "=== $(basename $d) ==="
+            cat "$d/summary.md" 2>/dev/null || echo "No summary"
+            echo ""
+          done
