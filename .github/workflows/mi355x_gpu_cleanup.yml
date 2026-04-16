@@ -10,7 +10,7 @@ jobs:
       CONTAINER: zufa_atom
     steps:
       - name: GPU status before cleanup
-        run: rocm-smi --showmeminfo vram 2>/dev/null || rocm-smi
+        run: podman exec $CONTAINER rocm-smi --showmeminfo vram 2>/dev/null || podman exec $CONTAINER rocm-smi 2>/dev/null || echo "rocm-smi unavailable"
 
       - name: Kill GPU processes in container
         run: |
@@ -46,12 +46,12 @@ jobs:
           sleep 3
 
       - name: GPU status after cleanup
-        run: rocm-smi --showmeminfo vram 2>/dev/null || rocm-smi
+        run: podman exec $CONTAINER rocm-smi --showmeminfo vram 2>/dev/null || podman exec $CONTAINER rocm-smi 2>/dev/null || echo "rocm-smi unavailable"
 
       - name: Verify GPUs are free
         run: |
           echo "=== VRAM usage check ==="
-          USED=$(rocm-smi 2>/dev/null | grep -oP '\d+%' | head -8 | tr '\n' ' ')
+          USED=$(podman exec $CONTAINER rocm-smi 2>/dev/null | grep -oP '\d+%' | head -8 | tr '\n' ' ')
           echo "VRAM% per GPU: $USED"
           if echo "$USED" | grep -qP '[1-9]\d%'; then
             echo "WARNING: Some GPUs still have significant VRAM usage"

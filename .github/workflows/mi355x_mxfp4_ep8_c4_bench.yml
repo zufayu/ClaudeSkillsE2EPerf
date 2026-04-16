@@ -17,7 +17,7 @@ jobs:
           pkill -9 -f "python.*vllm\|python.*atom" 2>/dev/null || true
           sleep 5
           echo "VRAM after cleanup:"
-          rocm-smi 2>/dev/null | grep -E "GPU|VRAM" | head -10 || true
+          podman exec $CONTAINER rocm-smi 2>/dev/null | grep -E "GPU|VRAM" | head -10 || true
 
       - name: Sync repo
         run: cd $REPO && git fetch origin && git reset --hard origin/main
