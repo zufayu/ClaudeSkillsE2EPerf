@@ -1,0 +1,199 @@
+name: "B200 NCU profile-from-start-off Test"
+on:
+  workflow_dispatch:
+    inputs:
+      concurrency:
+        description: "Concurrency (decode batch size)"
+        type: string
+        default: "64"
+      launch_count:
+        description: "Kernel launches to capture"
+        type: string
+        default: "140"
+      ncu_set:
+        description: "NCU section set"
+        type: choice
+        options:
+          - pmsampling
+          - basic
+          - detailed
+        default: pmsampling
+
+jobs:
+  ncu-profiling:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 240
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_sglang
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
+      MODEL: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      CONC: ${{ inputs.concurrency }}
+      LAUNCH_COUNT: ${{ inputs.launch_count }}
+      NCU_SET: ${{ inputs.ncu_set }}
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_sglang059_ncu
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git fetch origin && git reset --hard origin/main"
+
+      - name: Verify environment
+        run: |
+          ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2"
+          ssh $NODE "docker exec $CONTAINER python3 -c 'import sglang; print(f\"SGLang {sglang.__version__}\")'"
+          ssh $NODE "docker exec $CONTAINER ncu --version 2>/dev/null | head -1 || echo 'NCU not found'"
+
+      - name: Clean old results
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/ncu_pfs_off* 2>/dev/null; true'"
+
+      - name: "NCU profile-from-start-off (chat c=${{ inputs.concurrency }})"
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c '
+            set -e
+            cd $REPO
+            PORT=8888
+            NCU_DIR=$RESULT_DIR/ncu_pfs_off
+            mkdir -p \$NCU_DIR
+
+            echo \"=== Step 1: Find NCU injection library ===\"
+            NCU_BIN=\$(which ncu)
+            NCU_REAL_DIR=\$(dirname \"\$(readlink -f \$NCU_BIN)\")
+            INJECTION_LIB=\"\"
+            for name in libcuda-injection.so libcuinj64.so; do
+              for p in \$NCU_REAL_DIR/\$name \$NCU_REAL_DIR/../target/linux-desktop-*/\$name; do
+                if [ -f \"\$p\" ]; then INJECTION_LIB=\$(readlink -f \"\$p\"); break 2; fi
+              done
+            done
+            if [ -z \"\$INJECTION_LIB\" ]; then
+              INJECTION_LIB=\$(find /usr /opt -name \"libcuda-injection.so\" -o -name \"libcuinj64.so\" 2>/dev/null | head -1)
+            fi
+            echo \"Injection library: \$INJECTION_LIB\"
+            [ -z \"\$INJECTION_LIB\" ] && echo \"ERROR: injection library not found\" && exit 1
+
+            echo \"=== Step 2: Kill leftover processes ===\"
+            pkill -9 -f \"sglang.launch_server\" 2>/dev/null || true
+            pkill -9 -f \"python3.*sglang\" 2>/dev/null || true
+            fuser -k -9 \$PORT/tcp 2>/dev/null || true
+            sleep 5
+
+            echo \"=== Step 3: Start SGLang server with injection + profile-from-start off ===\"
+            echo \"Using CUDA_INJECTION64_PATH=\$INJECTION_LIB\"
+            echo \"With --profile-from-start off, injection is PASSIVE during init\"
+
+            CUDA_INJECTION64_PATH=\"\$INJECTION_LIB\" \
+            CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+            python3 -m sglang.launch_server \
+              --model-path $MODEL \
+              --tp 8 \
+              --trust-remote-code \
+              --mem-fraction-static 0.85 \
+              --chunked-prefill-size 16384 \
+              --kv-cache-dtype fp8_e4m3 \
+              --cuda-graph-max-bs 256 \
+              --max-running-requests 256 \
+              --port \$PORT \
+              --host 0.0.0.0 \
+              > \$NCU_DIR/server.log 2>&1 &
+            SERVER_PID=\$!
+            echo \"Server PID=\$SERVER_PID\"
+
+            echo \"=== Step 4: Wait for server ready ===\"
+            WAIT=0
+            TIMEOUT=1800
+            while true; do
+              if curl -sf http://localhost:\$PORT/health > /dev/null 2>&1; then
+                echo \"Server ready after \${WAIT}s\"
+                break
+              fi
+              if ! kill -0 \$SERVER_PID 2>/dev/null; then
+                echo \"ERROR: Server died. Last 30 lines:\"
+                tail -30 \$NCU_DIR/server.log
+                exit 1
+              fi
+              sleep 10
+              WAIT=\$((WAIT + 10))
+              if [ \$WAIT -ge \$TIMEOUT ]; then
+                echo \"ERROR: Server timeout after \${TIMEOUT}s\"
+                tail -30 \$NCU_DIR/server.log
+                kill \$SERVER_PID 2>/dev/null || true
+                exit 1
+              fi
+              [ \$((WAIT % 60)) -eq 0 ] && echo \"  Waiting... \${WAIT}s\"
+            done
+
+            echo \"=== Step 5: Warmup (c=${{ inputs.concurrency }}) ===\"
+            WARMUP_PROMPTS=\$((${{ inputs.concurrency }} * 2))
+            python3 -m sglang.bench_serving \
+              --model $MODEL --port \$PORT --backend vllm \
+              --dataset-name random \
+              --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 \
+              --num-prompts \$WARMUP_PROMPTS --max-concurrency ${{ inputs.concurrency }} \
+              --warmup-requests 0 \
+              --output-file /tmp/ncu_warmup.jsonl 2>&1 || echo \"Warmup done (may have warnings)\"
+
+            echo \"=== Step 6: Trigger cudaProfilerStart via ncu attach ===\"
+            echo \"Attaching ncu with --profile-from-start off...\"
+
+            ncu --mode attach \
+              --profile-from-start off \
+              --graph-profiling node \
+              --pm-sampling-interval 1000 \
+              -k \"regex:nvjet|fmha|cutlass|flash_attn|kernel_mha|allreduce|reduce_scatter|all_gather|nccl|deep_gemm\" \
+              --launch-count ${{ inputs.launch_count }} \
+              -f \
+              -o \$NCU_DIR/ncu_decode_c${{ inputs.concurrency }} \
+              --section PmSampling --section PmSampling_WarpStates \
+              --section Nvlink --section Nvlink_Tables --section Nvlink_Topology \
+              > \$NCU_DIR/ncu_attach.log 2>&1 &
+            NCU_PID=\$!
+            echo \"NCU attach PID=\$NCU_PID\"
+            sleep 10
+
+            if ! kill -0 \$NCU_PID 2>/dev/null; then
+              echo \"ERROR: ncu attach failed. Log:\"
+              cat \$NCU_DIR/ncu_attach.log
+              kill \$SERVER_PID 2>/dev/null || true
+              exit 1
+            fi
+            echo \"NCU attached, sending benchmark requests...\"
+
+            echo \"=== Step 7: Benchmark (triggers decode kernels for profiling) ===\"
+            NUM_PROMPTS=\$((${{ inputs.concurrency }} * 10))
+            python3 -m sglang.bench_serving \
+              --model $MODEL --port \$PORT --backend vllm \
+              --dataset-name random \
+              --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 \
+              --num-prompts \$NUM_PROMPTS --max-concurrency ${{ inputs.concurrency }} \
+              --warmup-requests 0 \
+              --output-file /tmp/ncu_profiled.jsonl 2>&1 || echo \"Benchmark done\"
+
+            echo \"=== Step 8: Wait for NCU to finish ===\"
+            wait \$NCU_PID 2>/dev/null
+            NCU_EXIT=\$?
+            echo \"NCU exited with code \$NCU_EXIT\"
+            echo \"NCU log (last 20 lines):\"
+            tail -20 \$NCU_DIR/ncu_attach.log
+
+            echo \"=== Step 9: Cleanup ===\"
+            kill \$SERVER_PID 2>/dev/null || true
+            pkill -9 -f \"sglang\" 2>/dev/null || true
+            sleep 3
+
+            echo \"=== Results ===\"
+            ls -lh \$NCU_DIR/*.ncu-rep 2>/dev/null || echo \"No .ncu-rep files\"
+            ls -lh \$NCU_DIR/ 2>/dev/null
+          '"
+
+      - name: Show results
+        if: always()
+        run: |
+          ssh $NODE "ls -lh $REPO/$RESULT_DIR/ncu_pfs_off/ 2>/dev/null || echo 'No results dir'"
+          ssh $NODE "ls -lh $REPO/$RESULT_DIR/ncu_pfs_off/*.ncu-rep 2>/dev/null || echo 'No .ncu-rep'"
+          ssh $NODE "tail -30 $REPO/$RESULT_DIR/ncu_pfs_off/ncu_attach.log 2>/dev/null || echo 'No ncu log'"
+          ssh $NODE "tail -30 $REPO/$RESULT_DIR/ncu_pfs_off/server.log 2>/dev/null || echo 'No server log'"
+
+      - name: Commit results
+        if: always()
+        run: |
+          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && git add -f $RESULT_DIR/ncu_pfs_off/*.log 2>/dev/null; git add -f $RESULT_DIR/ncu_pfs_off/*.csv 2>/dev/null; true"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 NCU profile-from-start-off test (chat c=${{ inputs.concurrency }})' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
