@@ -1,0 +1,15 @@
+=== Trimmed: 273 -> 12 lines ===
+=== Source: server_mxfp4_throughput_chat_c64.log ===
+
+[ERRORS]
+  Traceback (most recent call last):
+  torch.OutOfMemoryError: HIP out of memory. Tried to allocate 456.00 MiB. GPU 3 has a total capacity of 287.98 GiB of which 0 bytes is free. Of the allocated memory 27.85 GiB is allocated by PyTorch, and 113.67 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  torch.OutOfMemoryError: HIP out of memory. Tried to allocate 456.00 MiB. GPU 0 has a total capacity of 287.98 GiB of which 0 bytes is free. Of the allocated memory 27.85 GiB is allocated by PyTorch, and 113.67 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  torch.OutOfMemoryError: HIP out of memory. Tried to allocate 456.00 MiB. GPU 2 has a total capacity of 287.98 GiB of which 0 bytes is free. Of the allocated memory 27.85 GiB is allocated by PyTorch, and 113.67 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  torch.OutOfMemoryError: HIP out of memory. Tried to allocate 456.00 MiB. GPU 1 has a total capacity of 287.98 GiB of which 0 bytes is free. Of the allocated memory 27.85 GiB is allocated by PyTorch, and 113.67 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  raise RuntimeError(
+  RuntimeError: Engine Core Mgr: Received unexpected SHUTDOWN signal from DP rank 0 during initialization
+
+[STATUS]
+  Server shutdown:
+

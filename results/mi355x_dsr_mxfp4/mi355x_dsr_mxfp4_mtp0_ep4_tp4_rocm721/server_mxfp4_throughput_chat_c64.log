@@ -1,0 +1,273 @@
+[aiter] import [module_aiter_core] under /app/aiter-test/aiter/jit/module_aiter_core.so
+[atom 01:57:09] Loading tokenizer from /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4...
+`rope_parameters`'s factor field must be a float >= 1, got 40
+`rope_parameters`'s beta_fast field must be a float, got 32
+`rope_parameters`'s beta_slow field must be a float, got 1
+[atom 01:57:09] Initializing engine with model /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4...
+[atom 01:57:09] Engine kwargs: {'trust_remote_code': False, 'tensor_parallel_size': 4, 'data_parallel_size': 1, 'enforce_eager': False, 'enable_prefix_caching': False, 'port': 8006, 'kv_cache_dtype': 'fp8', 'max_model_len': 2248, 'max_num_batched_tokens': 16384, 'scheduler_delay_factor': 0.0, 'max_num_seqs': 512, 'gpu_memory_utilization': 0.9, 'load_dummy': False, 'enable_expert_parallel': True, 'torch_profiler_dir': None, 'enable_dp_attention': False, 'mark_trace': False, 'kv_cache_block_size': 16, 'compilation_config': CompilationConfig(level=3, use_cudagraph=True, local_cache_dir=None, cudagraph_capture_sizes=[1, 2, 4, 8, 16, 32, 48, 64, 128, 256], cuda_graph_sizes=[512], debug_dump_path='', traced_files=set(), cache_dir='', use_inductor=True, cudagraph_mode=None, compilation_time=0.0, splitting_ops=None, cudagraph_copy_inputs=False, inductor_compile_config={}, compile_sizes=None, static_forward_context={}), 'speculative_config': None}
+`rope_parameters`'s factor field must be a float >= 1, got 40
+`rope_parameters`'s beta_fast field must be a float, got 32
+`rope_parameters`'s beta_slow field must be a float, got 1
+`torch_dtype` is deprecated! Use `dtype` instead!
+[atom 01:57:09] Engine Core Mgr: Creating EngineCore for DP rank 0/1
+[atom 01:57:09] Creating EngineCore process: DP rank 0, will use GPUs 0 to 3
+[atom 01:57:09] Engine Core Mgr: Starting EngineCore for DP rank 0/1
+[aiter] import [module_aiter_core] under /app/aiter-test/aiter/jit/module_aiter_core.so
+[aiter] message queue communication handle: Handle(local_reader_ranks=[0, 1, 2, 3], buffer_handle=(4, 16777216, 10, 'psm_f6e7cc71'), local_subscribe_addr='ipc:///tmp/f598b9d3-8017-45e4-8c95-1699a5d86d2e', remote_subscribe_addr=None, remote_addr_ipv6=False)
+[aiter] import [module_aiter_core] under /app/aiter-test/aiter/jit/module_aiter_core.so
+[aiter] import [module_aiter_core] under /app/aiter-test/aiter/jit/module_aiter_core.so
+[aiter] import [module_aiter_core] under /app/aiter-test/aiter/jit/module_aiter_core.so
+[aiter] import [module_aiter_core] under /app/aiter-test/aiter/jit/module_aiter_core.so
+[aiter] merge tuned file under model_configs/ and configs/ /app/aiter-test/aiter/configs/bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/dsv3_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/glm5_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/gptoss_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/kimik2_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/llama405B_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/llama70B_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/qwen32B_bf16_tuned_gemm.csv
+[atom 01:57:17] Use MLAAttentionImplDecoratorForPluginMode to decorate MLAAttention
+[atom 01:57:17] Use MLASparseAttentionImplDecoratorForPluginMode to decorate MLAAttention
+[aiter] merge tuned file under model_configs/ and configs/ /app/aiter-test/aiter/configs/bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/dsv3_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/glm5_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/gptoss_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/kimik2_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/llama405B_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/llama70B_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/qwen32B_bf16_tuned_gemm.csv
+[atom 01:57:17] Use PagedAttentionImplDecoratorForPluginMode to decorate PagedAttentionImpl
+[atom 01:57:17] Create lazy wrapper for FusedMoE to change the naming
+[atom 01:57:17] ModelRunner rank=0, dp_rank_local=0, local_device_rank=0, device=cuda:0
+[atom 01:57:17] Use MLAAttentionImplDecoratorForPluginMode to decorate MLAAttention
+[atom 01:57:17] Use MLASparseAttentionImplDecoratorForPluginMode to decorate MLAAttention
+[atom 01:57:18] Use PagedAttentionImplDecoratorForPluginMode to decorate PagedAttentionImpl
+[atom 01:57:18] Create lazy wrapper for FusedMoE to change the naming
+[atom 01:57:18] ModelRunner rank=3, dp_rank_local=0, local_device_rank=3, device=cuda:3
+[aiter] merge tuned file under model_configs/ and configs/ /app/aiter-test/aiter/configs/bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/dsv3_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/glm5_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/gptoss_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/kimik2_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/llama405B_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/llama70B_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/qwen32B_bf16_tuned_gemm.csv
+[atom 01:57:18] Use MLAAttentionImplDecoratorForPluginMode to decorate MLAAttention
+[atom 01:57:18] Use MLASparseAttentionImplDecoratorForPluginMode to decorate MLAAttention
+[aiter] merge tuned file under model_configs/ and configs/ /app/aiter-test/aiter/configs/bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/dsv3_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/glm5_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/gptoss_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/kimik2_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/llama405B_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/llama70B_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/qwen32B_bf16_tuned_gemm.csv
+[atom 01:57:18] Use PagedAttentionImplDecoratorForPluginMode to decorate PagedAttentionImpl
+[atom 01:57:18] Create lazy wrapper for FusedMoE to change the naming
+[atom 01:57:18] ModelRunner rank=2, dp_rank_local=0, local_device_rank=2, device=cuda:2
+[atom 01:57:18] Use MLAAttentionImplDecoratorForPluginMode to decorate MLAAttention
+[atom 01:57:18] Use MLASparseAttentionImplDecoratorForPluginMode to decorate MLAAttention
+[atom 01:57:18] Use PagedAttentionImplDecoratorForPluginMode to decorate PagedAttentionImpl
+[atom 01:57:18] Create lazy wrapper for FusedMoE to change the naming
+[atom 01:57:18] ModelRunner rank=1, dp_rank_local=0, local_device_rank=1, device=cuda:1
+[Gloo] Rank 0 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 3 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 1 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 2 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 0 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 2 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 1 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 3 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[aiter] import [module_custom_all_reduce] under /app/aiter-test/aiter/jit/module_custom_all_reduce.so
+[aiter] import [module_custom_all_reduce] under /app/aiter-test/aiter/jit/module_custom_all_reduce.so
+[aiter] import [module_custom_all_reduce] under /app/aiter-test/aiter/jit/module_custom_all_reduce.so
+[aiter] import [module_custom_all_reduce] under /app/aiter-test/aiter/jit/module_custom_all_reduce.so
+[aiter] load RCCL version: 2.27.7
+[aiter] message queue communication handle: Handle(local_reader_ranks=[1, 2, 3], buffer_handle=(3, 4194304, 6, 'psm_449fad89'), local_subscribe_addr='ipc:///tmp/3d1f0f6f-6ab3-45f1-aed4-a6f78a06e5b8', remote_subscribe_addr=None, remote_addr_ipv6=False)
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 3 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 2 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 1 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[aiter] load RCCL version: 2.27.7
+[aiter] rank 2 in world size 4 is assigned as DP rank 0, PP rank 0, TP rank 2, EP rank 2
+[aiter] rank 0 in world size 4 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+[aiter] rank 1 in world size 4 is assigned as DP rank 0, PP rank 0, TP rank 1, EP rank 1
+[aiter] rank 3 in world size 4 is assigned as DP rank 0, PP rank 0, TP rank 3, EP rank 3
+[atom 01:57:19] Info: Because ATOM_USE_TRITON_GEMM is not turned on in DeepSeek-R1, ATOM_ENABLE_DS_INPUT_RMSNORM_QUANT_FUSION is turned off automatically
+[atom 01:57:19] Info: Because ATOM_USE_TRITON_GEMM is not turned on in DeepSeek-R1, ATOM_ENABLE_DS_INPUT_RMSNORM_QUANT_FUSION is turned off automatically
+[atom 01:57:19] Info: Because ATOM_USE_TRITON_GEMM is not turned on in DeepSeek-R1, ATOM_ENABLE_DS_INPUT_RMSNORM_QUANT_FUSION is turned off automatically
+[atom 01:57:19] Info: Because ATOM_USE_TRITON_GEMM is not turned on in DeepSeek-R1, ATOM_ENABLE_DS_INPUT_RMSNORM_QUANT_FUSION is turned off automatically
+Process ModelRunner3/4:
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/usr/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/app/ATOM/atom/model_engine/async_proc.py", line 65, in __init__
+    self.runners.append(runner_class(rank, *args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/model_engine/model_runner.py", line 582, in __init__
+    self.model = model_class(config)
+                 ^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1949, in __init__
+    self.model = DeepseekV2Model(
+                 ^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/utils/decorators.py", line 415, in __init__
+    old_init(self, atom_config=atom_config, **kwargs)
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1846, in __init__
+    self.start_layer, self.end_layer, self.layers = make_layers(
+                                                    ^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/utils.py", line 135, in make_layers
+    layer_fn(prefix=f"{prefix}.{idx}", layer_num=layer_num_offset + idx)
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1848, in <lambda>
+    lambda prefix, layer_num=None: DeepseekV2DecoderLayer(
+                                   ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1684, in __init__
+    self.mlp = DeepseekV2MoE(
+               ^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 845, in __init__
+    self.experts = FusedMoE(
+                   ^^^^^^^^^
+  File "/app/ATOM/atom/plugin/moe.py", line 49, in __new__
+    return decorated_cls(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/model_ops/moe.py", line 2038, in __init__
+    self.quant_method.create_weights(layer=self, **moe_quant_params)
+  File "/app/ATOM/atom/model_ops/moe.py", line 717, in create_weights
+    torch.empty(
+  File "/opt/venv/lib/python3.12/site-packages/torch/utils/_device.py", line 109, in __torch_function__
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: HIP out of memory. Tried to allocate 456.00 MiB. GPU 3 has a total capacity of 287.98 GiB of which 0 bytes is free. Of the allocated memory 27.85 GiB is allocated by PyTorch, and 113.67 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+Process ModelRunner0/4:
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/usr/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/app/ATOM/atom/model_engine/async_proc.py", line 65, in __init__
+    self.runners.append(runner_class(rank, *args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/model_engine/model_runner.py", line 582, in __init__
+    self.model = model_class(config)
+                 ^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1949, in __init__
+    self.model = DeepseekV2Model(
+                 ^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/utils/decorators.py", line 415, in __init__
+    old_init(self, atom_config=atom_config, **kwargs)
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1846, in __init__
+    self.start_layer, self.end_layer, self.layers = make_layers(
+                                                    ^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/utils.py", line 135, in make_layers
+    layer_fn(prefix=f"{prefix}.{idx}", layer_num=layer_num_offset + idx)
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1848, in <lambda>
+    lambda prefix, layer_num=None: DeepseekV2DecoderLayer(
+                                   ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1684, in __init__
+    self.mlp = DeepseekV2MoE(
+               ^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 845, in __init__
+    self.experts = FusedMoE(
+                   ^^^^^^^^^
+  File "/app/ATOM/atom/plugin/moe.py", line 49, in __new__
+    return decorated_cls(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/model_ops/moe.py", line 2038, in __init__
+    self.quant_method.create_weights(layer=self, **moe_quant_params)
+  File "/app/ATOM/atom/model_ops/moe.py", line 717, in create_weights
+    torch.empty(
+  File "/opt/venv/lib/python3.12/site-packages/torch/utils/_device.py", line 109, in __torch_function__
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: HIP out of memory. Tried to allocate 456.00 MiB. GPU 0 has a total capacity of 287.98 GiB of which 0 bytes is free. Of the allocated memory 27.85 GiB is allocated by PyTorch, and 113.67 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+Process ModelRunner2/4:
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/usr/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/app/ATOM/atom/model_engine/async_proc.py", line 65, in __init__
+    self.runners.append(runner_class(rank, *args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/model_engine/model_runner.py", line 582, in __init__
+    self.model = model_class(config)
+                 ^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1949, in __init__
+    self.model = DeepseekV2Model(
+                 ^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/utils/decorators.py", line 415, in __init__
+    old_init(self, atom_config=atom_config, **kwargs)
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1846, in __init__
+    self.start_layer, self.end_layer, self.layers = make_layers(
+                                                    ^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/utils.py", line 135, in make_layers
+    layer_fn(prefix=f"{prefix}.{idx}", layer_num=layer_num_offset + idx)
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1848, in <lambda>
+    lambda prefix, layer_num=None: DeepseekV2DecoderLayer(
+                                   ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1684, in __init__
+    self.mlp = DeepseekV2MoE(
+               ^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 845, in __init__
+    self.experts = FusedMoE(
+                   ^^^^^^^^^
+  File "/app/ATOM/atom/plugin/moe.py", line 49, in __new__
+    return decorated_cls(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/model_ops/moe.py", line 2038, in __init__
+    self.quant_method.create_weights(layer=self, **moe_quant_params)
+  File "/app/ATOM/atom/model_ops/moe.py", line 717, in create_weights
+    torch.empty(
+  File "/opt/venv/lib/python3.12/site-packages/torch/utils/_device.py", line 109, in __torch_function__
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: HIP out of memory. Tried to allocate 456.00 MiB. GPU 2 has a total capacity of 287.98 GiB of which 0 bytes is free. Of the allocated memory 27.85 GiB is allocated by PyTorch, and 113.67 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+Process ModelRunner1/4:
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/usr/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/app/ATOM/atom/model_engine/async_proc.py", line 65, in __init__
+    self.runners.append(runner_class(rank, *args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/model_engine/model_runner.py", line 582, in __init__
+    self.model = model_class(config)
+                 ^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1949, in __init__
+    self.model = DeepseekV2Model(
+                 ^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/utils/decorators.py", line 415, in __init__
+    old_init(self, atom_config=atom_config, **kwargs)
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1846, in __init__
+    self.start_layer, self.end_layer, self.layers = make_layers(
+                                                    ^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/utils.py", line 135, in make_layers
+    layer_fn(prefix=f"{prefix}.{idx}", layer_num=layer_num_offset + idx)
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1848, in <lambda>
+    lambda prefix, layer_num=None: DeepseekV2DecoderLayer(
+                                   ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 1684, in __init__
+    self.mlp = DeepseekV2MoE(
+               ^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/models/deepseek_v2.py", line 845, in __init__
+    self.experts = FusedMoE(
+                   ^^^^^^^^^
+  File "/app/ATOM/atom/plugin/moe.py", line 49, in __new__
+    return decorated_cls(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/model_ops/moe.py", line 2038, in __init__
+    self.quant_method.create_weights(layer=self, **moe_quant_params)
+  File "/app/ATOM/atom/model_ops/moe.py", line 717, in create_weights
+    torch.empty(
+  File "/opt/venv/lib/python3.12/site-packages/torch/utils/_device.py", line 109, in __torch_function__
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: HIP out of memory. Tried to allocate 456.00 MiB. GPU 1 has a total capacity of 287.98 GiB of which 0 bytes is free. Of the allocated memory 27.85 GiB is allocated by PyTorch, and 113.67 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[atom 01:57:21] AsyncIOProcManager(ModelRunner): [ModelRunner1/4] proc died unexpectedly (exitcode=1), shutting down.
+[atom 01:57:21] AsyncIOProcManager(ModelRunner): shutdown all runners...
+[atom 01:57:22] AsyncIOProcManager(ModelRunner): All runners are shutdown.
+[atom 01:57:22] Engine Core: load model runner failed
+[atom 01:57:22] Engine Core Mgr: Failed to initialize all EngineCores, cleaning up: Engine Core Mgr: Received unexpected SHUTDOWN signal from DP rank 0 during initialization
+[atom 01:57:22] Engine Core Mgr: Shutting down all 1 EngineCores
+[atom 01:57:23] Engine Core Mgr: All EngineCores shut down
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/app/ATOM/atom/entrypoints/openai_server.py", line 13, in <module>
+    main()
+  File "/app/ATOM/atom/entrypoints/openai/api_server.py", line 565, in main
+    engine = engine_args.create_engine(tokenizer=tokenizer)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/model_engine/arg_utils.py", line 231, in create_engine
+    return LLMEngine(self.model, tokenizer=tokenizer, **self._get_engine_kwargs())
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/model_engine/llm_engine.py", line 55, in __init__
+    self.core_mgr = CoreManager(config)
+                    ^^^^^^^^^^^^^^^^^^^
+  File "/app/ATOM/atom/model_engine/engine_core_mgr.py", line 120, in __init__
+    self._wait_for_all_ready_signals()
+  File "/app/ATOM/atom/model_engine/engine_core_mgr.py", line 187, in _wait_for_all_ready_signals
+    raise RuntimeError(
+RuntimeError: Engine Core Mgr: Received unexpected SHUTDOWN signal from DP rank 0 during initialization
