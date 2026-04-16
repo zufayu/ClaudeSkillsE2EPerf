@@ -3,7 +3,6 @@ EP_AR+residual+RMSNorm(fused),flashinfer::trtllm_allreduce_fusion::allreduce_fus
 ,,,,,,,"void aiter::local_device_load_rmsnorm<std::bfloat16_t, 512, 2>(aiter::RankSignals, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, float, int, int, int)",5.51,MI355X only (comm_pre_attn)
 qkv_a_proj_GEMM,nvjet_tst_64x32_64x16_2x1_2cta_v_bz_splitK_TNT,23,31.9,0.0,EP_AR+residual+RMSNorm(same) | qkv_a_splitK_reduce(same),gemm_a16w16,aiter::bf16gemm_fp32bf16_tn_64x64_splitk_clean,16.07,
 qkv_a_splitK_reduce,cublasLt::splitKreduce_kernel<...>,23,3.7,0.0,qkv_a_proj_GEMM(same) | q/k_norm_RMSNorm(same),,,,B200 only
-router_splitK_reduce,cublasLt::splitKreduce_kernel<...>,385,3.6,0.0,router_GEMM(same) | o_proj_GEMM(cross) | MoE_input_quant(same) | o_proj_quant(cross),,,,B200 only
 q/k_norm_RMSNorm,flashinfer::norm::RMSNormKernel<...>,23,3.2,0.0,qkv_a_splitK_reduce(same) | q/k_norm_RMSNorm(cross),hipLaunchKernel,"void aiter::add_rmsnorm_quant_kernel<std::bfloat16_t, std::bfloat16_t, 256, 8, false, false, true, 1>(std::bfloat16_t*, std::bfloat16_t*, float*, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, double, int, int, int, int, int, int, int, bool)",5.48,
 q/k_norm_RMSNorm,flashinfer::norm::RMSNormKernel<...>,385,2.4,0.0,q/k_norm_RMSNorm(cross),,"void aiter::add_rmsnorm_quant_kernel<std::bfloat16_t, std::bfloat16_t, 64, 8, false, false, true, 1>(std::bfloat16_t*, std::bfloat16_t*, float*, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, double, int, int, int, int, int, int, int, bool)",5.42,
 q_b_proj_GEMM,nvjet_tst_48x64_64x15_4x1_v_bz_TNN,23,6.3,0.0,uk_gemm(same),q_proj_and_k_up_proj,Cijk_Alik_Bljk_BBS_BH_Bias_HA_S_SAV_UserArgs_MT64x32x128_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSU0_GSUAMB_GLS0_ISA950_IU1_K1_LBSPPA512_LBSPPB256_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT2_1_MO40_NTn1_NTA0_NTB0_NTC0_NTD0_NTM0_NEPBS0_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW2_SK3_SKXCCM8_TLDS1_ULSGRO0_USL1_UIOFGRO0_USFGRO0_VSn1_VWA2_VWB1_WSGRA0_WSGRB0_WS64_WG32_8_1,11.79,
@@ -22,6 +21,7 @@ EP_AR+residual+RMSNorm(fused),flashinfer::trtllm_allreduce_fusion::allreduce_fus
 ,,,,,,,"void aiter::local_device_load_rmsnorm<std::bfloat16_t, 512, 2>(aiter::RankSignals, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, float, int, int, int)",5.67,MI355X only (comm_pre_moe)
 ,,,,,,triton_poi_fused_as_strided_clone_1,triton_poi_fused_as_strided_clone_1,5.47,MI355X only (comm_pre_moe)
 router_GEMM,nvjet_tst_64x32_64x16_2x2_2cta_h_bz_splitK_TNT,385,13.5,0.0,EP_AR+residual+RMSNorm(cross) | o_proj_quant(cross) | router_splitK_reduce(same) | o_proj_GEMM(cross),gemm_a16w16,aiter::bf16gemm_fp32bf16_tn_64x64_splitk_clean,9.25,
+router_splitK_reduce,cublasLt::splitKreduce_kernel<...>,385,3.6,0.0,router_GEMM(same) | o_proj_GEMM(cross) | MoE_input_quant(same) | o_proj_quant(cross),,,,B200 only
 MoE_input_quant(BF16→FP4),tensorrt_llm::kernels::quantize_with_block_size<...>,385,3.8,0.0,router_splitK_reduce(same) | o_proj_GEMM(cross),rocm_aiter_biased_grouped_topk_impl,"void aiter::grouped_topk_opt_sort_kernel<c10::BFloat16, float __vector(4), 8, true, true, false>(c10::BFloat16*, c10::BFloat16 const*, float*, int*, unsigned long, int, int, int, int, float)",5.37,
 tensor_copy,at::native::unrolled_elementwise_kernel<...>,385,3.2,0.0,o_proj_GEMM(cross),,"void ck_tile::kentry<2, ck_tile::MoeSortingMultiPhaseKernel_P0_v2<ck_tile::MoeSortingProblemMp<int, float, int, 1, true, false, true> >, ck_tile::MoeSortingMultiPhaseKernel_P0_v2<ck_tile::MoeSortingProblemMp<int, float, int, 1, true, false, true> >::Kargs>(ck_tile::MoeSortingMultiPhaseKernel_P0_v2<ck_tile::MoeSortingProblemMp<int, float, int, 1, true, false, true> >::Kargs)",5.39,
 TopK_select,moe::dev::routing::routingDeepSeek::routingMainKernel<...>,385,4.5,0.0,expert_sort(same) | SiLU×Mul(cross) | o_proj_GEMM(cross) | shared_quant(cross),,"void ck_tile::kentry<2, ck_tile::MoeSortingMultiPhaseKernel_P23<ck_tile::MoeSortingProblemMp<int, float, int, 1, true, false, true> >, ck_tile::MoeSortingMultiPhaseKernel_P23<ck_tile::MoeSortingProblemMp<int, float, int, 1, true, false, true> >::Kargs>(ck_tile::MoeSortingMultiPhaseKernel_P23<ck_tile::MoeSortingProblemMp<int, float, int, 1, true, false, true> >::Kargs)",5.40,
@@ -42,8 +42,7 @@ B200 Overlap,,,66.3,,,,,,66.3us overlap = 18.8% of kernel sum
 PASS,B200,MI355X,gap,NV_Kernels,AMD_Kernels,,,,
 EP_AR_before_MHA,25.9,34.52,+8.6,flashinfer::trtllm_allreduce_fusion::allreduce_fusion_kernel_oneshot_lamport<...,"void aiter::reduce_scatter_cross_device_store<std::bfloat16_t, 4>(aiter::RankData*, aiter::RankSignals, aiter::Signal*, int, int)
 void aiter::local_device_load_rmsnorm<std::bfloat16_t, 512, 2>(aiter::RankSignals, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, float, int, int, int)",,,,
-MHA,80.2,115.64,+35.4,"nvjet_tst_64x32_64x16_2x1_2cta_v_bz_splitK_TNT
-cublasLt::splitKreduce_kernel<...>
+MHA,76.6,115.64,+39.0,"nvjet_tst_64x32_64x16_2x1_2cta_v_bz_splitK_TNT
 cublasLt::splitKreduce_kernel<...>
 flashinfer::norm::RMSNormKernel<...>
 flashinfer::norm::RMSNormKernel<...>
@@ -70,7 +69,8 @@ _ZN7cutlass13device_kernelIN10flashinfer4gemm57DeviceGemmFp4GemmSm100___nv_bfloa
 EP_AR_before_MOE,11.0,31.16,+20.2,flashinfer::trtllm_allreduce_fusion::allreduce_fusion_kernel_oneshot_lamport<...,"void aiter::reduce_scatter_cross_device_store<std::bfloat16_t, 4>(aiter::RankData*, aiter::RankSignals, aiter::Signal*, int, int)
 void aiter::local_device_load_rmsnorm<std::bfloat16_t, 512, 2>(aiter::RankSignals, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, std::bfloat16_t*, float, int, int, int)
 triton_poi_fused_as_strided_clone_1",,,,
-MOE,208.1,218.13,+10.0,"nvjet_tst_64x32_64x16_2x2_2cta_h_bz_splitK_TNT
+MOE,211.7,218.13,+6.4,"nvjet_tst_64x32_64x16_2x2_2cta_h_bz_splitK_TNT
+cublasLt::splitKreduce_kernel<...>
 tensorrt_llm::kernels::quantize_with_block_size<...>
 at::native::unrolled_elementwise_kernel<...>
 moe::dev::routing::routingDeepSeek::routingMainKernel<...>

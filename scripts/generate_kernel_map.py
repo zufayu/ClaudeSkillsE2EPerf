@@ -272,6 +272,8 @@ def classify_b200_op(operator):
     # Order matters: check specific patterns before general ones
     if "ep_ar" in op:
         return "comm"  # disambiguated later by occurrence count
+    if "router" in op:
+        return "moe_router"
     if "qkv_a" in op or "splitk_reduce" in op:
         return "mla_qkv_a"
     if "q/k_norm" in op or "q_norm" in op or "k_norm" in op:
