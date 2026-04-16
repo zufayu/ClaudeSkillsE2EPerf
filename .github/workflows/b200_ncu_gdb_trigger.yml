@@ -37,12 +37,16 @@ jobs:
       - name: Sync repo
         run: ssh $NODE "cd $REPO && git fetch origin && git reset --hard origin/main"
 
-      - name: Clean GPU processes
+      - name: Thorough cleanup (kill ALL ncu + sglang + python)
         continue-on-error: true
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'for p in \$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null); do kill -9 \$p 2>/dev/null; done; true'"
-          ssh $NODE "docker exec $CONTAINER bash -c 'fuser -k -9 8888/tcp 2>/dev/null; true'"
+          echo "=== Before cleanup ==="
+          ssh $NODE "docker exec $CONTAINER bash -c 'ps aux | grep -E \"ncu|sglang\" | grep -v grep | head -10 || echo \"(none)\"'"
+          echo "=== Killing all ncu + sglang + python ==="
+          ssh $NODE "docker exec $CONTAINER bash -c 'pkill -9 -f ncu 2>/dev/null; pkill -9 -f sglang 2>/dev/null; fuser -k -9 8888/tcp 2>/dev/null; for p in \$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null); do kill -9 \$p 2>/dev/null; done; true'"
           sleep 5
+          echo "=== After cleanup ==="
+          ssh $NODE "docker exec $CONTAINER bash -c 'ps aux | grep -E \"ncu|sglang\" | grep -v grep | head -5 || echo \"(clean)\"'"
 
       - name: "Start server under NCU (profile-from-start OFF)"
         run: |
