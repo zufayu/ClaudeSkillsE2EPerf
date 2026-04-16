@@ -77,45 +77,33 @@ def extract_modules_in_window(evts, ts_start, ts_end):
     return sorted(modules, key=lambda e: e["ts"])
 
 
-def identify_layers(modules):
-    """Group modules into layers using q_proj_and_k_up_proj as layer start."""
+def identify_layers_by_kernel(kernels):
+    """Split kernels into layers using reduce_scatter as boundary.
+
+    DeepSeek-R1 layer structure:
+      reduce_scatter (pre-attn) → rmsnorm → qkv → rope → mla → o_proj →
+      reduce_scatter (post-attn) → rmsnorm → router → mxfp4_moe →
+      [next layer reduce_scatter]
+
+    The first reduce_scatter in each pair (odd count) marks layer start.
+    """
     layers = []
     current_layer = []
-    layer_marker = "q_proj_and_k_up_proj"
+    rs_count = 0
 
-    for m in modules:
-        name = m.get("name", "")
-        if name == layer_marker and current_layer:
-            layers.append(current_layer)
-            current_layer = []
-        current_layer.append(m)
+    for k in kernels:
+        name = k.get("name", "")
+        if "reduce_scatter_cross_device" in name:
+            rs_count += 1
+            if rs_count % 2 == 1 and current_layer:  # odd = pre-attn = layer start
+                layers.append(current_layer)
+                current_layer = []
+        current_layer.append(k)
 
     if current_layer:
         layers.append(current_layer)
 
     return layers
-
-
-def assign_kernels_to_modules(kernels, modules):
-    """Assign each kernel to its enclosing module annotation."""
-    result = []
-    for k in kernels:
-        k_ts = k["ts"]
-        k_end = k_ts + k.get("dur", 0)
-        enclosing = None
-        for m in modules:
-            m_ts = m["ts"]
-            m_end = m_ts + m.get("dur", 0)
-            if m_ts <= k_ts and k_end <= m_end + 1:  # +1us tolerance
-                enclosing = m
-                break
-        result.append({
-            "kernel_name": k.get("name", "unknown"),
-            "module": enclosing.get("name", "unassigned") if enclosing else "unassigned",
-            "dur_us": k.get("dur", 0),
-            "ts": k_ts,
-        })
-    return result
 
 
 def main():
@@ -152,26 +140,23 @@ def main():
     if dur_ms < 5 or dur_ms > 100:
         print(f"  WARNING: unusual decode duration {dur_ms:.2f}ms")
 
-    # Extract kernels and modules
+    # Extract kernels in decode window
     kernels = extract_kernels_in_window(evts, ts0, ts1)
-    modules = extract_modules_in_window(evts, ts0, ts1)
     print(f"  Kernels in window: {len(kernels)}")
-    print(f"  Module markers in window: {len(modules)}")
 
-    # Identify layers
-    layers = identify_layers(modules)
+    # Identify layers using reduce_scatter boundaries
+    layers = identify_layers_by_kernel(kernels)
     print(f"  Layers detected: {len(layers)}")
 
     if len(layers) < layer_end:
-        print(f"  WARNING: only {len(layers)} layers, adjusting range to {layer_start}-{len(layers)-1}")
+        print(f"  WARNING: only {len(layers)} layers, adjusting to {layer_start}-{len(layers)-1}")
         layer_end = len(layers) - 1
 
-    # Module distribution
-    mod_names = [m.get("name", "") for m in modules]
-    mod_counts = collections.Counter(mod_names)
-    print(f"\n  Module distribution:")
-    for name, cnt in mod_counts.most_common():
-        print(f"    {cnt:4d}x {name}")
+    # Kernel name distribution (all layers)
+    all_names = collections.Counter(k.get("name", "")[:80] for k in kernels)
+    print(f"\n  Kernel name distribution (top 10):")
+    for name, cnt in all_names.most_common(10):
+        print(f"    {cnt:4d}x {name[:70]}")
 
     # Per-layer analysis for selected range
     selected_layers = layers[layer_start:layer_end + 1]
@@ -180,60 +165,31 @@ def main():
     print(f"LAYER {layer_start}-{layer_end} ANALYSIS ({n_layers} layers)")
     print(f"{'='*60}")
 
-    # For each selected layer, find kernels within its time range
-    all_layer_kernels = []
-    for i, layer_modules in enumerate(selected_layers):
-        layer_ts_start = min(m["ts"] for m in layer_modules)
-        layer_ts_end = max(m["ts"] + m.get("dur", 0) for m in layer_modules)
+    # Aggregate kernels across selected layers
+    by_name = collections.defaultdict(lambda: {"count": 0, "dur": 0})
+    for layer_kernels in selected_layers:
+        for k in layer_kernels:
+            nm = k.get("name", "unknown")
+            by_name[nm]["count"] += 1
+            by_name[nm]["dur"] += k.get("dur", 0)
 
-        layer_kernels = [
-            k for k in kernels
-            if k["ts"] >= layer_ts_start and k["ts"] <= layer_ts_end
-        ]
-        assigned = assign_kernels_to_modules(layer_kernels, layer_modules)
-        all_layer_kernels.extend(assigned)
-
-    # Aggregate by module and kernel name
-    by_module = collections.defaultdict(lambda: collections.defaultdict(lambda: {"count": 0, "dur": 0}))
-    for k in all_layer_kernels:
-        by_module[k["module"]][k["kernel_name"]]["count"] += k["count"] if "count" in k else 1
-        by_module[k["module"]][k["kernel_name"]]["dur"] += k["dur_us"]
-
-    # Print per-module summary
-    total_dur = sum(k["dur_us"] for k in all_layer_kernels)
+    total_dur = sum(v["dur"] for v in by_name.values())
     per_layer_dur = total_dur / n_layers if n_layers else 0
     print(f"\nTotal kernel time (layers {layer_start}-{layer_end}): {total_dur/1000:.1f}ms")
     print(f"Per-layer average: {per_layer_dur:.1f}us ({per_layer_dur/1000:.2f}ms)")
-    print(f"Estimated decode (×61): {per_layer_dur * 61 / 1000:.1f}ms (actual: {dur_ms:.2f}ms)")
+    print(f"Estimated decode (x61): {per_layer_dur * 61 / 1000:.1f}ms (actual: {dur_ms:.2f}ms)")
 
-    print(f"\n{'Module':<30} {'Avg/layer(us)':>12} {'%':>6} {'Kernels':>8}")
-    print("-" * 60)
-    module_summary = {}
-    for mod_name in ["q_proj_and_k_up_proj", "rope_and_kv_cache", "mla_decode",
-                     "v_up_proj_and_o_proj", "mxfp4_moe", "unassigned"]:
-        if mod_name not in by_module and mod_name != "unassigned":
-            continue
-        kernels_in_mod = by_module.get(mod_name, {})
-        mod_dur = sum(v["dur"] for v in kernels_in_mod.values())
-        mod_avg = mod_dur / n_layers if n_layers else 0
-        mod_pct = mod_dur / total_dur * 100 if total_dur else 0
-        n_kernels = sum(v["count"] for v in kernels_in_mod.values())
-        avg_kernels = n_kernels / n_layers if n_layers else 0
-        module_summary[mod_name] = {"avg_us": mod_avg, "pct": mod_pct}
-        print(f"  {mod_name:<28} {mod_avg:>10.1f} {mod_pct:>6.1f}% {avg_kernels:>7.1f}")
-
-    # Detailed kernel list
-    print(f"\n{'Kernel':<70} {'Module':<25} {'Avg(us)':>8} {'Count':>6} {'%':>6}")
-    print("-" * 120)
+    # Detailed kernel list sorted by duration
+    print(f"\n{'Kernel':<75} {'Avg(us)':>8} {'Count':>6} {'%':>6}")
+    print("-" * 100)
     flat = []
-    for mod_name, kernels_dict in by_module.items():
-        for k_name, v in kernels_dict.items():
-            avg = v["dur"] / n_layers if n_layers else 0
-            pct = v["dur"] / total_dur * 100 if total_dur else 0
-            flat.append((k_name, mod_name, avg, v["count"] / n_layers, pct))
-    flat.sort(key=lambda x: -x[2])
-    for k_name, mod_name, avg, cnt, pct in flat[:30]:
-        print(f"  {k_name[:68]:<68} {mod_name:<25} {avg:>7.1f} {cnt:>5.1f}x {pct:>5.1f}%")
+    for k_name, v in by_name.items():
+        avg = v["dur"] / n_layers if n_layers else 0
+        pct = v["dur"] / total_dur * 100 if total_dur else 0
+        flat.append((k_name, avg, v["count"] / n_layers, pct))
+    flat.sort(key=lambda x: -x[1])
+    for k_name, avg, cnt, pct in flat[:25]:
+        print(f"  {k_name[:73]:<73} {avg:>7.1f} {cnt:>5.1f}x {pct:>5.1f}%")
 
     # Write CSV
     print(f"\nWriting {args.output}...")
