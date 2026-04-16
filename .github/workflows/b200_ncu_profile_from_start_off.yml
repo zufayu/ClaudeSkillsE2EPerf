@@ -44,10 +44,11 @@ jobs:
           ssh $NODE "which ncu 2>/dev/null && ncu --version 2>/dev/null | head -1 || echo 'NCU not on host either'"
 
       - name: Clean old results and GPU processes
+        continue-on-error: true
         run: |
           ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/ncu_pfs_off* 2>/dev/null; true'"
-          ssh $NODE "docker exec $CONTAINER bash -c 'pids=\$(pgrep -f \"sglang.launch_server\" 2>/dev/null || true); [ -n \"\$pids\" ] && echo \"\$pids\" | xargs kill -9 2>/dev/null; true'"
           ssh $NODE "docker exec $CONTAINER bash -c 'fuser -k -9 8888/tcp 2>/dev/null; true'"
+          ssh $NODE "docker exec $CONTAINER bash -c 'for p in \$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null); do kill -9 \$p 2>/dev/null; done; true'"
           sleep 5
 
       - name: "Start SGLang server under NCU (profile-from-start off)"
@@ -125,8 +126,9 @@ jobs:
 
       - name: Cleanup
         if: always()
+        continue-on-error: true
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'pids=\$(pgrep -f \"sglang|ncu\" 2>/dev/null || true); [ -n \"\$pids\" ] && echo \"\$pids\" | xargs kill -9 2>/dev/null; true'"
+          ssh $NODE "docker exec $CONTAINER bash -c 'for p in \$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null); do kill -9 \$p 2>/dev/null; done; true'"
           sleep 3
 
       - name: Commit results
