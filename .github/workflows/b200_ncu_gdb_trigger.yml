@@ -1,0 +1,126 @@
+name: "B200 NCU gdb Trigger"
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_filter:
+        description: "Kernel name filter"
+        type: string
+        default: "fmhaSm100f"
+      launch_count:
+        description: "Kernel launches to capture"
+        type: string
+        default: "10"
+      ncu_set:
+        description: "NCU section set"
+        type: choice
+        options:
+          - full
+          - pmsampling
+          - basic
+        default: full
+      concurrency:
+        description: "Concurrency"
+        type: string
+        default: "64"
+
+jobs:
+  ncu-gdb:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 60
+    env:
+      NODE: hungry-hippo-fin-03-2
+      CONTAINER: zufa_sglang
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
+      MODEL: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      RESULT_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep8_tp8_sglang059_ncu
+    steps:
+      - name: Sync repo
+        run: ssh $NODE "cd $REPO && git fetch origin && git reset --hard origin/main"
+
+      - name: Clean GPU processes
+        continue-on-error: true
+        run: |
+          ssh $NODE "docker exec $CONTAINER bash -c 'for p in \$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null); do kill -9 \$p 2>/dev/null; done; true'"
+          ssh $NODE "docker exec $CONTAINER bash -c 'fuser -k -9 8888/tcp 2>/dev/null; true'"
+          sleep 5
+
+      - name: "Start server under NCU (profile-from-start OFF)"
+        run: |
+          ssh $NODE "docker exec -d $CONTAINER bash -c 'cd $REPO && mkdir -p $RESULT_DIR/ncu_gdb && ncu --mode launch-and-attach --profile-from-start off --target-processes all --devices 0 --graph-profiling node -k \"${{ inputs.kernel_filter }}\" --launch-count ${{ inputs.launch_count }} --set ${{ inputs.ncu_set }} -f -o $RESULT_DIR/ncu_gdb/ncu_${{ inputs.kernel_filter }} python3 -m sglang.launch_server --model-path $MODEL --tp 8 --trust-remote-code --mem-fraction-static 0.85 --chunked-prefill-size 16384 --kv-cache-dtype fp8_e4m3 --cuda-graph-max-bs 256 --max-running-requests 256 --port 8888 --host 0.0.0.0 > $RESULT_DIR/ncu_gdb/server.log 2>&1'"
+          echo "Server launched with --profile-from-start off (passive injection, ~8 min ready)"
+
+      - name: Wait for server ready
+        run: |
+          WAIT=0
+          while true; do
+            if ssh $NODE "docker exec $CONTAINER curl -sf http://localhost:8888/health" > /dev/null 2>&1; then
+              echo "Server ready after ${WAIT}s"
+              break
+            fi
+            ALIVE=$(ssh $NODE "docker exec $CONTAINER pgrep -f 'sglang.launch_server' 2>/dev/null | head -1" || true)
+            if [ -z "$ALIVE" ]; then
+              echo "Server died"
+              ssh $NODE "docker exec $CONTAINER tail -30 $REPO/$RESULT_DIR/ncu_gdb/server.log 2>/dev/null" || true
+              exit 1
+            fi
+            sleep 15
+            WAIT=$((WAIT + 15))
+            [ $WAIT -ge 1200 ] && echo "Timeout" && exit 1
+            [ $((WAIT % 60)) -eq 0 ] && echo "  ${WAIT}s..."
+          done
+
+      - name: "Warmup (c=${{ inputs.concurrency }})"
+        run: |
+          WARMUP=$((${{ inputs.concurrency }} * 2))
+          echo "Warmup: $WARMUP prompts"
+          ssh $NODE "docker exec $CONTAINER python3 -m sglang.bench_serving --model $MODEL --port 8888 --backend vllm --dataset-name random --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 --num-prompts $WARMUP --max-concurrency ${{ inputs.concurrency }} --warmup-requests 0 --output-file /tmp/ncu_warmup.jsonl" 2>&1 || echo "Warmup done"
+
+      - name: "Trigger cudaProfilerStart via gdb"
+        run: |
+          echo "=== Finding SGLang GPU worker PID ==="
+          WORKER_PID=$(ssh $NODE "docker exec $CONTAINER bash -c 'nvidia-smi --query-compute-apps=pid --format=csv,noheader | head -1 | tr -d \" \"'" || true)
+          echo "Worker PID: $WORKER_PID"
+          if [ -z "$WORKER_PID" ]; then
+            echo "ERROR: no GPU worker found"
+            ssh $NODE "docker exec $CONTAINER nvidia-smi" || true
+            exit 1
+          fi
+          echo "=== Triggering cudaProfilerStart via gdb ==="
+          ssh $NODE "docker exec $CONTAINER gdb -batch -p $WORKER_PID -ex 'call (int)cudaProfilerStart()' -ex quit" 2>&1 || echo "gdb trigger done"
+          echo "Profiling activated! NCU will capture next ${{ inputs.launch_count }} matching kernels"
+
+      - name: "Benchmark (c=${{ inputs.concurrency }}, NCU capturing)"
+        run: |
+          NUM=$((${{ inputs.concurrency }} * 5))
+          echo "Benchmark: $NUM prompts — NCU capturing ${{ inputs.kernel_filter }} kernels"
+          ssh $NODE "docker exec $CONTAINER python3 -m sglang.bench_serving --model $MODEL --port 8888 --backend vllm --dataset-name random --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 --num-prompts $NUM --max-concurrency ${{ inputs.concurrency }} --warmup-requests 0 --output-file /tmp/ncu_bench.jsonl" 2>&1 || echo "Benchmark done"
+
+      - name: "Stop profiling via gdb"
+        continue-on-error: true
+        run: |
+          WORKER_PID=$(ssh $NODE "docker exec $CONTAINER bash -c 'nvidia-smi --query-compute-apps=pid --format=csv,noheader | head -1 | tr -d \" \"'" || true)
+          if [ -n "$WORKER_PID" ]; then
+            ssh $NODE "docker exec $CONTAINER gdb -batch -p $WORKER_PID -ex 'call (int)cudaProfilerStop()' -ex quit" 2>&1 || true
+            echo "Profiling stopped"
+          fi
+
+      - name: Check results
+        if: always()
+        run: |
+          echo "=== .ncu-rep files ==="
+          ssh $NODE "docker exec $CONTAINER ls -lh $REPO/$RESULT_DIR/ncu_gdb/*.ncu-rep 2>/dev/null || echo 'No .ncu-rep'"
+          echo ""
+          echo "=== Server log (last 20) ==="
+          ssh $NODE "docker exec $CONTAINER tail -20 $REPO/$RESULT_DIR/ncu_gdb/server.log 2>/dev/null" || true
+
+      - name: Cleanup
+        if: always()
+        continue-on-error: true
+        run: ssh $NODE "docker exec $CONTAINER bash -c 'for p in \$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null); do kill -9 \$p 2>/dev/null; done; true'"
+
+      - name: Commit results
+        if: always()
+        run: |
+          ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
+          ssh $NODE "cd $REPO && git add -f $RESULT_DIR/ncu_gdb/*.ncu-rep $RESULT_DIR/ncu_gdb/*.log 2>/dev/null; true"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 NCU gdb trigger (${{ inputs.kernel_filter }}, count=${{ inputs.launch_count }})' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
