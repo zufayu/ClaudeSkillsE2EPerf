@@ -310,7 +310,7 @@ def classify_mi355x_row(module, kernel, gemm_a16w16_count):
     if "input_layernorm" in mod:
         return "comm_pre_attn"
     if "per_token_quant" in mod:
-        return "mla_input_quant"
+        return "mla_input_quant"  # disambiguated at call site for 2nd occurrence
     if "gemm_a8w8_bpreshuffle" in mod:
         return "mla_qkv_a"
     if "gemm_a16w16" in mod:
@@ -440,14 +440,31 @@ def generate_map(b200_rows, b200_totals, mi355x_rows, mi355x_total, b200_csv_pat
         b200_classified.append((logop, b))
 
     # ── Pass 1: Classify MI355X rows ──
+    # Check if FP8 model: if gemm_a8w8_bpreshuffle exists, qkv_a is FP8
+    # and gemm_a16w16 is always router (not qkv_a)
+    has_fp8_qkv_a = any(
+        "gemm_a8w8_bpreshuffle" in (mi["module"] or mi.get("parent_module", "")).lower()
+        for mi in mi355x_rows
+    )
     gemm_a16w16_count = 0
+    per_token_quant_count = 0
     mi355x_classified = []
     for mi in mi355x_rows:
         mod = mi["module"] or mi.get("parent_module", "")
-        if "gemm_a16w16" in mod.lower() and mi["module"]:
+        mod_lower = mod.lower()
+        if "gemm_a16w16" in mod_lower and mi["module"]:
             gemm_a16w16_count += 1
-        logop = classify_mi355x_row(mi["module"] or mi.get("parent_module", ""),
-                                     mi["kernel"], gemm_a16w16_count)
+        if "per_token_quant" in mod_lower and mi["module"]:
+            per_token_quant_count += 1
+        # If FP8 model has gemm_a8w8_bpreshuffle for qkv_a,
+        # then gemm_a16w16 is always router regardless of occurrence count
+        effective_count = gemm_a16w16_count
+        if has_fp8_qkv_a and "gemm_a16w16" in mod_lower:
+            effective_count = 2  # force router classification
+        logop = classify_mi355x_row(mod, mi["kernel"], effective_count)
+        # Fix: 2nd per_token_quant is before o_proj, not input quant
+        if logop == "mla_input_quant" and per_token_quant_count > 1:
+            logop = "mla_uv_o_proj"
         mi355x_classified.append((logop, mi))
 
     # ── Pass 2: Group by logical operator ──
