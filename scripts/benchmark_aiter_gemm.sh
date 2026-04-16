@@ -3,15 +3,14 @@
 #
 # Usage:
 #   bash scripts/benchmark_aiter_gemm.sh --action benchmark [--result-dir ./results]
+#   bash scripts/benchmark_aiter_gemm.sh --action benchmark --shapes-from advisor_report.json [--result-dir ./results]
 #   bash scripts/benchmark_aiter_gemm.sh --action tune [--result-dir ./results]
 #   bash scripts/benchmark_aiter_gemm.sh --action benchmark-tuned --tuned-ptpc /path/to/tuned_ptpc.csv --tuned-batched /path/to/tuned_batched.csv [--result-dir ./results]
 #   bash scripts/benchmark_aiter_gemm.sh --action all [--result-dir ./results]
 #
-# Target operators (DeepSeek-R1 decode, BS=64):
-#   q_b_proj  : PTPC GEMM   M=64 K=1536 N=6144  (profiled 11.8μs)
-#   o_proj    : PTPC GEMM   M=64 K=4096 N=7168  (profiled 21.4μs)
-#   k_up      : Batched GEMM B=32 M=64 K=512 N=128 (profiled 5.5μs)
-#   uv        : Batched GEMM B=32 M=64 K=512 N=128 (profiled 6.6μs)
+# When --shapes-from is provided, operator shapes are read from the advisor JSON
+# instead of using hardcoded defaults. This enables data-driven benchmarking
+# that adapts to the actual model variant and TP configuration.
 
 set -euo pipefail
 
@@ -19,17 +18,21 @@ ACTION="benchmark"
 RESULT_DIR="./results"
 TUNED_PTPC=""
 TUNED_BATCHED=""
+SHAPES_FROM=""
 WARMUP=20
 ITERS=100
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --action)       ACTION="$2"; shift 2 ;;
-        --result-dir)   RESULT_DIR="$2"; shift 2 ;;
-        --tuned-ptpc)   TUNED_PTPC="$2"; shift 2 ;;
+        --action)        ACTION="$2"; shift 2 ;;
+        --result-dir)    RESULT_DIR="$2"; shift 2 ;;
+        --tuned-ptpc)    TUNED_PTPC="$2"; shift 2 ;;
         --tuned-batched) TUNED_BATCHED="$2"; shift 2 ;;
-        --warmup)       WARMUP="$2"; shift 2 ;;
-        --iters)        ITERS="$2"; shift 2 ;;
+        --shapes-from)   SHAPES_FROM="$2"; shift 2 ;;
+        --warmup)        WARMUP="$2"; shift 2 ;;
+        --iters)         ITERS="$2"; shift 2 ;;
+        --untuned-ptpc)  TUNED_PTPC="$2"; shift 2 ;;   # alias for tune step
+        --untuned-batched) TUNED_BATCHED="$2"; shift 2 ;; # alias for tune step
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
@@ -94,10 +97,11 @@ run_benchmark() {
         eval "export $EXTRA_ENV"
     fi
 
-    python3 - "$RESULT_DIR" "$TAG" "$WARMUP" "$ITERS" << 'PYEOF'
+    python3 - "$RESULT_DIR" "$TAG" "$WARMUP" "$ITERS" "$SHAPES_FROM" << 'PYEOF'
 import sys
 import os
 import csv
+import json
 import torch
 import aiter
 from aiter import dtypes
@@ -106,6 +110,7 @@ RESULT_DIR = sys.argv[1]
 TAG = sys.argv[2]
 WARMUP = int(sys.argv[3])
 ITERS = int(sys.argv[4])
+SHAPES_FROM = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else ""
 
 FP8 = dtypes.fp8
 OUT_DTYPE = dtypes.bf16
@@ -126,9 +131,7 @@ def make_tensor(shape, device="cuda"):
 
 
 def benchmark_gemm(name, M, N, K, warmup=WARMUP, iters=ITERS):
-    """Benchmark aiter PTPC GEMM a8w8.
-    API: aiter.gemm_a8w8(XQ, WQ, x_scale, w_scale, bias=None, dtype=bf16, splitK=None)
-    """
+    """Benchmark aiter PTPC GEMM a8w8."""
     XQ = make_tensor((M, K))
     WQ = make_tensor((N, K))
     x_scale = torch.ones(M, 1, device="cuda", dtype=torch.float32)
@@ -163,11 +166,7 @@ def benchmark_gemm(name, M, N, K, warmup=WARMUP, iters=ITERS):
 
 
 def benchmark_batched_gemm(name, B_count, M, N, K, warmup=WARMUP, iters=ITERS):
-    """Benchmark aiter batched GEMM a8w8.
-    Low-level kernel requires int8 tensors (reinterprets as fp8 internally).
-    Use batched_gemm_a8w8() directly with pre-allocated Out.
-    """
-    # Create fp8 data as int8 (kernel does fp8 interpretation internally)
+    """Benchmark aiter batched GEMM a8w8."""
     XQ = torch.randint(-128, 127, (B_count, M, K), dtype=torch.int8, device="cuda")
     WQ = torch.randint(-128, 127, (B_count, N, K), dtype=torch.int8, device="cuda")
     x_scale = torch.ones(B_count, M, 1, device="cuda", dtype=torch.float32)
@@ -202,37 +201,84 @@ def benchmark_batched_gemm(name, B_count, M, N, K, warmup=WARMUP, iters=ITERS):
     return {"op": name, "type": "batched", "M": M, "N": N, "K": K, "B": B_count, "avg_us": f"{avg_us:.1f}", "min_us": f"{min_us:.1f}", "max_us": f"{max_us:.1f}"}
 
 
+def load_shapes_from_advisor(path):
+    """Load tunable operator shapes from advisor_report.json."""
+    with open(path) as f:
+        report = json.load(f)
+    ptpc_ops = []
+    batched_ops = []
+    for op in report["operators"]:
+        if not op.get("tunable"):
+            continue
+        shape = op.get("shape", {})
+        if not shape:
+            continue
+        if op["family"] == "fp8_dense":
+            ptpc_ops.append((op["operator"], shape["M"], shape["N"], shape["K"]))
+        elif op["family"] == "fp8_batched":
+            batched_ops.append((op["operator"], shape["B"], shape["M"], shape["N"], shape["K"]))
+    return ptpc_ops, batched_ops
+
+
 # ── Main ──
 print(f"Tag: {TAG}")
 print(f"Warmup: {WARMUP}, Iters: {ITERS}")
 print(f"FP8 dtype: {FP8}")
 print(f"GPU: {torch.cuda.get_device_name(0)}")
+if SHAPES_FROM:
+    print(f"Shapes from: {SHAPES_FROM}")
 print()
 
 results = []
 
-# PTPC GEMMs
-print("--- PTPC GEMM (aiter.gemm_a8w8) ---")
-r = benchmark_gemm("q_b_proj", M=64, N=6144, K=1536)
-if r: results.append(r)
+if SHAPES_FROM and os.path.exists(SHAPES_FROM):
+    # Data-driven: read shapes from advisor report
+    ptpc_ops, batched_ops = load_shapes_from_advisor(SHAPES_FROM)
 
-r = benchmark_gemm("o_proj", M=64, N=7168, K=4096)
-if r: results.append(r)
+    if ptpc_ops:
+        print("--- PTPC GEMM (aiter.gemm_a8w8) — from advisor ---")
+        for name, M, N, K in ptpc_ops:
+            try:
+                r = benchmark_gemm(name, M=M, N=N, K=K)
+                if r: results.append(r)
+            except Exception as e:
+                print(f"  {name} FAILED: {e}")
 
-# Batched GEMMs
-print()
-print("--- Batched GEMM (aiter.batched_gemm_a8w8) ---")
-try:
-    r = benchmark_batched_gemm("k_up", B_count=32, M=64, N=128, K=512)
+    if batched_ops:
+        print()
+        print("--- Batched GEMM (aiter.batched_gemm_a8w8) — from advisor ---")
+        for name, B, M, N, K in batched_ops:
+            try:
+                r = benchmark_batched_gemm(name, B_count=B, M=M, N=N, K=K)
+                if r: results.append(r)
+            except Exception as e:
+                print(f"  {name} FAILED: {e}")
+
+    if not ptpc_ops and not batched_ops:
+        print("No tunable operators found in advisor report")
+        sys.exit(0)
+else:
+    # Legacy: hardcoded shapes (TP=4 FP8 model)
+    print("--- PTPC GEMM (aiter.gemm_a8w8) — hardcoded TP=4 ---")
+    r = benchmark_gemm("q_b_proj", M=64, N=6144, K=1536)
     if r: results.append(r)
-except Exception as e:
-    print(f"  k_up FAILED: {e}")
 
-try:
-    r = benchmark_batched_gemm("uv", B_count=32, M=64, N=128, K=512)
+    r = benchmark_gemm("o_proj", M=64, N=7168, K=4096)
     if r: results.append(r)
-except Exception as e:
-    print(f"  uv FAILED: {e}")
+
+    print()
+    print("--- Batched GEMM (aiter.batched_gemm_a8w8) — hardcoded TP=4 ---")
+    try:
+        r = benchmark_batched_gemm("k_up", B_count=32, M=64, N=128, K=512)
+        if r: results.append(r)
+    except Exception as e:
+        print(f"  k_up FAILED: {e}")
+
+    try:
+        r = benchmark_batched_gemm("uv", B_count=32, M=64, N=128, K=512)
+        if r: results.append(r)
+    except Exception as e:
+        print(f"  uv FAILED: {e}")
 
 # Save CSV
 csv_path = os.path.join(RESULT_DIR, f"aiter_gemm_{TAG}.csv")

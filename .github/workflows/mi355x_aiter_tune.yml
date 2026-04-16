@@ -6,12 +6,27 @@ on:
         description: "What to run"
         type: choice
         options:
-          - discover
+          - advisor-only
           - benchmark-baseline
           - tune
           - benchmark-tuned
           - all
-        default: discover
+        default: advisor-only
+      xlsx_path:
+        description: "Path to decode_breakdown*.xlsx (relative to repo root)"
+        type: string
+        default: "results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711_profiling/decode_breakdown.xlsx"
+      tp:
+        description: "TP size"
+        type: choice
+        options:
+          - "4"
+          - "8"
+        default: "8"
+      bs:
+        description: "Batch size (M dimension)"
+        type: string
+        default: "64"
 
 jobs:
   aiter-tune:
@@ -56,80 +71,67 @@ jobs:
           echo "=== Verify container ==="
           podman exec $CONTAINER python3 --version
 
-      - name: Verify aiter matches zufa_atom
+      - name: Verify aiter
         run: |
-          echo "=== zufa_aiter aiter version ==="
+          echo "=== aiter version ==="
           podman exec $CONTAINER python3 -c "import aiter; print(aiter.__version__)" 2>/dev/null || echo "aiter not found"
-          echo "=== zufa_atom aiter version ==="
-          podman exec zufa_atom python3 -c "import aiter; print(aiter.__version__)" 2>/dev/null || echo "zufa_atom not available"
-          echo ""
           echo "=== ROCm version ==="
           podman exec $CONTAINER cat /opt/rocm/.info/version 2>/dev/null || echo "unknown"
           echo "=== GPU ==="
           podman exec $CONTAINER rocm-smi --showproductname 2>/dev/null | head -5
 
-      - name: "Discover aiter structure"
-        if: inputs.action == 'discover' || inputs.action == 'all'
+      - name: Run advisor
         run: |
-          cat > /tmp/aiter_discover.sh << 'SCRIPT_EOF'
-          #!/bin/bash
-          set -x
-          AITER_ROOT=$(python3 -c "import aiter; print(aiter.__path__[0])")
-          echo "AITER_ROOT=$AITER_ROOT"
-          echo "=== batched_gemm_op_a8w8.py full ==="
-          cat $AITER_ROOT/ops/batched_gemm_op_a8w8.py 2>/dev/null
-          echo "=== Quick test: batched_gemm_a8w8_CK with int8 ==="
-          python3 -c "
-          import torch; from aiter import dtypes; import aiter
-          print('dtypes.fp8 =', dtypes.fp8)
-          B,M,N,K = 32,64,128,512
-          # Try int8 for batched gemm (kernel says 'should both be int8')
-          XQ = torch.randint(-128, 127, (B,M,K), dtype=torch.int8, device='cuda')
-          WQ = torch.randint(-128, 127, (B,N,K), dtype=torch.int8, device='cuda')
-          xs = torch.ones(B,M,1, device='cuda', dtype=torch.float32)
-          ws = torch.ones(B,1,N, device='cuda', dtype=torch.float32)
-          print('XQ dtype=', XQ.dtype, 'shape=', XQ.shape)
-          result = aiter.batched_gemm_a8w8_CK(XQ, WQ, xs, ws, None, dtypes.bf16)
-          print('INT8 SUCCESS:', result.shape, result.dtype)
-          " 2>&1 || echo "int8 batched test failed"
-          echo "=== Quick test: batched_gemm_a8w8 low-level with fp8 view as int8 ==="
-          python3 -c "
-          import torch; from aiter import dtypes; import aiter
-          B,M,N,K = 32,64,128,512
-          # Create as fp8 then view as int8 for the kernel
-          XQ_fp8 = torch.randint(0, 127, (B,M,K), dtype=torch.uint8, device='cuda').view(dtypes.fp8)
-          WQ_fp8 = torch.randint(0, 127, (B,N,K), dtype=torch.uint8, device='cuda').view(dtypes.fp8)
-          XQ_i8 = XQ_fp8.view(torch.int8)
-          WQ_i8 = WQ_fp8.view(torch.int8)
-          xs = torch.ones(B,M,1, device='cuda', dtype=torch.float32)
-          ws = torch.ones(B,1,N, device='cuda', dtype=torch.float32)
-          Out = torch.empty(B,M,N, device='cuda', dtype=dtypes.bf16)
-          print('XQ_i8 dtype=', XQ_i8.dtype, 'shape=', XQ_i8.shape)
-          result = aiter.batched_gemm_a8w8(XQ_i8, WQ_i8, xs, ws, Out, None, 0)
-          print('FP8->INT8 SUCCESS:', result.shape, result.dtype)
-          " 2>&1 || echo "fp8->int8 batched test failed"
-          SCRIPT_EOF
-          chmod +x /tmp/aiter_discover.sh
-          podman cp /tmp/aiter_discover.sh $CONTAINER:/tmp/aiter_discover.sh
-          podman exec $CONTAINER bash /tmp/aiter_discover.sh
+          echo "=== Running Tune Advisor ==="
+          podman exec $CONTAINER bash -c "cd $REPO && python3 scripts/aiter_tune_advisor.py \
+            --xlsx $REPO/${{ inputs.xlsx_path }} \
+            --tp ${{ inputs.tp }} --bs ${{ inputs.bs }} \
+            --output-dir $REPO/$RESULT_DIR"
 
-      - name: "Benchmark baseline"
+      - name: Show advisor report
+        if: always()
+        run: |
+          echo "=== Advisor Report ==="
+          cat $REPO/$RESULT_DIR/advisor_report.json 2>/dev/null || echo "No report"
+          echo ""
+          echo "=== Needs Tuning ==="
+          python3 -c "
+          import json, sys
+          try:
+              r = json.load(open('$REPO/$RESULT_DIR/advisor_report.json'))
+              for op in r['operators']:
+                  if op.get('tune_status') == 'not_tuned':
+                      print(f\"  {op['operator']}: {op['shape']} -> {op.get('tune_script', '?')}\")
+              if r['summary']['needs_tune'] == 0:
+                  print('  All tunable ops already tuned!')
+          except Exception as e:
+              print(f'  Failed to parse report: {e}')
+          " 2>/dev/null || true
+
+      - name: Benchmark baseline
         if: inputs.action == 'benchmark-baseline' || inputs.action == 'all'
         run: |
-          podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/benchmark_aiter_gemm.sh --action benchmark-baseline --result-dir ./${{ env.RESULT_DIR }}'
+          podman exec $CONTAINER bash -c "cd $REPO && bash scripts/benchmark_aiter_gemm.sh \
+            --action benchmark-baseline \
+            --shapes-from $REPO/$RESULT_DIR/advisor_report.json \
+            --result-dir $REPO/$RESULT_DIR"
 
-      - name: "Show baseline results"
+      - name: Show baseline results
         if: (inputs.action == 'benchmark-baseline' || inputs.action == 'all') && always()
         run: |
           cat $REPO/$RESULT_DIR/aiter_gemm_baseline.csv 2>/dev/null || echo "No baseline CSV"
 
-      - name: "Tune GEMM operators"
+      - name: Tune GEMM operators
         if: inputs.action == 'tune' || inputs.action == 'all'
         timeout-minutes: 60
         run: |
-          podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/benchmark_aiter_gemm.sh --action tune --result-dir ./${{ env.RESULT_DIR }}'
+          podman exec $CONTAINER bash -c "cd $REPO && bash scripts/benchmark_aiter_gemm.sh \
+            --action tune \
+            --untuned-ptpc $REPO/$RESULT_DIR/untuned_ptpc.csv \
+            --untuned-batched $REPO/$RESULT_DIR/untuned_batched.csv \
+            --result-dir $REPO/$RESULT_DIR"
 
-      - name: "Show tuned configs"
+      - name: Show tuned configs
         if: (inputs.action == 'tune' || inputs.action == 'all') && always()
         run: |
           echo "=== Tuned PTPC CSV ==="
@@ -138,12 +140,15 @@ jobs:
           echo "=== Tuned Batched CSV ==="
           cat $REPO/$RESULT_DIR/tuned_batched.csv 2>/dev/null || echo "No tuned batched CSV"
 
-      - name: "Benchmark with tuned configs"
+      - name: Benchmark with tuned configs
         if: inputs.action == 'benchmark-tuned' || inputs.action == 'all'
         run: |
-          podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/benchmark_aiter_gemm.sh --action benchmark-tuned --result-dir ./${{ env.RESULT_DIR }}'
+          podman exec $CONTAINER bash -c "cd $REPO && bash scripts/benchmark_aiter_gemm.sh \
+            --action benchmark-tuned \
+            --shapes-from $REPO/$RESULT_DIR/advisor_report.json \
+            --result-dir $REPO/$RESULT_DIR"
 
-      - name: "Show comparison"
+      - name: Show comparison
         if: (inputs.action == 'benchmark-tuned' || inputs.action == 'all') && always()
         run: |
           echo "=== Tuned results ==="
@@ -156,8 +161,8 @@ jobs:
         if: always()
         run: |
           cd $REPO && git config user.email 'ci@github.com' && git config user.name 'MI355X CI'
-          cd $REPO && git add -f $RESULT_DIR/*.csv $RESULT_DIR/*.log 2>/dev/null; git diff --cached --name-only
-          cd $REPO && if ! git diff --cached --quiet; then git commit -m "data: MI355X aiter GEMM tune (${{ inputs.action }})" && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi
+          cd $REPO && git add -f $RESULT_DIR/*.csv $RESULT_DIR/*.json $RESULT_DIR/*.log 2>/dev/null; git diff --cached --name-only
+          cd $REPO && if ! git diff --cached --quiet; then git commit -m "data: MI355X aiter GEMM tune (${{ inputs.action }}, TP=${{ inputs.tp }})" && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi
 
       - name: Show final state
         if: always()
