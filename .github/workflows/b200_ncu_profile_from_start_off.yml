@@ -1,4 +1,4 @@
-name: "B200 NCU profile-from-start-off Test"
+name: "B200 NCU launch-and-attach Test"
 on:
   workflow_dispatch:
     inputs:
@@ -41,88 +41,67 @@ jobs:
           ssh $NODE "docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2"
           ssh $NODE "docker exec $CONTAINER python3 -c 'import sglang; print(f\"SGLang {sglang.__version__}\")'"
           ssh $NODE "docker exec $CONTAINER ncu --version 2>/dev/null | head -1 || echo 'NCU not found in container'"
-          ssh $NODE "which ncu 2>/dev/null && ncu --version 2>/dev/null | head -1 || echo 'NCU not on host either'"
 
       - name: Clean old results and GPU processes
         continue-on-error: true
         run: |
-          ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/ncu_pfs_off* 2>/dev/null; true'"
+          ssh $NODE "docker exec $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/ncu_launch* 2>/dev/null; true'"
           ssh $NODE "docker exec $CONTAINER bash -c 'fuser -k -9 8888/tcp 2>/dev/null; true'"
           ssh $NODE "docker exec $CONTAINER bash -c 'for p in \$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null); do kill -9 \$p 2>/dev/null; done; true'"
           sleep 5
 
-      - name: "Start SGLang server under NCU (profile-from-start off)"
+      - name: "Start SGLang server under NCU (launch-and-attach, profiling ON)"
         run: |
-          ssh $NODE "docker exec -d $CONTAINER bash -c 'cd $REPO && mkdir -p $RESULT_DIR/ncu_pfs_off && ncu --mode launch-and-attach --profile-from-start off --target-processes all --devices 0 --graph-profiling node --pm-sampling-interval 1000 -k \"regex:nvjet|fmha|cutlass|flash_attn|kernel_mha|deep_gemm\" --launch-count ${{ inputs.launch_count }} -f -o $RESULT_DIR/ncu_pfs_off/ncu_decode_c${{ inputs.concurrency }} --section PmSampling --section PmSampling_WarpStates --section Nvlink --section Nvlink_Tables --section Nvlink_Topology python3 -m sglang.launch_server --model-path $MODEL --tp 8 --trust-remote-code --mem-fraction-static 0.85 --chunked-prefill-size 16384 --kv-cache-dtype fp8_e4m3 --cuda-graph-max-bs 256 --max-running-requests 256 --port 8888 --host 0.0.0.0 > $RESULT_DIR/ncu_pfs_off/server.log 2>&1'"
-          echo "Server launched under NCU with --profile-from-start off"
-          echo "NCU injection is passive during init — no kernel instrumentation"
+          ssh $NODE "docker exec -d $CONTAINER bash -c 'cd $REPO && mkdir -p $RESULT_DIR/ncu_launch && ncu --mode launch-and-attach --target-processes all --devices 0 --graph-profiling node --pm-sampling-interval 1000 -k \"regex:nvjet|fmha|cutlass|flash_attn|kernel_mha|deep_gemm\" --launch-count ${{ inputs.launch_count }} --section PmSampling --section PmSampling_WarpStates --section Nvlink --section Nvlink_Tables --section Nvlink_Topology -f -o $RESULT_DIR/ncu_launch/ncu_decode_c${{ inputs.concurrency }} python3 -m sglang.launch_server --model-path $MODEL --tp 8 --trust-remote-code --mem-fraction-static 0.85 --chunked-prefill-size 16384 --kv-cache-dtype fp8_e4m3 --cuda-graph-max-bs 256 --max-running-requests 256 --port 8888 --host 0.0.0.0 > $RESULT_DIR/ncu_launch/server.log 2>&1'"
+          echo "Server launched under NCU (profiling active from start)"
+          echo "NCU will profile the first 140 matching kernel launches on GPU 0"
 
-      - name: Wait for server ready
+      - name: Wait for server ready (may be slow under NCU)
         run: |
-          echo "Waiting for SGLang server to be ready (this may take 5-15 min)..."
+          echo "Waiting for SGLang server under NCU (expect 10-60 min due to kernel replay)..."
           WAIT=0
-          TIMEOUT=1800
+          TIMEOUT=7200
           while true; do
             if ssh $NODE "docker exec $CONTAINER curl -sf http://localhost:8888/health" > /dev/null 2>&1; then
               echo "Server ready after ${WAIT}s!"
               break
             fi
-            # Check if the ncu/server process is still alive
             ALIVE=$(ssh $NODE "docker exec $CONTAINER pgrep -f 'sglang.launch_server' 2>/dev/null | head -1" || true)
             if [ -z "$ALIVE" ]; then
-              echo "ERROR: Server process died"
-              ssh $NODE "docker exec $CONTAINER tail -50 $REPO/$RESULT_DIR/ncu_pfs_off/server.log 2>/dev/null" || true
+              echo "Server process died. Server log:"
+              ssh $NODE "docker exec $CONTAINER tail -50 $REPO/$RESULT_DIR/ncu_launch/server.log 2>/dev/null" || true
+              echo ""
+              echo "Checking if NCU already produced output (may have captured init kernels and exited):"
+              ssh $NODE "docker exec $CONTAINER ls -lh $REPO/$RESULT_DIR/ncu_launch/*.ncu-rep 2>/dev/null || echo 'No .ncu-rep files'"
               exit 1
             fi
-            sleep 15
-            WAIT=$((WAIT + 15))
+            sleep 30
+            WAIT=$((WAIT + 30))
             if [ $WAIT -ge $TIMEOUT ]; then
-              echo "ERROR: Server not ready after ${TIMEOUT}s"
-              ssh $NODE "docker exec $CONTAINER tail -50 $REPO/$RESULT_DIR/ncu_pfs_off/server.log 2>/dev/null" || true
+              echo "Timeout after ${TIMEOUT}s. Server log:"
+              ssh $NODE "docker exec $CONTAINER tail -50 $REPO/$RESULT_DIR/ncu_launch/server.log 2>/dev/null" || true
               exit 1
             fi
-            [ $((WAIT % 60)) -eq 0 ] && echo "  Still waiting... ${WAIT}s"
+            [ $((WAIT % 120)) -eq 0 ] && echo "  Still waiting... ${WAIT}s ($(($WAIT/60))min)"
           done
 
-      - name: "Warmup (c=${{ inputs.concurrency }})"
+      - name: "Benchmark (c=${{ inputs.concurrency }})"
         run: |
-          WARMUP=$((CONC * 2))
-          echo "Sending $WARMUP warmup prompts at c=$CONC..."
-          ssh $NODE "docker exec $CONTAINER python3 -m sglang.bench_serving --model $MODEL --port 8888 --backend vllm --dataset-name random --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 --num-prompts $WARMUP --max-concurrency $CONC --warmup-requests 0 --output-file /tmp/ncu_warmup.jsonl" 2>&1 || echo "Warmup complete (may have warnings)"
-
-      - name: "Trigger cudaProfilerStart and benchmark (c=${{ inputs.concurrency }})"
-        run: |
-          echo "=== Triggering cudaProfilerStart on GPU 0 worker ==="
-          # Find the SGLang worker process on GPU 0 and send cudaProfilerStart
-          ssh $NODE "docker exec $CONTAINER python3 -c '
-          import ctypes, subprocess, re, os, signal
-          # Find sglang tp_rank=0 worker PID
-          result = subprocess.run([\"pgrep\", \"-af\", \"sglang\"], capture_output=True, text=True)
-          print(\"SGLang processes:\")
-          print(result.stdout)
-          # cudaProfilerStart in current process won't help - need to do it in the worker
-          # Instead, we use SIGUSR1 approach or just rely on ncu auto-profiling
-          print(\"Note: cudaProfilerStart needs to be called from the GPU worker process\")
-          print(\"With --profile-from-start off, ncu should start profiling when we send requests\")
-          print(\"Actually --profile-from-start off means: do NOT auto-start. Need explicit trigger.\")
-          '"
-          echo ""
-          echo "=== Sending benchmark requests to trigger decode kernels ==="
           NUM_PROMPTS=$((CONC * 10))
           echo "Sending $NUM_PROMPTS prompts at c=$CONC..."
           ssh $NODE "docker exec $CONTAINER python3 -m sglang.bench_serving --model $MODEL --port 8888 --backend vllm --dataset-name random --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 --num-prompts $NUM_PROMPTS --max-concurrency $CONC --warmup-requests 0 --output-file /tmp/ncu_profiled.jsonl" 2>&1 || echo "Benchmark complete"
 
-      - name: Wait for NCU and check results
+      - name: Check results
         if: always()
         run: |
-          echo "=== Checking if NCU produced .ncu-rep files ==="
-          ssh $NODE "docker exec $CONTAINER ls -lh $REPO/$RESULT_DIR/ncu_pfs_off/*.ncu-rep 2>/dev/null || echo 'No .ncu-rep files (profiling may not have triggered)'"
+          echo "=== .ncu-rep files ==="
+          ssh $NODE "docker exec $CONTAINER ls -lh $REPO/$RESULT_DIR/ncu_launch/*.ncu-rep 2>/dev/null || echo 'No .ncu-rep files'"
           echo ""
           echo "=== Server log (last 30 lines) ==="
-          ssh $NODE "docker exec $CONTAINER tail -30 $REPO/$RESULT_DIR/ncu_pfs_off/server.log 2>/dev/null || echo 'No server log'"
+          ssh $NODE "docker exec $CONTAINER tail -30 $REPO/$RESULT_DIR/ncu_launch/server.log 2>/dev/null || echo 'No server log'"
           echo ""
-          echo "=== NCU process status ==="
-          ssh $NODE "docker exec $CONTAINER pgrep -af ncu 2>/dev/null || echo 'No ncu process running'"
+          echo "=== NCU process ==="
+          ssh $NODE "docker exec $CONTAINER pgrep -af ncu 2>/dev/null || echo 'NCU finished'"
 
       - name: Cleanup
         if: always()
@@ -135,5 +114,5 @@ jobs:
         if: always()
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
-          ssh $NODE "cd $REPO && git add -f $RESULT_DIR/ncu_pfs_off/*.log $RESULT_DIR/ncu_pfs_off/*.ncu-rep $RESULT_DIR/ncu_pfs_off/*.csv 2>/dev/null; true"
-          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 NCU profile-from-start-off (chat c=${{ inputs.concurrency }})' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
+          ssh $NODE "cd $REPO && git add -f $RESULT_DIR/ncu_launch/*.log $RESULT_DIR/ncu_launch/*.ncu-rep $RESULT_DIR/ncu_launch/*.csv 2>/dev/null; true"
+          ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 'data: B200 NCU launch-and-attach (chat c=${{ inputs.concurrency }})' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
