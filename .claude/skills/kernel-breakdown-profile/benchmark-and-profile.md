@@ -2,6 +2,126 @@
 
 Four-level profiling methodology for DeepSeek R1 671B inference on B200 and MI355X.
 
+---
+
+## Output Contract — Column Specifications
+
+All triage reports must use these exact column formats. See `SKILL.md` for the three-table structure.
+
+### Table 1: Kernel Table columns
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `#` | int | Row number (1-indexed) |
+| `Kernel` | string | GPU kernel function name (use trace-original name, never simplify) |
+| `Category` | enum | Auto-classified: MoE/Expert, Attention, GEMM/MatMul, Communication, Normalization, Quantization, RoPE, Activation, Memory, Sampling, Other |
+| `GPU time (μs)` | float | Total GPU time in microseconds for this kernel across all launches |
+| `Share%` | float | `GPU time / total GPU time × 100`, one decimal place |
+| `Launches` | int | Number of kernel launches |
+| `Platform` | enum | B200 / MI355X |
+| `Source` | string | Trace file path or profiling run identifier |
+
+### Table 2: Cross-Platform Delta Table columns
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `#` | int | Operator sequence number (1-15 for standard DeepSeek R1 decode layer) |
+| `Operator` | string | Logical operator name from 15-operator decomposition |
+| `B200 kernel` | string | B200 kernel name(s) for this operator |
+| `B200 μs` | float | B200 GPU time |
+| `MI355X kernel` | string | MI355X kernel name(s) |
+| `MI355X μs` | float | MI355X GPU time |
+| `GAP(B-M)` | float | `B200 μs - MI355X μs`. Positive = B200 slower |
+| `GAP%` | float | `abs(GAP) / max(B200, MI355X) × 100` |
+| `Bottleneck side` | enum | `B200` (B200 > MI355X by >10%), `MI355X` (MI355X > B200 by >10%), `parity` (within 10%) |
+
+### Table 3: Optimization Opportunity Table columns
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `Operator` | string | From Table 2 |
+| `GAP source` | enum | `kernel_efficiency` / `fusion_gap` / `overlap_gap` / `comm_bw` / `arch_difference` / `quant_difference` |
+| `Known fix` | string | From `existing-optimizations.md` or catalog |
+| `Catalog status` | enum | `existing` (known, may be applied/missing), `in-flight` (PR/development), `structural` (hardware gap), `new opportunity` |
+| `Priority` | enum | `P1` (>10μs gap), `P2` (3-10μs), `P3` (<3μs), `skip` (structural, not actionable) |
+
+---
+
+## Cross-Platform Triage Workflow
+
+### Prerequisites
+
+1. Both platforms profiled with **same scenario** (chat/reasoning/summarize)
+2. Same concurrency level (c=4 for low-latency, c=64 for throughput)
+3. Same EP/TP configuration where possible (EP=8 TP=8 for 8-GPU parity, or EP=4 TP=4 for 4-GPU)
+4. Decode-only data isolated (use `--phase decode` or steady-state batch selection)
+
+### Steps
+
+1. **Collect traces** (can run in parallel on different machines):
+   ```bash
+   # B200 (nsys or SGLang torch trace)
+   bash scripts/collect_nsys_trace.sh --model $MODEL --mode bench --scenario chat --concurrency 64 --quant fp4 --config throughput
+   # or: SGLang torch profiler
+   bash scripts/collect_sglang_trace.sh --model $MODEL --scenario chat --concurrency 64
+
+   # MI355X (ATOM Kineto)
+   bash scripts/collect_atom_trace.sh --model $MODEL --scenario chat --concurrency 64 --result-dir ./results_mi355x_trace
+   ```
+
+2. **Parse into per-operator breakdown**:
+   ```bash
+   python3 scripts/parse_torch_trace.py b200_trace.json.gz --phase decode --csv b200_kernel_breakdown.csv
+   python3 scripts/parse_torch_trace.py mi355x_trace.json.gz --phase decode --csv mi355x_kernel_breakdown.csv
+   ```
+
+3. **Align operators** using the 15-operator skeleton (see Level 2 below)
+
+4. **Generate three tables** — read both CSVs, classify kernels, compute deltas
+
+5. **Check Table 3 against catalog** — consult `reference_cross_platform_catalog.md` memory and `existing-optimizations.md`
+
+### Overlap Accounting
+
+B200 traces with multi-stream overlap require special handling:
+- **B200 kernel_sum** ≠ **B200 walltime** (overlap must be subtracted)
+- **MI355X kernel_sum** = **MI355X walltime** (single-stream, no overlap)
+- For fair comparison: use B200 **elapsed/walltime** (critical path), not kernel_sum
+- Report both kernel_sum and walltime; note the overlap amount
+
+### Data Integrity Rules
+
+1. **Never reconstruct** operator shapes/names/types from memory — always Read the CSV/trace
+2. **Use trace-original kernel names** — do not rename or simplify
+3. **Verify total**: sum of all operator μs should match within 5% of measured TPOT × 1000 / 61 layers
+4. **Version-stamp** all data: framework version, container image, date
+
+---
+
+## Kernel Auto-Classification Reference
+
+The keyword patterns below are used by `parse_torch_trace.py` and `compare_traces.py`. Check in listed order — first match wins.
+
+```
+1. Attention:  fmha, flash_fwd, flash_attn, mha_, mla_, merge_attn, set_mla_kv, mla_reduce
+2. MoE/Expert: moe::, expert, routing, swiglu, nvjet_sm100, bmm_E2m1, bmm_BF16, 
+               moe_mxgemm, MoeSorting, fused_mxfp4_quant_moe
+3. Communication: allreduce, reduce_scatter, all_gather, nccl, rccl, userbuffers, 
+                  device_load, device_store, moefinalize, lamport
+4. GEMM/MatMul: gemm, gemv, cutlass, cublas, nvjet, splitKreduce, matmul, bmm, Cijk_
+5. Normalization: rmsnorm, layernorm, batchnorm, groupnorm, Norm
+6. Activation: silu, gelu, relu, act_and_mul, swiglu, sigmoid
+7. Quantization: quantize, dequant, cvt_fp16_to_fp4, fp4, fp8, mxfp
+8. Memory: memcpy, memset, copy, transpose
+9. RoPE: rope, rotary, RopeQuantize, fuse_qk_rope
+10. Sampling: sample, argmax, topk_sampling, multinomial
+11. Other: everything else
+```
+
+**Important**: Attention must be checked before GEMM (fmha kernels may contain "gemm" substring).
+
+---
+
 ## Level 0: E2E Benchmark (Existing)
 
 Establish the performance baseline before drilling into kernels.

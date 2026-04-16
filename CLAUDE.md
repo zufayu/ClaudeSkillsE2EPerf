@@ -93,6 +93,119 @@ Series use `env_tag` for MTP differentiation:
 - `8×MI355X DeepSeek-R1-0528 FP8 (ATOM) [mtp0]`
 - `8×MI355X DeepSeek-R1-0528 FP8 (ATOM) [mtp3]`
 
+## Directory Structure
+
+### Top-Level Layout
+
+| Directory | Purpose | Git-tracked |
+|-----------|---------|-------------|
+| `configs/` | Benchmark configs (`bench_config_{platform}.yaml`) | Yes |
+| `scripts/` | All scripts (flat, prefix-based naming) | Yes |
+| `results/` | Official results + profiling analysis | Yes |
+| `runs/` | Unified JSON after import (flat) | Yes |
+| `docs/` | Dashboard frontend (`index.html` + `data.js`) | Yes |
+| `reports/` | Analysis reports (`.md` / `.csv`) | Yes |
+| `utils/` | benchmark_serving library | Yes |
+| `remote_agent/` | Remote machine agent scripts | Yes |
+| `traces/` | Raw nsys/ncu traces (temp, large) | No |
+| `experiments/` | Exploratory experiments | No |
+| `results_*/` | Remote staging dirs from sa_bench scripts | Partial |
+
+### `results/` — Three-Level Hierarchy
+
+```
+results/
+  L1: {platform}_{model}_{quant}/
+  L2:   {platform}_{model}_{quant}_{mtp}_{ep}_{tp}_{framework}/            ← bench
+  L2:   {platform}_{model}_{quant}_{mtp}_{ep}_{tp}_{framework}_profiling/  ← profiling
+```
+
+Field values:
+- platform: `b200` / `mi355x`
+- model: `dsr` (DeepSeek-R1)
+- quant: `fp4` / `fp8` / `mxfp4`
+- mtp: `mtp0` / `mtp3`
+- ep/tp: `ep1`/`ep4`/`ep8`, `tp4`/`tp8`
+- framework: `post2`/`post3` (TRT-LLM) / `sglang059` / `rocm711`/`rocm721` / `rc10`
+
+**Bench directory** — files flat:
+```
+result_{quant}_{config}_{scenario}_{ep}_c{N}.json
+config_*.yml / server_*.log / gpu_*.csv
+summary.md
+```
+
+**Profiling directory** — sub-directories by tool chain:
+```
+{...}_profiling/
+  summary.md                          ← always at root
+  result_profiled_*.json              ← main task bench result (root)
+
+  torch_trace/                        ← main task: torch/Kineto trace
+    kernel_breakdown_*.csv
+    per_layer_breakdown_*.csv
+    layer_walltime.csv / .json
+    *.json.gz                         ← raw trace files
+
+  nsys/                               ← branch task: Nsight Systems
+    *.nsys-rep                        ← raw trace (large, gitignore)
+    *.sqlite                          ← nsys export
+    nsys_kernels_*.csv                ← analysis output
+    result_*.json                     ← bench result for this run
+
+  ncu/                                ← branch task: Nsight Compute
+    *.ncu-rep                         ← raw report
+    decode_region.log
+    ncu_*.csv                         ← analysis output
+    result_*.json
+```
+
+Rules:
+- Each tool chain's artifacts are self-contained in its sub-directory
+- Raw traces and derived analysis live together for traceability
+- `summary.md` and main `result_profiled_*.json` stay at profiling root
+- `.gitignore` controls large binaries per sub-directory (e.g. `**/nsys/*.nsys-rep`)
+
+### `runs/` — Unified Import Format (flat)
+
+```
+{gpu_count}x{platform}-{quant}-{date_YYYYMMDD}-{mtp}-{ep}-{tp}-{framework}.json
+```
+
+### `scripts/` — Prefix Convention (flat, no sub-directories)
+
+| Prefix | Purpose |
+|--------|---------|
+| `sa_bench_*.sh` | SemiAnalysis-style benchmark runner (per platform) |
+| `run_*.sh/py` | Run tests |
+| `collect_*.sh` | Capture traces (nsys/ncu/torch) |
+| `analyze_*.py/sh` | Analyze traces/logs |
+| `compare_*.py` | Cross-platform/config comparison |
+| `parse_*.py` | Parse trace files |
+| `import_results.py` | Import results to runs/ |
+| `generate_dashboard.py` | Generate dashboard data |
+| `deploy_dashboard.sh` | Deploy to gh-pages |
+| `launch_*_docker.sh` | Docker launch |
+| `setup_*.sh` | Environment setup |
+| `trim_*.py/sh` | Log trimming |
+| `upload_*.sh` | Upload results/profiling |
+
+### `experiments/` — Exploratory Runs (gitignored)
+
+```
+experiments/
+  {platform}_{model}_{quant}/                          ← reuses results L1 naming
+    {full_params}_{experiment_description}/             ← adds experiment suffix
+```
+
+Example: `experiments/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep4_tp4_sglang059_no_dual_stream/`
+
+### `.github/workflows/` — Prefix Convention
+
+```
+{platform}_{operation}.yml
+```
+
 ## Kernel-Level Analysis (Claude Skill)
 
 When benchmark results are anomalous, need to locate GPU bottlenecks, or compare kernel-level before/after:
