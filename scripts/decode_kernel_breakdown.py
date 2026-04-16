@@ -195,9 +195,30 @@ def main():
     print(f"\nWriting {args.output}...")
     with open(args.output, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["kernel_name", "module", "avg_us", "count_per_layer", "pct"])
-        for k_name, mod_name, avg, cnt, pct in flat:
-            writer.writerow([k_name, mod_name, f"{avg:.1f}", f"{cnt:.1f}", f"{pct:.1f}"])
+        writer.writerow(["kernel_name", "avg_us", "count_per_layer", "pct"])
+        for k_name, avg, cnt, pct in flat:
+            writer.writerow([k_name, f"{avg:.1f}", f"{cnt:.1f}", f"{pct:.1f}"])
+
+    # Write xlsx
+    xlsx_path = args.output.replace(".csv", ".xlsx")
+    try:
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = f"decode_breakdown_layers{layer_start}-{layer_end}"
+        ws.append(["kernel_name", "avg_us", "count_per_layer", "pct"])
+        for k_name, avg, cnt, pct in flat:
+            ws.append([k_name, round(avg, 1), round(cnt, 1), round(pct, 1)])
+        ws.append([])
+        ws.append(["TOTAL", round(per_layer_dur, 1), "", "100.0"])
+        ws.append(["decode_walltime_ms", round(dur_ms, 2)])
+        ws.append(["est_decode_ms (x61)", round(per_layer_dur * 61 / 1000, 1)])
+        ws.append(["n_layers_analyzed", n_layers])
+        wb.save(xlsx_path)
+        print(f"  {xlsx_path} written")
+    except ImportError:
+        print("  openpyxl not available, xlsx skipped")
+
     print(f"Done. {len(flat)} kernels written.")
 
 
