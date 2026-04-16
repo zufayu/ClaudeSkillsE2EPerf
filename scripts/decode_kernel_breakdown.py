@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Extract per-layer kernel breakdown from ATOM trace.
+Extract per-layer kernel breakdown from ATOM trace (ROCm 7.2.2+ compatible).
 
 Replaces parse_trace.py's parse_decode() which requires norm modules.
-Uses decode[bs=N] markers and module user_annotations to identify layers.
+Uses decode[bs=N] markers and reduce_scatter as layer boundaries.
+Output: xlsx matching old parse_trace.py format (2 sheets, module-grouped).
 
 Usage:
     python3 scripts/decode_kernel_breakdown.py <trace.json.gz> \
-        --target-bs 64 --layers 10-40 --output decode_breakdown_c64.csv
+        --target-bs 64 --layers 10-40
 """
 
 import argparse
@@ -17,6 +18,57 @@ import json
 import os
 import re
 import sys
+
+
+# ============================================================================
+# Layer structure for DeepSeek-R1 (per transformer layer, execution order):
+#
+#   input_layernorm:    reduce_scatter + local_device_load_rmsnorm
+#   per_token_quant:    dynamic_per_token_scaled_quant  (NEW in rocm722)
+#   gemm_a8w8:          gemm_xdl (qkv_a proj)
+#   q_k_norm:           fused_qk_rmsnorm_group_quant   (NEW: fused norm+quant)
+#   q_proj_and_k_up:    FlatmmKernel/Cijk (q_b) + batched_gemm (k_up)
+#   rope_and_kv_cache:  fuse_qk_rope_concat
+#   mla_decode:         mla_a8w8 + kn_mla_reduce
+#   v_up_proj_o_proj:   batched_gemm (v_up) + gemm_xdl (o_proj)
+#   post_attn_layernorm: reduce_scatter + local_device_load_rmsnorm
+#   gemm_a16w16:        bf16gemm (router)
+#   mxfp4_moe:          grouped_topk + MoeSorting + quant + moe_mxgemm ×2
+# ============================================================================
+
+# Positional classifier: maps (kernel_pattern, occurrence_index) → module
+# For kernels that appear multiple times per layer, the index disambiguates.
+KERNEL_MODULE_RULES = [
+    # (pattern, module_for_1st_occurrence, module_for_2nd_occurrence, ...)
+    ("reduce_scatter_cross_device", ["input_layernorm", "post_attn_layernorm"]),
+    ("local_device_load_rmsnorm", ["input_layernorm", "post_attn_layernorm"]),
+    ("dynamic_per_token_scaled_quant", ["per_token_quant_hip"]),
+    ("add_rmsnorm_quant", ["hipLaunchKernel"]),
+    ("fused_qk_rmsnorm_group_quant", ["q_proj_and_k_up_proj"]),
+    ("gemm_xdl_cshuffle_v3_multi_d_b_preshuffle", ["gemm_a8w8_bpreshuffle", "v_up_proj_and_o_proj"]),
+    ("FlatmmKernel", ["q_proj_and_k_up_proj"]),
+    ("Cijk_", ["q_proj_and_k_up_proj", "v_up_proj_and_o_proj"]),
+    ("batched_gemm_a8w8", ["q_proj_and_k_up_proj", "v_up_proj_and_o_proj"]),
+    ("bf16gemm", ["gemm_a16w16"]),
+    ("fuse_qk_rope_concat", ["rope_and_kv_cache"]),
+    ("mla_a8w8", ["mla_decode"]),
+    ("kn_mla_reduce", ["mla_decode"]),
+    ("triton_poi_fused", ["triton_poi"]),
+    ("grouped_topk_opt_sort", ["mxfp4_moe"]),
+    ("MoeSortingMultiPhase", ["mxfp4_moe"]),
+    ("mxfp4_quant_moe_sort", ["mxfp4_moe"]),
+    ("kernel_moe_mxgemm", ["mxfp4_moe"]),
+]
+
+
+def classify_kernel_positional(kernel_name, occurrence_counters):
+    """Classify kernel by name pattern + occurrence count within the layer."""
+    for pattern, modules in KERNEL_MODULE_RULES:
+        if pattern in kernel_name:
+            idx = occurrence_counters.get(pattern, 0)
+            occurrence_counters[pattern] = idx + 1
+            return modules[min(idx, len(modules) - 1)]
+    return "other"
 
 
 def load_trace(path):
@@ -30,7 +82,6 @@ def load_trace(path):
 
 
 def select_decode(evts, target_bs, skip_ratio=0.5):
-    """Select a steady-state decode event at given skip_ratio position."""
     decodes = [
         e for e in evts
         if e.get("name", "").startswith("decode[")
@@ -51,72 +102,39 @@ def select_decode(evts, target_bs, skip_ratio=0.5):
 
 
 def extract_kernels_in_window(evts, ts_start, ts_end):
-    """Get all GPU kernels within a time window."""
-    kernels = [
-        e for e in evts
-        if e.get("cat") == "kernel"
-        and e.get("ph") == "X"
-        and e["ts"] >= ts_start
-        and e["ts"] <= ts_end
-    ]
-    return sorted(kernels, key=lambda e: e["ts"])
+    return sorted(
+        [e for e in evts if e.get("cat") == "kernel" and e.get("ph") == "X"
+         and e["ts"] >= ts_start and e["ts"] <= ts_end],
+        key=lambda e: e["ts"]
+    )
 
 
-def classify_kernel(name):
-    """Map kernel name to cpu_module (matching old parse_trace.py format)."""
-    patterns = [
-        ("reduce_scatter_cross_device", "input_layernorm"),
-        ("local_device_load_rmsnorm", "input_layernorm"),
-        ("add_rmsnorm_quant", "hipLaunchKernel"),
-        ("dynamic_per_token_scaled_quant", "per_token_quant_hip"),
-        ("fused_qk_rmsnorm_group_quant", "q_proj_and_k_up_proj"),
-        ("FlatmmKernel", "q_proj_and_k_up_proj"),
-        ("Cijk_BBS", "q_proj_and_k_up_proj"),
-        ("bf16gemm", "gemm_a16w16"),
-        ("fuse_qk_rope_concat", "rope_and_kv_cache"),
-        ("mla_a8w8", "mla_decode"),
-        ("kn_mla_reduce", "mla_decode"),
-        ("batched_gemm_a8w8", "v_up_proj_and_o_proj"),
-        ("kernel_moe_mxgemm", "mxfp4_moe"),
-        ("mxfp4_quant_moe_sort", "mxfp4_moe"),
-        ("MoeSortingMultiPhase", "mxfp4_moe"),
-        ("grouped_topk_opt_sort", "mxfp4_moe"),
-        ("triton_poi_fused", "triton_poi"),
-        ("gemm_xdl_cshuffle_v3_multi_d_b_preshuffle", "gemm_a8w8_bpreshuffle"),
-    ]
-    for pattern, module in patterns:
-        if pattern in name:
-            return module
-    return "other"
-
-
-def identify_layers_by_kernel(kernels):
-    """Split kernels into layers using reduce_scatter as boundary.
-
-    DeepSeek-R1 layer structure:
-      reduce_scatter (pre-attn) → rmsnorm → qkv → rope → mla → o_proj →
-      reduce_scatter (post-attn) → rmsnorm → router → mxfp4_moe →
-      [next layer reduce_scatter]
-
-    The first reduce_scatter in each pair (odd count) marks layer start.
-    """
+def split_layers(kernels):
+    """Split kernels into layers using reduce_scatter (odd = layer start)."""
     layers = []
-    current_layer = []
+    current = []
     rs_count = 0
-
     for k in kernels:
-        name = k.get("name", "")
-        if "reduce_scatter_cross_device" in name:
+        if "reduce_scatter_cross_device" in k.get("name", ""):
             rs_count += 1
-            if rs_count % 2 == 1 and current_layer:  # odd = pre-attn = layer start
-                layers.append(current_layer)
-                current_layer = []
-        current_layer.append(k)
-
-    if current_layer:
-        layers.append(current_layer)
-
+            if rs_count % 2 == 1 and current:
+                layers.append(current)
+                current = []
+        current.append(k)
+    if current:
+        layers.append(current)
     return layers
+
+
+def classify_layer(layer_kernels):
+    """Classify each kernel in a layer using positional rules. Returns [(module, kernel_name, dur_us)]."""
+    counters = {}
+    result = []
+    for k in layer_kernels:
+        name = k.get("name", "unknown")
+        module = classify_kernel_positional(name, counters)
+        result.append((module, name, k.get("dur", 0)))
+    return result
 
 
 def main():
@@ -124,141 +142,130 @@ def main():
     parser.add_argument("trace", help="Path to trace JSON or JSON.GZ")
     parser.add_argument("--target-bs", type=int, default=64)
     parser.add_argument("--skip-ratio", type=float, default=0.5)
-    parser.add_argument("--layers", type=str, default="10-40", help="Layer range (e.g., 10-40)")
-    parser.add_argument("--output", type=str, default=None, help="Output xlsx path")
+    parser.add_argument("--layers", type=str, default="10-40")
+    parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()
 
-    # Auto-detect output filename
     if args.output is None:
         m = re.search(r'_(c\d+)[_.]', os.path.basename(args.trace))
         suffix = m.group(1) if m else f"c{args.target_bs}"
         args.output = f"decode_breakdown_{suffix}.xlsx"
 
     layer_start, layer_end = map(int, args.layers.split("-"))
-
     evts = load_trace(args.trace)
 
-    # Select decode event
     decode = select_decode(evts, args.target_bs, args.skip_ratio)
     if decode is None:
         sys.exit(1)
 
-    ts0 = decode["ts"]
-    dur = decode.get("dur", 0)
-    ts1 = ts0 + dur
+    ts0, dur = decode["ts"], decode.get("dur", 0)
     dur_ms = dur / 1000
-
-    # Sanity check: decode duration should be reasonable
     print(f"\n  Decode walltime: {dur_ms:.2f}ms")
-    if dur_ms < 5 or dur_ms > 100:
-        print(f"  WARNING: unusual decode duration {dur_ms:.2f}ms")
 
-    # Extract kernels in decode window
-    kernels = extract_kernels_in_window(evts, ts0, ts1)
+    kernels = extract_kernels_in_window(evts, ts0, ts0 + dur)
     print(f"  Kernels in window: {len(kernels)}")
 
-    # Identify layers using reduce_scatter boundaries
-    layers = identify_layers_by_kernel(kernels)
+    layers = split_layers(kernels)
     print(f"  Layers detected: {len(layers)}")
 
-    if len(layers) < layer_end:
-        print(f"  WARNING: only {len(layers)} layers, adjusting to {layer_start}-{len(layers)-1}")
+    if len(layers) <= layer_end:
         layer_end = len(layers) - 1
+        print(f"  Adjusted range: {layer_start}-{layer_end}")
 
-    # Kernel name distribution (all layers)
-    all_names = collections.Counter(k.get("name", "")[:80] for k in kernels)
-    print(f"\n  Kernel name distribution (top 10):")
-    for name, cnt in all_names.most_common(10):
-        print(f"    {cnt:4d}x {name[:70]}")
+    selected = layers[layer_start:layer_end + 1]
+    n_layers = len(selected)
 
-    # Per-layer analysis for selected range
-    selected_layers = layers[layer_start:layer_end + 1]
-    n_layers = len(selected_layers)
+    # Classify each layer and compute per-kernel averages
+    # Use representative layer (middle of selected range) for single-layer column
+    rep_idx = n_layers // 2
+    rep_layer = classify_layer(selected[rep_idx])
+
+    # Compute multi-layer averages: aggregate by (position, kernel_name)
+    all_classified = [classify_layer(l) for l in selected]
+    # Average duration per position across layers
+    max_pos = max(len(cl) for cl in all_classified)
+    avg_durs = []
+    for pos in range(max_pos):
+        durs = [cl[pos][2] for cl in all_classified if pos < len(cl)]
+        avg_durs.append(sum(durs) / len(durs) if durs else 0)
+
+    total_rep = sum(d for _, _, d in rep_layer)
+    total_avg = sum(avg_durs[:len(rep_layer)])
+
     print(f"\n{'='*60}")
     print(f"LAYER {layer_start}-{layer_end} ANALYSIS ({n_layers} layers)")
     print(f"{'='*60}")
+    print(f"  Representative layer: {layer_start + rep_idx} ({len(rep_layer)} kernels)")
+    print(f"  Single-layer total: {total_rep:.1f}us ({total_rep/1000:.2f}ms)")
+    print(f"  Multi-layer avg total: {total_avg:.1f}us ({total_avg/1000:.2f}ms)")
+    print(f"  Est decode (x61): {total_avg * 61 / 1000:.1f}ms (actual: {dur_ms:.2f}ms)")
 
-    # Aggregate kernels across selected layers
-    by_name = collections.defaultdict(lambda: {"count": 0, "dur": 0})
-    for layer_kernels in selected_layers:
-        for k in layer_kernels:
-            nm = k.get("name", "unknown")
-            by_name[nm]["count"] += 1
-            by_name[nm]["dur"] += k.get("dur", 0)
+    # Print layer structure
+    print(f"\n{'#':<3} {'Module':<40} {'Kernel':<55} {'dur(us)':>8} {'avg':>8}")
+    print("-" * 120)
+    cur_mod = ""
+    for i, (mod, kname, d) in enumerate(rep_layer):
+        avg = avg_durs[i] if i < len(avg_durs) else 0
+        show_mod = mod if mod != cur_mod else ""
+        if mod != cur_mod:
+            cur_mod = mod
+        print(f"  {i:<3} {show_mod:<40} {kname[:53]:<55} {d:>7.1f} {avg:>7.1f}")
 
-    total_dur = sum(v["dur"] for v in by_name.values())
-    per_layer_dur = total_dur / n_layers if n_layers else 0
-    print(f"\nTotal kernel time (layers {layer_start}-{layer_end}): {total_dur/1000:.1f}ms")
-    print(f"Per-layer average: {per_layer_dur:.1f}us ({per_layer_dur/1000:.2f}ms)")
-    print(f"Estimated decode (x61): {per_layer_dur * 61 / 1000:.1f}ms (actual: {dur_ms:.2f}ms)")
-
-    # Detailed kernel list sorted by duration
-    print(f"\n{'Kernel':<75} {'Avg(us)':>8} {'Count':>6} {'%':>6}")
-    print("-" * 100)
-    flat = []
-    for k_name, v in by_name.items():
-        avg = v["dur"] / n_layers if n_layers else 0
-        pct = v["dur"] / total_dur * 100 if total_dur else 0
-        flat.append((k_name, avg, v["count"] / n_layers, pct))
-    flat.sort(key=lambda x: -x[1])
-    for k_name, avg, cnt, pct in flat[:25]:
-        print(f"  {k_name[:73]:<73} {avg:>7.1f} {cnt:>5.1f}x {pct:>5.1f}%")
-
-    # Classify kernels into modules
-    classified = []
-    for k_name, avg, cnt, pct in flat:
-        module = classify_kernel(k_name)
-        classified.append((module, k_name, avg, cnt, pct))
-
-    # Group by module (preserve order of first appearance)
-    module_order = []
-    module_kernels = collections.defaultdict(list)
-    for module, k_name, avg, cnt, pct in classified:
-        if module not in module_order:
-            module_order.append(module)
-        module_kernels[module].append((k_name, avg, cnt, pct))
-
-    # Write xlsx (matching old parse_trace.py format)
+    # Write xlsx
     from openpyxl import Workbook
     wb = Workbook()
 
-    # Sheet 1: "decode" — grouped by module
+    # Sheet 1: "decode" — sequential, module-grouped
     ws = wb.active
     ws.title = "decode"
     ws.append(["cpu_module", "gpu_kernel", "duration_us", "pct%",
                "sum per module", "module_pct%", "avg duration_us", "avg sum per module"])
 
-    for module in module_order:
-        kernels_list = module_kernels[module]
-        mod_sum = sum(k[1] for k in kernels_list)
-        mod_pct = mod_sum / per_layer_dur * 100 if per_layer_dur else 0
+    # Group consecutive kernels by module
+    groups = []
+    for i, (mod, kname, d) in enumerate(rep_layer):
+        avg = avg_durs[i] if i < len(avg_durs) else 0
+        if not groups or groups[-1][0] != mod:
+            groups.append((mod, []))
+        groups[-1][1].append((kname, d, avg))
+
+    for mod, kernel_list in groups:
+        mod_sum = sum(d for _, d, _ in kernel_list)
+        mod_avg_sum = sum(a for _, _, a in kernel_list)
+        mod_pct = mod_sum / total_rep * 100 if total_rep else 0
         first = True
-        for k_name, avg, cnt, pct in kernels_list:
-            row = [
-                module if first else "",
-                k_name,
-                round(avg, 3),
+        for kname, d, avg in kernel_list:
+            pct = d / total_rep * 100 if total_rep else 0
+            ws.append([
+                mod if first else "",
+                kname,
+                round(d, 3),
                 round(pct, 1),
                 round(mod_sum, 3) if first else "",
                 round(mod_pct, 1) if first else "",
                 round(avg, 3),
-                round(mod_sum, 3) if first else "",
-            ]
-            ws.append(row)
+                round(mod_avg_sum, 3) if first else "",
+            ])
             first = False
 
-    ws.append(["TOTAL", "", round(per_layer_dur, 3), "100", "", "100",
-               round(per_layer_dur, 3), ""])
+    ws.append(["TOTAL", "", round(total_rep, 3), "100", "", "100",
+               round(total_avg, 3), ""])
 
-    # Sheet 2: "kernel_summary" — flat sorted by duration
+    # Sheet 2: "kernel_summary" — aggregated by kernel name, sorted by avg duration
     ws2 = wb.create_sheet("kernel_summary")
     ws2.append(["gpu_kernel", "calls", "total_duration_us", "avg_duration_us", "pct%"])
-    for k_name, avg, cnt, pct in flat:
-        ws2.append([k_name, round(cnt, 1), round(avg * cnt, 1), round(avg, 1), round(pct, 1)])
+    by_name = collections.defaultdict(lambda: {"count": 0, "dur": 0})
+    for mod, kname, d in rep_layer:
+        by_name[kname]["count"] += 1
+        by_name[kname]["dur"] += d
+    for kname, v in sorted(by_name.items(), key=lambda x: -x[1]["dur"]):
+        pct = v["dur"] / total_rep * 100 if total_rep else 0
+        avg_d = v["dur"] / v["count"] if v["count"] else 0
+        ws2.append([kname, v["count"], round(v["dur"], 1), round(avg_d, 1), round(pct, 1)])
 
     print(f"\nWriting {args.output}...")
     wb.save(args.output)
-    print(f"Done. {len(flat)} kernels, {len(module_order)} modules.")
+    print(f"Done. {len(rep_layer)} kernel rows, {len(groups)} module groups.")
 
 
 if __name__ == "__main__":
