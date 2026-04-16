@@ -12,8 +12,9 @@ jobs:
       RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711
     steps:
       - name: Kill residual GPU processes
+        continue-on-error: true
         run: |
-          podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom.*serve|model_executor" 2>/dev/null || true'
+          podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom.*serve|model_executor" 2>/dev/null; true'
           sleep 5
           echo "VRAM after cleanup:"
           podman exec $CONTAINER rocm-smi 2>/dev/null | grep -E "GPU|VRAM" | head -10 || true
