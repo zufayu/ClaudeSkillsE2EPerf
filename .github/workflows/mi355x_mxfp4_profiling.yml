@@ -42,6 +42,11 @@ jobs:
           ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'
           cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'
 
+      - name: Run decode breakdown (parse_trace)
+        if: success()
+        run: |
+          podman exec $CONTAINER bash -c "cd $REPO/$RESULT_DIR && TRACE=\$(ls trace_torch_*_c*_full.json.gz 2>/dev/null | head -1) && CAPTURE=\$(ls capture_graph_trace_*_c*_full.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE\" ]; then echo \"Trace: \$TRACE\"; echo \"Capture: \$CAPTURE\"; python3 $REPO/scripts/run_parse_trace.py \$TRACE --target-bs 64 --layer 40 \$([ -n \"\$CAPTURE\" ] && echo \"--capture-trace \$CAPTURE\") && echo 'Breakdown files:' && ls -lh *breakdown*.xlsx 2>/dev/null; else echo 'No trace file found'; fi"
+
       - name: Git commit and push results (exclude large .json.gz traces)
         if: always()
         run: |
@@ -49,11 +54,10 @@ jobs:
           git config user.email "ci@github.com"
           git config user.name "MI355X CI"
           git pull --rebase origin main || true
-          for ext in log csv md xlsx; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done
-          git add -f $RESULT_DIR/result_profiled_*.json 2>/dev/null || true
+          for ext in log csv md xlsx json; do git add -f $RESULT_DIR/*.$ext 2>/dev/null; done
           git diff --cached --name-only
           if ! git diff --cached --quiet; then
-            git commit -m "data: MI355X MXFP4 EP=4 TP=4 profiling (chat c=64)
+            git commit -m "data: MI355X MXFP4 EP=4 TP=4 profiling + breakdown (chat c=64)
 
           Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
             git push
