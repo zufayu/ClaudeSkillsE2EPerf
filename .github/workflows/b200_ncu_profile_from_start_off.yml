@@ -70,8 +70,10 @@ jobs:
             [ -z \"\$INJECTION_LIB\" ] && echo \"ERROR: injection library not found\" && exit 1
 
             echo \"=== Step 2: Kill leftover processes ===\"
-            pkill -9 -f \"sglang.launch_server\" 2>/dev/null || true
-            pkill -9 -f \"python3.*sglang\" 2>/dev/null || true
+            PIDS=\$(pgrep -f \"sglang.launch_server\" 2>/dev/null | grep -v \$\$ || true)
+            [ -n \"\$PIDS\" ] && echo \"\$PIDS\" | xargs kill -9 2>/dev/null || true
+            PIDS=\$(pgrep -f \"python3.*sglang\" 2>/dev/null | grep -v \$\$ || true)
+            [ -n \"\$PIDS\" ] && echo \"\$PIDS\" | xargs kill -9 2>/dev/null || true
             fuser -k -9 \$PORT/tcp 2>/dev/null || true
             sleep 5
 
@@ -175,7 +177,8 @@ jobs:
 
             echo \"=== Step 9: Cleanup ===\"
             kill \$SERVER_PID 2>/dev/null || true
-            pkill -9 -f \"sglang\" 2>/dev/null || true
+            PIDS=\$(pgrep -f \"sglang\" 2>/dev/null | grep -v \$\$ || true)
+            [ -n \"\$PIDS\" ] && echo \"\$PIDS\" | xargs kill -9 2>/dev/null || true
             sleep 3
 
             echo \"=== Results ===\"
