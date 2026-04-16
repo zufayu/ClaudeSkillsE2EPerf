@@ -1,0 +1,30 @@
+name: "MI355X Shell"
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'Command to run inside container'
+        type: string
+        default: 'echo hello'
+      container:
+        description: 'Container name'
+        type: string
+        default: 'zufa_atom'
+      on_host:
+        description: 'Run on host instead of container'
+        type: boolean
+        default: false
+jobs:
+  shell:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 10
+    steps:
+      - name: Run command
+        run: |
+          if [ "${{ inputs.on_host }}" = "true" ]; then
+            echo "=== Running on host ==="
+            bash -c '${{ inputs.command }}'
+          else
+            echo "=== Running in ${{ inputs.container }} ==="
+            podman exec ${{ inputs.container }} bash -c '${{ inputs.command }}'
+          fi
