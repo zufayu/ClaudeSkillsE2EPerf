@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 30
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
-      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
     steps:
       - name: Create zufa_atom2 from rocm/atom-dev:latest
         run: |
@@ -55,14 +55,14 @@ jobs:
     timeout-minutes: 90
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
-      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
     steps:
       - name: Sync repo
         run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
 
       - name: Run bench in zufa_atom2 via sa_bench_mi355x.sh
         run: |
-          podman exec -e ATOM_DISABLE_MMAP=true zufa_atom2 bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/sa_bench_mi355x.sh --model-mxfp4 /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --result-dir ./results_env_compare_new'
+          podman exec -e ATOM_DISABLE_MMAP=true zufa_atom2 bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/sa_bench_mi355x.sh --model-mxfp4 /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4 --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --result-dir ./results_env_compare_new'
 
       - name: Show new container results
         if: always()
@@ -80,14 +80,14 @@ jobs:
     timeout-minutes: 90
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
-      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
     steps:
       - name: Sync repo
         run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
 
       - name: Run bench in zufa_atom (old container)
         run: |
-          podman exec zufa_atom bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/sa_bench_mi355x.sh --model-mxfp4 /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --result-dir ./results_env_compare_old'
+          podman exec zufa_atom bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/sa_bench_mi355x.sh --model-mxfp4 /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4 --configs mxfp4-throughput --scenario chat --concurrency 64 --tp 8 --result-dir ./results_env_compare_old'
 
       - name: Show old container results
         if: always()

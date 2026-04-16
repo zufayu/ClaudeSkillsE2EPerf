@@ -18,7 +18,7 @@ jobs:
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
       CONTAINER: zufa_atom
-      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
       RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm711_profiling
     steps:
       - name: Sync repo (hard reset to drop any stuck local commits)
@@ -62,7 +62,7 @@ jobs:
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
       CONTAINER: zufa_atom
-      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
       RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711_profiling
     steps:
       - name: Sync repo (hard reset to drop any stuck local commits)

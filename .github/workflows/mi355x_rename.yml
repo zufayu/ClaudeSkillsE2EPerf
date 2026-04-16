@@ -10,7 +10,7 @@ jobs:
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
       CONTAINER: zufa_atom
-      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
     steps:
       - name: Sync repo
         run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
@@ -19,7 +19,7 @@ jobs:
         run: cd $REPO && rm -rf results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp8_profiling && echo "Deleted old EP1 profiling data"
 
       - name: Run EP1 TP8 profiling
-        run: podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/collect_atom_trace.sh --model /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 --scenario chat --concurrency 64 --tp 8 --env rocm711 --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp8_profiling'
+        run: podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/collect_atom_trace.sh --model /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4 --scenario chat --concurrency 64 --tp 8 --env rocm711 --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep1_tp8_profiling'
 
       - name: Save EP1 results to git
         run: |
@@ -50,7 +50,7 @@ jobs:
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
       CONTAINER: zufa_atom
-      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
     steps:
       - name: Sync repo
         run: cd $REPO && git stash 2>/dev/null || true && git pull --rebase && git stash pop 2>/dev/null || true
@@ -59,7 +59,7 @@ jobs:
         run: cd $REPO && rm -rf results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling && echo "Deleted old EP8 profiling data"
 
       - name: Run EP8 TP8 profiling
-        run: podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/collect_atom_trace.sh --model /shared/data/amd_int/models/DeepSeek-R1-0528-MTP-MoE-MXFP4-Attn-PTPC-FP8 --scenario chat --concurrency 64 --tp 8 --ep --env rocm711 --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling'
+        run: podman exec $CONTAINER bash -c 'cd /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf && bash scripts/collect_atom_trace.sh --model /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4 --scenario chat --concurrency 64 --tp 8 --ep --env rocm711 --result-dir ./results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_profiling'
 
       - name: Save EP8 results to git
         run: |
