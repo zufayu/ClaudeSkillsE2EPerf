@@ -7,7 +7,7 @@ jobs:
     timeout-minutes: 10
     env:
       CONTAINER: zufa_atom
-      IMAGE: docker.io/rocm/atom:rocm7.1.1-ubuntu24.04-pytorch2.9-atom0.1.1-MI350x
+      IMAGE: docker.io/rocm/atom-dev:latest
     steps:
       - name: Check and start container
         run: |

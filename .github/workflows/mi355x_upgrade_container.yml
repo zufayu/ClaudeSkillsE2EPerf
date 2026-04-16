@@ -1,0 +1,80 @@
+name: "MI355X Upgrade Container"
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Docker image to upgrade to'
+        type: string
+        default: 'docker.io/rocm/atom-dev:latest'
+      container:
+        description: 'Container name to upgrade'
+        type: string
+        default: 'zufa_atom'
+jobs:
+  upgrade:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 30
+    env:
+      CONTAINER: ${{ inputs.container }}
+      IMAGE: ${{ inputs.image }}
+    steps:
+      - name: Record old container info
+        continue-on-error: true
+        run: |
+          echo "=== Old container ==="
+          podman inspect $CONTAINER --format 'Image: {{.Config.Image}}' 2>/dev/null || echo "Container not found"
+          podman inspect $CONTAINER --format 'Created: {{.Created}}' 2>/dev/null || true
+
+      - name: Kill GPU processes in container
+        continue-on-error: true
+        run: |
+          podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom.*serve|model_executor" 2>/dev/null; true'
+          sleep 3
+
+      - name: Pull new image
+        run: podman pull $IMAGE
+
+      - name: Stop and remove old container
+        continue-on-error: true
+        run: |
+          podman stop $CONTAINER 2>/dev/null || true
+          podman rm $CONTAINER 2>/dev/null || true
+
+      - name: Create new container
+        run: podman run -d --name $CONTAINER --device /dev/kfd --device /dev/dri --group-add video --ipc host --shm-size 256g --security-opt seccomp=unconfined -v /shared:/shared $IMAGE sleep infinity
+
+      - name: Verify environment
+        run: |
+          podman exec $CONTAINER bash -c '
+            echo "=== System ==="
+            echo "Python: $(python3 --version 2>&1)"
+            echo "ROCm: $(cat /opt/rocm/.info/version 2>/dev/null || echo N/A)"
+            python3 -c "import torch; print(f\"PyTorch: {torch.__version__}, CUDA/HIP available: {torch.cuda.is_available()}, GPUs: {torch.cuda.device_count()}\")"
+            echo ""
+            echo "=== ATOM ==="
+            python3 -c "import atom; print(f\"ATOM version: {atom.__version__}\")" 2>/dev/null || echo "ATOM: not importable as module"
+            pip show atom 2>/dev/null | grep -E "^(Name|Version|Location)" || true
+            ls -ld /app/ATOM 2>/dev/null && echo "ATOM source: /app/ATOM" || true
+            cat /app/ATOM/version.txt 2>/dev/null || true
+            echo ""
+            echo "=== vLLM ==="
+            python3 -c "import vllm; print(f\"vLLM: {vllm.__version__}\")" 2>/dev/null || echo "vLLM: not installed"
+            echo ""
+            echo "=== Aiter ==="
+            python3 -c "import aiter; print(f\"aiter: {aiter.__version__}\")" 2>/dev/null || echo "aiter: not importable"
+            pip show aiter 2>/dev/null | grep -E "^(Name|Version)" || true
+            echo ""
+            echo "=== Mounts ==="
+            ls -ld /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4 2>/dev/null && echo "Model: OK" || echo "Model: MISSING"
+            ls -ld /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf 2>/dev/null && echo "Repo: OK" || echo "Repo: MISSING"
+          '
+
+      - name: Record new image details
+        run: |
+          echo "=== New container image ==="
+          podman inspect $CONTAINER --format 'Image: {{.Config.Image}}'
+          podman inspect $CONTAINER --format 'ImageDigest: {{.Image}}'
+          podman inspect $CONTAINER --format 'Created: {{.Created}}'
+          echo ""
+          echo "=== Image labels ==="
+          podman inspect $CONTAINER --format '{{range $k,$v := .Config.Labels}}{{$k}}: {{$v}}{{"\n"}}{{end}}' 2>/dev/null || true
