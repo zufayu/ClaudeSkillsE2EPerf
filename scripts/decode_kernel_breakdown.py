@@ -110,41 +110,56 @@ def extract_kernels_in_window(evts, ts_start, ts_end):
 
 
 def split_layers(kernels):
-    """Split kernels into layers using reduce_scatter as boundary.
+    """Split kernels into layers.
 
-    Auto-detects whether the first reduce_scatter is pre-attn or post-attn
-    by checking what follows (router/topk → post-attn, quant/gemm → pre-attn).
+    Layer structure (old trace, rocm711):
+      input_layernorm(RS+norm) → qkv_a → q/k_norm → q_b → k_up → rope →
+      mla → mla_reduce → v_up → o_proj → post_attn(RS+norm) → router → MoE
+
+    Layer structure (new trace, rocm722, norms fused):
+      RS+norm → per_token_quant → qkv_a → fused_qk_rmsnorm_quant → q_b → k_up →
+      rope → mla → mla_reduce → v_up → o_proj → quant → RS+norm → router → MoE
+
+    Use mla_a8w8 (MLA attention, exactly 1 per layer) as anchor.
+    Layer boundary = midpoint between consecutive mla_a8w8 occurrences,
+    which falls in the MoE → next pre-attn transition.
     """
-    # Find all reduce_scatter positions
-    rs_positions = [i for i, k in enumerate(kernels)
-                    if "reduce_scatter_cross_device" in k.get("name", "")]
+    # Find all MLA attention positions
+    mla_positions = [i for i, k in enumerate(kernels)
+                     if "mla_a8w8" in k.get("name", "")]
 
-    if len(rs_positions) < 2:
+    if len(mla_positions) < 2:
         return [kernels]
 
-    # Determine if first RS is pre-attn or post-attn by looking at next non-RS kernel
-    first_rs = rs_positions[0]
-    # Look at kernels after first RS+rmsnorm pair (skip RS and rmsnorm)
-    look_ahead = min(first_rs + 3, len(kernels) - 1)
-    next_kernel = kernels[look_ahead].get("name", "")
-    # If followed by router (bf16gemm) or topk → first RS is post-attn (MoE phase)
-    first_is_post_attn = any(p in next_kernel for p in ["bf16gemm", "grouped_topk", "moe"])
-    # Pre-attn RS index parity: if first is post-attn, pre-attn starts at even; else odd
-    pre_attn_parity = 0 if first_is_post_attn else 1  # 0=even, 1=odd
+    # For each pair of consecutive MLA positions, find the layer boundary between them.
+    # The boundary is the reduce_scatter that comes AFTER the MoE phase.
+    # Strategy: search backwards from each MLA to find the nearest pre-attn RS.
+    # Pre-attn RS is the one followed by quant/gemm_xdl (not router/topk).
+    boundaries = []
+    for mla_pos in mla_positions[1:]:
+        # Search backwards from MLA for the nearest reduce_scatter
+        for j in range(mla_pos - 1, -1, -1):
+            if "reduce_scatter_cross_device" in kernels[j].get("name", ""):
+                # This RS is pre-attn if it's followed by quant or gemm (not router)
+                # Look 2-3 ahead
+                for look in range(j+1, min(j+4, len(kernels))):
+                    n = kernels[look].get("name", "")
+                    if "dynamic_per_token_scaled_quant" in n or "gemm_xdl" in n:
+                        boundaries.append(j)
+                        break
+                    if "bf16gemm" in n or "grouped_topk" in n:
+                        break  # This is post-attn RS, keep searching
+                break
 
+    # Split at boundaries
     layers = []
-    current = []
-    rs_count = 0
-    for k in kernels:
-        if "reduce_scatter_cross_device" in k.get("name", ""):
-            rs_count += 1
-            # Pre-attn RS = layer start
-            if rs_count % 2 == pre_attn_parity and current:
-                layers.append(current)
-                current = []
-        current.append(k)
-    if current:
-        layers.append(current)
+    prev = 0
+    for b in sorted(set(boundaries)):
+        if b > prev:
+            layers.append(kernels[prev:b])
+        prev = b
+    if prev < len(kernels):
+        layers.append(kernels[prev:])
     return layers
 
 
