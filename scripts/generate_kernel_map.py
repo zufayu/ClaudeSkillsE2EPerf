@@ -304,9 +304,22 @@ def classify_mi355x_row(module, kernel, gemm_a16w16_count):
 
     gemm_a16w16_count tracks how many gemm_a16w16 modules we've seen
     (1st = qkv_a, 2nd = router).
+
+    Kernel name is checked FIRST for certain patterns that override module
+    classification (e.g. norm kernels inside q_proj_and_k_up_proj module).
     """
+    kn = kernel.lower() if kernel else ""
     mod = module.lower() if module else ""
 
+    # ── Kernel-name overrides (priority over module) ──
+    # Norm kernels can appear inside q_proj_and_k_up_proj or hipLaunchKernel
+    if "fused_qk_rmsnorm" in kn or "add_rmsnorm_quant" in kn or "rmsnorm_quant" in kn:
+        return "mla_qk_norm"
+    # MLA reduce can appear as sub-kernel under mla_decode
+    if "kn_mla_reduce" in kn:
+        return "mla_attn"
+
+    # ── Module-based classification ──
     if "input_layernorm" in mod:
         return "comm_pre_attn"
     if "per_token_quant" in mod:
@@ -336,24 +349,21 @@ def classify_mi355x_row(module, kernel, gemm_a16w16_count):
     if "mxfp4_moe" in mod or "rocm_aiter_biased_grouped_topk" in mod:
         return "moe_compute"
 
-    # Fallback: classify by kernel name
-    kn = kernel.lower() if kernel else ""
+    # ── Fallback: kernel name only (when module is empty or unknown) ──
     if "reduce_scatter" in kn or "local_device_load_rmsnorm" in kn:
-        return "comm_pre_attn"  # will be corrected by position
-    if "rmsnorm_quant" in kn or "fused_qk_rmsnorm" in kn or "add_rmsnorm_quant" in kn:
-        return "mla_qk_norm"
+        return "comm_pre_attn"
     if "gemm_xdl" in kn or "cijk_" in kn:
-        return "mla_q_b_k_up"  # FP8 dense GEMM
+        return "mla_q_b_k_up"
     if "batched_gemm_a8w8" in kn:
         return "mla_q_b_k_up"
     if "flatmm" in kn:
         return "mla_uv_o_proj"
-    if "mla_a8w8" in kn or "kn_mla_reduce" in kn:
+    if "mla_a8w8" in kn:
         return "mla_attn"
     if "fuse_qk_rope" in kn:
         return "mla_rope_cache"
     if "bf16gemm" in kn:
-        return "mla_qkv_a"  # will be corrected if 2nd occurrence
+        return "mla_qkv_a"
     if "kernel_moe_mxgemm" in kn or "moesorting" in kn or "grouped_topk" in kn:
         return "moe_compute"
     if "mxfp4_quant" in kn:
