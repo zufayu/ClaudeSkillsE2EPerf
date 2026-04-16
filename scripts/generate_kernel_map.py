@@ -266,197 +266,279 @@ def parse_mi355x_xlsx(path):
     return rows, total_avg
 
 
-def generate_map(b200_rows, b200_totals, mi355x_rows, mi355x_total, b200_csv_path, mi355x_xlsx_path, output_path):
-    """Generate kernel map CSV.
+def classify_b200_op(operator):
+    """Map B200 operator name to a logical operator group."""
+    op = operator.lower()
+    # Order matters: check specific patterns before general ones
+    if "ep_ar" in op:
+        return "comm"  # disambiguated later by occurrence count
+    if "qkv_a" in op or "splitk_reduce" in op:
+        return "mla_qkv_a"
+    if "q/k_norm" in op or "q_norm" in op or "k_norm" in op:
+        return "mla_qk_norm"
+    if "q_b_proj" in op:
+        return "mla_q_b_k_up"
+    if "uk_gemm" in op or "k_concat" in op:
+        return "mla_q_b_k_up"
+    if "rope" in op or "set_mla_kv" in op:
+        return "mla_rope_cache"
+    if "attention" in op or "fmha" in op:
+        return "mla_attn"
+    if "uv_gemm" in op:
+        return "mla_uv_o_proj"
+    if "o_proj" in op:
+        return "mla_uv_o_proj"
+    if "router" in op:
+        return "moe_router"
+    if any(kw in op for kw in ["topk", "expert_sort", "silu", "gate_up", "down_gemm",
+                                "shared", "moe_finalize", "moe_input_quant",
+                                "tensor_copy", "residual_add", "moe_expert_quant",
+                                "bmm_", "finalizekernel", "routingmain", "routingindices",
+                                "act_and_mul", "fused_a_gemm"]):
+        return "moe_compute"
+    return "other"
 
-    The map is a left-right table:
-    - Left side: ALL B200 operators (in order, no omissions)
-    - Right side: ALL MI355X operators (in order, no omissions)
-    - Timeline alignment: MI355X rows placed next to the B200 row they correspond to
-    - B200-only rows: MI355X columns blank
-    - MI355X-only rows: added as continuation rows (B200 columns blank except for alignment)
+
+def classify_mi355x_row(module, kernel, gemm_a16w16_count):
+    """Map MI355X module+kernel to a logical operator group.
+
+    gemm_a16w16_count tracks how many gemm_a16w16 modules we've seen
+    (1st = qkv_a, 2nd = router).
+    """
+    mod = module.lower() if module else ""
+
+    if "input_layernorm" in mod:
+        return "comm_pre_attn"
+    if "per_token_quant" in mod:
+        return "mla_input_quant"
+    if "gemm_a8w8_bpreshuffle" in mod:
+        return "mla_qkv_a"
+    if "gemm_a16w16" in mod:
+        return "mla_qkv_a" if gemm_a16w16_count <= 1 else "moe_router"
+    if "hiplaunchkernel" in mod:
+        return "mla_qk_norm"
+    if "q_proj_and_k_up_proj" in mod:
+        return "mla_q_b_k_up"
+    if "rope_and_kv_cache" in mod:
+        return "mla_rope_cache"
+    if "mla_decode" in mod:
+        return "mla_attn"
+    if "v_up_proj_and_o_proj" in mod:
+        return "mla_uv_o_proj"
+    if "triton_poi_fused_as_strided_clone_copy__0" in mod:
+        return "mla_transpose"
+    if "post_attn_layernorm" in mod:
+        return "comm_pre_moe"
+    if "triton_poi_fused_as_strided_clone_1" in mod:
+        return "comm_pre_moe"
+    if "triton_poi" in mod:
+        return "comm_pre_moe"
+    if "mxfp4_moe" in mod or "rocm_aiter_biased_grouped_topk" in mod:
+        return "moe_compute"
+
+    # Fallback: classify by kernel name
+    kn = kernel.lower() if kernel else ""
+    if "reduce_scatter" in kn or "local_device_load_rmsnorm" in kn:
+        return "comm_pre_attn"  # will be corrected by position
+    if "rmsnorm_quant" in kn or "fused_qk_rmsnorm" in kn or "add_rmsnorm_quant" in kn:
+        return "mla_qk_norm"
+    if "gemm_xdl" in kn or "cijk_" in kn:
+        return "mla_q_b_k_up"  # FP8 dense GEMM
+    if "batched_gemm_a8w8" in kn:
+        return "mla_q_b_k_up"
+    if "flatmm" in kn:
+        return "mla_uv_o_proj"
+    if "mla_a8w8" in kn or "kn_mla_reduce" in kn:
+        return "mla_attn"
+    if "fuse_qk_rope" in kn:
+        return "mla_rope_cache"
+    if "bf16gemm" in kn:
+        return "mla_qkv_a"  # will be corrected if 2nd occurrence
+    if "kernel_moe_mxgemm" in kn or "moesorting" in kn or "grouped_topk" in kn:
+        return "moe_compute"
+    if "mxfp4_quant" in kn:
+        return "moe_compute"
+    if "per_token_scaled_quant" in kn:
+        return "mla_input_quant"
+
+    return "other"
+
+
+# Canonical order of logical operator groups
+LOGICAL_OP_ORDER = [
+    "comm_pre_attn",
+    "mla_input_quant",
+    "mla_qkv_a",
+    "mla_qk_norm",
+    "mla_q_b_k_up",
+    "mla_rope_cache",
+    "mla_attn",
+    "mla_uv_o_proj",
+    "mla_transpose",
+    "comm_pre_moe",
+    "moe_router",
+    "moe_compute",
+    "other",
+]
+
+# Map logical operator group → PASS name
+LOGOP_TO_PASS = {
+    "comm_pre_attn": "EP_AR_before_MHA",
+    "mla_input_quant": "MHA",
+    "mla_qkv_a": "MHA",
+    "mla_qk_norm": "MHA",
+    "mla_q_b_k_up": "MHA",
+    "mla_rope_cache": "MHA",
+    "mla_attn": "MHA",
+    "mla_uv_o_proj": "O_proj",
+    "mla_transpose": "O_proj",
+    "comm_pre_moe": "EP_AR_before_MOE",
+    "moe_router": "MOE",
+    "moe_compute": "MOE",
+    "other": "other",
+}
+
+
+def group_by_logop(rows, classify_fn):
+    """Group rows into (logical_op, [rows]) preserving order within groups.
+
+    Returns list of (logop, [row_dicts]) in the order groups first appear.
+    """
+    groups = {}
+    order = []
+    for row in rows:
+        logop = classify_fn(row)
+        if logop not in groups:
+            groups[logop] = []
+            order.append(logop)
+        groups[logop].append(row)
+    return [(logop, groups[logop]) for logop in order]
+
+
+def generate_map(b200_rows, b200_totals, mi355x_rows, mi355x_total, b200_csv_path, mi355x_xlsx_path, output_path):
+    """Generate kernel map CSV using semantic operator alignment.
+
+    Instead of aligning by position (which breaks with B200 dual-stream overlap),
+    we classify both sides into logical operator groups, then align groups.
     """
 
-    # ── B200-only operator patterns (no MI355X equivalent) ──
-    B200_ONLY_KEYWORDS = [
-        "set_mla_kv", "splitK_reduce", "MoE_input_quant", "tensor_copy",
-        "MoE_finalize", "residual_add", "o_proj_quant", "shared_quant",
-        "Moe_Expert_quant", "fused_a_gemm_kernel",
-    ]
-
-    def is_b200_only(operator):
-        for kw in B200_ONLY_KEYWORDS:
-            if kw in operator:
-                return True
-        return False
-
-    # ── Pre-count MI355X kernels per module for continuation logic ──
-    # Only allow continuation (grouping sub-kernels under one B200 row)
-    # for small modules (≤2 kernels). Large modules like
-    # rocm_aiter_biased_grouped_topk_impl (7 kernels spanning MOE routing+compute)
-    # must be mapped individually.
-    mi355x_module_sizes = {}
-    cur_mod = None
-    for mi in mi355x_rows:
-        mod = mi["module"] if mi["module"] else cur_mod
-        if mod:
-            mi355x_module_sizes[mod] = mi355x_module_sizes.get(mod, 0) + 1
-            cur_mod = mod
-
-    # ── Build output rows ──
-    output_rows = []
-    mi355x_idx = 0
+    # ── Pass 1: Classify B200 rows ──
     ep_ar_count = 0
+    b200_classified = []
+    for b in b200_rows:
+        op = b["operator"]
+        logop = classify_b200_op(op)
+        # Disambiguate comm (EP_AR) by occurrence
+        if logop == "comm":
+            if "#2" in op:
+                logop = "comm_pre_moe"
+            elif "#1" in op:
+                logop = "comm_pre_attn"
+            else:
+                ep_ar_count += 1
+                logop = "comm_pre_attn" if ep_ar_count == 1 else "comm_pre_moe"
+        b200_classified.append((logop, b))
 
-    # Track PASS sums
+    # ── Pass 1: Classify MI355X rows ──
+    gemm_a16w16_count = 0
+    mi355x_classified = []
+    for mi in mi355x_rows:
+        mod = mi["module"] or mi.get("parent_module", "")
+        if "gemm_a16w16" in mod.lower() and mi["module"]:
+            gemm_a16w16_count += 1
+        logop = classify_mi355x_row(mi["module"] or mi.get("parent_module", ""),
+                                     mi["kernel"], gemm_a16w16_count)
+        mi355x_classified.append((logop, mi))
+
+    # ── Pass 2: Group by logical operator ──
+    b200_groups = group_by_logop(b200_classified, lambda x: x[0])
+    b200_groups = [(logop, [item[1] for item in items]) for logop, items in b200_groups]
+
+    mi355x_groups = group_by_logop(mi355x_classified, lambda x: x[0])
+    mi355x_groups = [(logop, [item[1] for item in items]) for logop, items in mi355x_groups]
+
+    # Build lookup dicts
+    b200_by_logop = {logop: rows for logop, rows in b200_groups}
+    mi355x_by_logop = {logop: rows for logop, rows in mi355x_groups}
+
+    # Determine full ordered list of logical ops (union of both sides)
+    all_logops = []
+    for logop in LOGICAL_OP_ORDER:
+        if logop in b200_by_logop or logop in mi355x_by_logop:
+            all_logops.append(logop)
+    # Add any that aren't in the canonical order
+    for logop in list(b200_by_logop.keys()) + list(mi355x_by_logop.keys()):
+        if logop not in all_logops:
+            all_logops.append(logop)
+
+    # ── Pass 3: Align within each logical operator group ──
+    output_rows = []
     pass_b200 = {}
     pass_mi355x = {}
     pass_nv_kernels = {}
     pass_amd_kernels = {}
-
     b200_sum_check = 0.0
     mi355x_sum_check = 0.0
+    unmapped_mi355x = []
 
-    for b200 in b200_rows:
-        op = b200["operator"]
+    for logop in all_logops:
+        b200_list = b200_by_logop.get(logop, [])
+        mi355x_list = mi355x_by_logop.get(logop, [])
+        pass_name = LOGOP_TO_PASS.get(logop, "other")
 
-        # Track EP_AR occurrence for PASS classification
-        if "EP_AR" in op and "#" not in op:
-            ep_ar_count += 1
-            pass_name = get_pass(op, ep_ar_count)
-        elif "#2" in op and "EP_AR" in op:
-            pass_name = "EP_AR_before_MOE"
-        elif "#1" in op and "EP_AR" in op:
-            pass_name = "EP_AR_before_MHA"
-        else:
-            pass_name = get_pass(op, 0)
+        # Pair rows within the group by position
+        max_len = max(len(b200_list), len(mi355x_list))
 
-        # Accumulate B200 pass
-        pass_b200[pass_name] = pass_b200.get(pass_name, 0) + b200["avg_us"]
-        b200_sum_check += b200["avg_us"]
+        for i in range(max_len):
+            b200 = b200_list[i] if i < len(b200_list) else None
+            mi = mi355x_list[i] if i < len(mi355x_list) else None
 
-        # Track NV kernels per pass
-        if pass_name not in pass_nv_kernels:
-            pass_nv_kernels[pass_name] = []
-        pass_nv_kernels[pass_name].append(b200["raw_kernel"])
-
-        if is_b200_only(op):
-            # B200-only row — no MI355X
-            output_rows.append({
-                "b200_operator": op,
-                "b200_raw_kernel": b200["raw_kernel"],
-                "b200_stream": b200["stream"],
-                "b200_avg_us": b200["avg_us"],
-                "b200_overlap_us": b200["overlap_us"],
-                "b200_overlap_with": b200["overlap_with"],
+            row = {
+                "b200_operator": "",
+                "b200_raw_kernel": "",
+                "b200_stream": "",
+                "b200_avg_us": "",
+                "b200_overlap_us": "",
+                "b200_overlap_with": "",
                 "mi355x_module": "",
                 "mi355x_kernel": "",
                 "mi355x_avg_us": "",
-                "notes": "B200 only",
+                "notes": "",
                 "pass": pass_name,
-            })
-        else:
-            # Map next MI355X row(s) to this B200 row
-            if mi355x_idx < len(mi355x_rows):
-                mi = mi355x_rows[mi355x_idx]
-                mi355x_idx += 1
+            }
 
+            if b200:
+                row["b200_operator"] = b200["operator"]
+                row["b200_raw_kernel"] = b200["raw_kernel"]
+                row["b200_stream"] = b200["stream"]
+                row["b200_avg_us"] = b200["avg_us"]
+                row["b200_overlap_us"] = b200["overlap_us"]
+                row["b200_overlap_with"] = b200["overlap_with"]
+                b200_sum_check += b200["avg_us"]
+                pass_b200[pass_name] = pass_b200.get(pass_name, 0) + b200["avg_us"]
+                if pass_name not in pass_nv_kernels:
+                    pass_nv_kernels[pass_name] = []
+                pass_nv_kernels[pass_name].append(b200["raw_kernel"])
+
+            if mi:
+                row["mi355x_module"] = mi["module"]
+                row["mi355x_kernel"] = mi["kernel"]
+                row["mi355x_avg_us"] = mi["avg_us"]
                 mi355x_sum_check += mi["avg_us"]
-                # Classify MI355X kernel by its own module, not the B200 row
                 mi_pass = get_mi355x_pass(mi["parent_module"], pass_name)
-                if mi_pass not in pass_mi355x:
-                    pass_mi355x[mi_pass] = 0
-                pass_mi355x[mi_pass] += mi["avg_us"]
+                pass_mi355x[mi_pass] = pass_mi355x.get(mi_pass, 0) + mi["avg_us"]
                 if mi_pass not in pass_amd_kernels:
                     pass_amd_kernels[mi_pass] = []
                 pass_amd_kernels[mi_pass].append(mi["kernel"])
 
-                output_rows.append({
-                    "b200_operator": op,
-                    "b200_raw_kernel": b200["raw_kernel"],
-                    "b200_stream": b200["stream"],
-                    "b200_avg_us": b200["avg_us"],
-                    "b200_overlap_us": b200["overlap_us"],
-                    "b200_overlap_with": b200["overlap_with"],
-                    "mi355x_module": mi["module"],
-                    "mi355x_kernel": mi["kernel"],
-                    "mi355x_avg_us": mi["avg_us"],
-                    "notes": "",
-                    "pass": pass_name,
-                })
+            # Notes for unmatched rows
+            if b200 and not mi:
+                row["notes"] = "B200 only"
+            elif mi and not b200:
+                row["notes"] = f"MI355X only ({logop})"
+                unmapped_mi355x.append(mi)
 
-                # Check if MI355X module has more kernels (continuation rows)
-                # Only allow continuation for small modules (≤2 kernels).
-                # Large modules (e.g. rocm_aiter_biased_grouped_topk_impl with 7 kernels)
-                # must be mapped 1:1 to individual B200 rows.
-                while mi355x_idx < len(mi355x_rows):
-                    next_mi = mi355x_rows[mi355x_idx]
-                    # Use parent_module to determine the true module for empty-module rows
-                    parent_mod = next_mi["parent_module"]
-                    module_size = mi355x_module_sizes.get(parent_mod, 1)
-                    # Continuation: same parent module as current, or module is empty (sub-kernel)
-                    # BUT only if the module has ≤2 kernels total
-                    if module_size <= 2 and (next_mi["module"] == "" or next_mi["module"] == mi["module"]):
-                        mi355x_idx += 1
-                        mi355x_sum_check += next_mi["avg_us"]
-                        cont_mi_pass = get_mi355x_pass(next_mi["parent_module"], pass_name)
-                        if cont_mi_pass not in pass_mi355x:
-                            pass_mi355x[cont_mi_pass] = 0
-                        pass_mi355x[cont_mi_pass] += next_mi["avg_us"]
-                        if cont_mi_pass not in pass_amd_kernels:
-                            pass_amd_kernels[cont_mi_pass] = []
-                        pass_amd_kernels[cont_mi_pass].append(next_mi["kernel"])
-                        output_rows.append({
-                            "b200_operator": "",
-                            "b200_raw_kernel": "",
-                            "b200_stream": "",
-                            "b200_avg_us": "",
-                            "b200_overlap_us": "",
-                            "b200_overlap_with": "",
-                            "mi355x_module": next_mi["module"],
-                            "mi355x_kernel": next_mi["kernel"],
-                            "mi355x_avg_us": next_mi["avg_us"],
-                            "notes": f"({mi['module'] or mi['parent_module']} cont.)",
-                            "pass": pass_name,
-                        })
-                    else:
-                        break
-            else:
-                # No more MI355X rows
-                output_rows.append({
-                    "b200_operator": op,
-                    "b200_raw_kernel": b200["raw_kernel"],
-                    "b200_stream": b200["stream"],
-                    "b200_avg_us": b200["avg_us"],
-                    "b200_overlap_us": b200["overlap_us"],
-                    "b200_overlap_with": b200["overlap_with"],
-                    "mi355x_module": "",
-                    "mi355x_kernel": "",
-                    "mi355x_avg_us": "",
-                    "notes": "",
-                    "pass": pass_name,
-                })
-
-    # ── Remaining MI355X rows (not mapped to any B200 row) ──
-    unmapped_mi355x = []
-    while mi355x_idx < len(mi355x_rows):
-        mi = mi355x_rows[mi355x_idx]
-        mi355x_idx += 1
-        mi355x_sum_check += mi["avg_us"]
-        unmapped_mi355x.append(mi)
-        output_rows.append({
-            "b200_operator": "",
-            "b200_raw_kernel": "",
-            "b200_stream": "",
-            "b200_avg_us": "",
-            "b200_overlap_us": "",
-            "b200_overlap_with": "",
-            "mi355x_module": mi["module"],
-            "mi355x_kernel": mi["kernel"],
-            "mi355x_avg_us": mi["avg_us"],
-            "notes": "MI355X only (unmapped)",
-            "pass": "unmapped",
-        })
+            output_rows.append(row)
 
     # ── Checksum verification ──
     b200_expected = b200_totals.get("kernel_sum")
