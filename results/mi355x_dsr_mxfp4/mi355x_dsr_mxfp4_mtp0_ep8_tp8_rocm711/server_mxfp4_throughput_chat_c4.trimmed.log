@@ -1,59 +1,106 @@
-=== Trimmed: 4128 -> 39 lines ===
+=== Trimmed: 1285 -> 103 lines ===
 === Source: server_mxfp4_throughput_chat_c4.log ===
 
-======================================================================
-REPRODUCE INFO (from result JSON)
-======================================================================
-
-Key Config:
-  model_id: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4
-  max_model_len: 2248
-  tensor_parallel_size: 8
-  mtp_layers: 0
-  max_concurrency: 4
-  num_prompts: 40
-
-RESULT: OK - 40/40 completed, output_throughput=347.4 tok/s
-  median_ttft_ms: 72.75976496748626
-  median_tpot_ms: 11.085944960556015
-======================================================================
-
 [ERRORS]
-  [rank0]:E0409 02:52:18.615000 1836631 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank0]:E0409 02:52:18.615000 1836631 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank0]:E0409 02:52:18.615000 1836631 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank0]:E0409 02:52:18.615000 1836631 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank5]:E0409 02:52:18.735000 1836636 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank5]:E0409 02:52:18.735000 1836636 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank5]:E0409 02:52:18.735000 1836636 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank5]:E0409 02:52:18.735000 1836636 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank2]:E0409 02:52:18.845000 1836633 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank2]:E0409 02:52:18.845000 1836633 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank2]:E0409 02:52:18.845000 1836633 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank2]:E0409 02:52:18.845000 1836633 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank7]:E0409 02:52:19.088000 1836638 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank7]:E0409 02:52:19.088000 1836638 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank7]:E0409 02:52:19.088000 1836638 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank7]:E0409 02:52:19.088000 1836638 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank1]:E0409 02:52:19.178000 1836632 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank1]:E0409 02:52:19.178000 1836632 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank1]:E0409 02:52:19.178000 1836632 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank1]:E0409 02:52:19.178000 1836632 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank6]:E0409 02:52:19.275000 1836637 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank6]:E0409 02:52:19.275000 1836637 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank6]:E0409 02:52:19.275000 1836637 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank6]:E0409 02:52:19.275000 1836637 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank4]:E0409 02:52:19.312000 1836635 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank4]:E0409 02:52:19.312000 1836635 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank4]:E0409 02:52:19.312000 1836635 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank4]:E0409 02:52:19.312000 1836635 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
-  [rank3]:E0409 02:52:19.379000 1836634 torch/_dynamo/metrics_context.py:106] [0/0] Unexpected exception logging compilation metrics
-  [rank3]:E0409 02:52:19.379000 1836634 torch/_dynamo/metrics_context.py:106] [0/0] Traceback (most recent call last):
-  [rank3]:E0409 02:52:19.379000 1836634 torch/_dynamo/metrics_context.py:106] [0/0]     raise TypeError(f'Object of type {o.__class__.__name__} '
-  [rank3]:E0409 02:52:19.379000 1836634 torch/_dynamo/metrics_context.py:106] [0/0] TypeError: Object of type function is not JSON serializable
+  Traceback (most recent call last):
+  torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 232.00 MiB. GPU 3 has a total capacity of 287.98 GiB of which 0 bytes is free. Of the allocated memory 26.95 GiB is allocated by PyTorch, and 164.31 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)
+  torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 462.00 MiB. GPU 1 has a total capacity of 287.98 GiB of which 0 bytes is free. Of the allocated memory 27.99 GiB is allocated by PyTorch, and 171.49 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)
+  torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 16.00 MiB. GPU 2 has a total capacity of 287.98 GiB of which 0 bytes is free. Of the allocated memory 27.19 GiB is allocated by PyTorch, and 165.85 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)
+  torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 462.00 MiB. GPU 0 has a total capacity of 287.98 GiB of which 0 bytes is free. Of the allocated memory 27.23 GiB is allocated by PyTorch, and 157.34 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)
+  Exception raised from recvBytes at /pytorch/torch/csrc/distributed/c10d/Utils.hpp:682 (most recent call first):
+  frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x74947465a648 in /opt/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+  [rank5]:[W416 02:05:58.178290317 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Failed to recv, got 0 bytes. Connection was likely closed. Did the remote server shutdown or crash?
+  frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f65a945a648 in /opt/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+  [rank4]:[W416 02:05:59.564565915 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Failed to recv, got 0 bytes. Connection was likely closed. Did the remote server shutdown or crash?
+  frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7af4e985a648 in /opt/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+  [rank7]:[W416 02:05:59.573618174 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Failed to recv, got 0 bytes. Connection was likely closed. Did the remote server shutdown or crash?
+  frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x743dece5a648 in /opt/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+  [rank6]:[W416 02:05:59.622719249 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Failed to recv, got 0 bytes. Connection was likely closed. Did the remote server shutdown or crash?
+  Exception raised from sendBytes at /pytorch/torch/csrc/distributed/c10d/Utils.hpp:653 (most recent call first):
+  [rank5]:[W416 02:05:59.182777659 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:00.569170896 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:00.578100587 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:00.627111723 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:00.187307141 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:01.573643459 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:01.582497441 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:01.631690705 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:01.192041251 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:02.578150691 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:02.586863435 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:02.636134748 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:02.196599133 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:03.582621185 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:03.591227800 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:03.640625541 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:03.201050107 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:04.587145308 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:04.595508266 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:04.645061455 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:04.205595740 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:05.591602122 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:05.599910241 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:05.649528599 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:05.210110643 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:06.596073316 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:06.604330836 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:06.654039583 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:06.214660666 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:07.600612869 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:07.608366855 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:07.655513577 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:07.218343051 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:08.604999144 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:08.612771391 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:08.659973221 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:08.222893734 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:09.609437490 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:09.615857084 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:09.664449296 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:09.227455148 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:10.612305466 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:10.620257370 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:10.668850252 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:10.231832884 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:11.616817460 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:11.624654646 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:11.673300697 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:11.236358688 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:12.621371064 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:12.629060172 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:12.677694483 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:12.240805004 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:13.625776381 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:13.633358209 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:13.682286007 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:13.245309849 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:14.628926354 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:14.637788306 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:14.685259783 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:14.248194036 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:15.633378920 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:15.642250262 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:15.689784238 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:15.252680292 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:16.637858506 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:16.646777137 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:16.694242974 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:16.256950081 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:17.642429781 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:17.651223403 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:17.698732960 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:17.261453427 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:18.646851808 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:18.655561412 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:18.703169457 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:18.265926203 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank4]:[W416 02:06:19.651402413 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 4] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank7]:[W416 02:06:19.660036948 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 7] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank6]:[W416 02:06:19.707638074 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 6] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  [rank5]:[W416 02:06:19.270483169 ProcessGroupNCCL.cpp:1826] [PG ID 0 PG GUID 0 Rank 5] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Broken pipe
+  raise RuntimeError(
+  RuntimeError: Engine Core Mgr: Received unexpected SHUTDOWN signal from DP rank 0 during initialization
 
 [STATUS]
-  Server startup: OK
-  Server shutdown:
   Server shutdown:
 

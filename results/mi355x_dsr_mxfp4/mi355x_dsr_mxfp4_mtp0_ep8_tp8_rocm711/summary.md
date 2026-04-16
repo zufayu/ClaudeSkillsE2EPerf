@@ -3,4 +3,3 @@
 
 | Config | Quant | Scenario | CONC | Total Tput | Output Tput | Interac. | TPOT (ms) | TTFT (ms) | DAR |
 |--------|-------|----------|------|------------|-------------|----------|-----------|-----------|-----|
-| throughput | MXFP4 | chat | 64 | 6470.5 | 3234.5 | 52.08 | 19.2 | 90.3 | - |
