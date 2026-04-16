@@ -154,9 +154,10 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 > - B200: SGLang v0.5.9 torch profiler trace，TP=4 EP=4，chat 1K/1K c=64。FMHA 层锚点切分，position-based module 分配，第 10-40 层平均，4410 层样本。
 >   - Kernel sum: 350.5μs/layer，Elapsed(关键路径): 283.3μs/layer，Overlap: 67.2μs (19.2%)
 >   - 验证: 283.3 × 61 = 17.28ms ≈ decode walltime 17.50ms（误差 1.3%）
-> - MI355X: ATOM rocm711 Kineto trace，TP=4 EP=4，chat 1K/1K c=64。decode_breakdown.xlsx 多层平均（avg 列），399.5μs/layer
+> - MI355X: **v32: ATOM rocm722 (0.1.3.dev71)** Kineto trace，TP=4 EP=4，chat 1K/1K c=64。decode_breakdown_c64.xlsx layers 10-40 平均，**363.8μs/layer**
 >   - 单流串行执行（HIP Graph 单 stream capture），无 multi-stream overlap
->   - 验证: 399.5 × 61 = 24.37ms ≈ decode walltime 23.73ms（误差 2.7%）
+>   - 验证: 363.8 × 61 = 22.2ms ≈ decode walltime 21.57ms（误差 3%）
+>   - 旧数据 (rocm711): 399.5μs/layer, decode 23.73ms
 > - **配置对齐：** 两平台均 4GPU TP=4 EP=4，per-GPU MoE 权重量相同（64 experts/GPU）
 >
 > **Multi-stream overlap 说明：**
@@ -205,14 +206,14 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 #### PASS 功能分组汇总
 
-| PASS | B200 μs | MI355X μs | GAP | B200 Kernels | MI355X Kernels |
-|------|---------|-----------|-----|--------------|----------------|
-| MOE | 214.2 | 223.7 | -9.5 | nvjet_h_bz_splitK_TNT, cvt_fp16_to_fp4, splitKreduce_kernel, quantize_with_block_size, unrolled_elementwise_kernel, routingMainKernel, routingIndicesClusterKernel, act_and_mul_kernel, cvt_fp16_to_fp4, bmm_E2m1_E2m1E2m1, DeviceGemmFp4GemmSm100, bmm_Bfloat16_E2m1E2m1, finalizeKernelVecLoad, vectorized_elementwise_kernel | triton_fused_clone, grouped_topk_opt_sort, MoeSorting_P0+P23, fused_mxfp4_quant_sort, moe_mxgemm(gate_up), fused_mxfp4_quant_sort, moe_mxgemm(down) |
-| MHA | 80.6 | 88.8 | -8.2 | nvjet_splitK_TNT, splitKreduce_kernel, RMSNormKernel (stream 23), RMSNormKernel (stream 385), nvjet_v_bz_TNN, nvjet_v_bz_TNT, RopeQuantizeKernel, set_mla_kv_buffer_kernel, fmhaSm100fKernel, nvjet_h_bz_TNT | bf16gemm_splitk (qkv_a), q/k_norm_RMSNormx2, gemm_xdl (q_b), batched_gemm_a8w8, fuse_qk_rope_concat_cache, mla_a8w8_qh16, mla_reduce_v1 |
-| O proj | 21.7 | 21.4 | 0.3 | cvt_fp16_to_fp4, DeviceGemmFp4GemmSm100, DeviceGemmFp4GemmSm100 | gemm_xdl (o_proj) |
-| EP_AR+residual+RMSNorm(fused) before MHA | 25.9 | 34.5 | -8.6 | allreduce_fusion_kernel_oneshot_lamport | reduce_scatter + load_rmsnorm, add_rmsnorm_quant ×2 |
-| EP_AR+residual+RMSNorm(fused) before MOE | 11 | 31.2 | -20.2 | allreduce_fusion_kernel_oneshot_lamport | reduce_scatter + triton_fused_clone ×2 |
-| sum | 353.4 | 399.6 | -46.2 | | |
+| PASS | B200 μs | MI355X rocm711 | MI355X rocm722 | GAP (v32) | 变化 |
+|------|---------|---------------|---------------|-----------|------|
+| MOE | 214.2 | 223.7 | **219.8** | -5.6 | router(8.3)+topk(4.1)+sort(8.6)+quant(9.5)+gate_up(126.2)+down(63.1) |
+| MHA | 80.6 | 88.8 | **68.7** | -11.9 | ~~88.8~~ quant(4.1)+qkv_a(10.9)+fused_norm(4.2)+q_b(7.1)+k_up(4.6)+rope(4.5)+mla(26.1)+mla_reduce(5.9)+v_up(5.9) — **fused norm + FP8 GEMM 优化** |
+| O_proj | 21.7 | 21.4 | **15.5** | -6.2 | ~~21.4~~ quant(4.2)+FlatmmKernel(11.3) — **cktile FlatmmKernel 更快** |
+| EP_AR before MHA | 25.9 | 34.5 | **37.9** | -12.0 | RS(33.1)+rmsnorm(4.8) — RS 变慢但含更多功能 |
+| EP_AR before MOE | 11.0 | 31.2 | **17.5** | -6.5 | ~~31.2~~ RS(13.0)+rmsnorm(4.5) — **triton_poi 消失，RS 大幅缩短** |
+| **sum** | **353.4** | **399.6** | **363.8** | **-10.4** | ~~-46.2~~ **总差距从 46→10 μs** |
 
 
 #### TP=4 单层分段执行分析
@@ -222,16 +223,16 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 
 ##### 总览
 
-| 段 | 功能 | B200 μs | MI355X μs | GAP μs | GAP 主因 |
-|----|------|---------|-----------|--------|---------|
-| 1 | AR+RMSNorm+qkv_a | ~32 | ~45 | 13 | PDL overlap 隐藏 AR |
-| 2 | q/k Norm+q_b+k_up | ~14 | ~33.6 | 19.6 | 双 stream norm 并行 + q_b GEMM + q/k_norm 10.8μs |
-| 3 | RoPE+KV cache | 4.4 | 5.3 | 0.9 | — |
-| 4 | MLA Decode+uv | ~24 | ~39.3 | 15.3 | mla_reduce 独立开销 |
-| 5 | O_proj | ~11.5(+10.2‖AR) | 21.4 | ~10 | GEMM#2 与下段 AR 重叠 |
-| 6 | MoE routing+shared | ~34 | ~71 | 37 | 双 stream 并行 vs 串行 |
-| 7 | MoE GEMM+finalize | ~167 | ~183 | 16 | GEMM 效率 + 中间 quant |
-| **合计** | | **~283** | **~400** | **~117** | |
+| 段 | 功能 | B200 μs | MI355X rocm711 | MI355X rocm722 | GAP (v32) | GAP 主因 |
+|----|------|---------|---------------|---------------|-----------|---------|
+| 1 | AR+RMSNorm+qkv_a | ~32 | ~45 | ~52.9 | 20.9 | 新增 per_token_quant(4.1)，qkv_a 从 BF16→FP8 GEMM |
+| 2 | q/k Norm+q_b+k_up | ~14 | ~33.6 | **~15.9** | **1.9** | ~~19.6~~ **fused_qk_rmsnorm_quant 融合大幅缩短** |
+| 3 | RoPE+KV cache | 4.4 | 5.3 | 4.5 | 0.1 | — |
+| 4 | MLA Decode+uv | ~24 | ~39.3 | ~37.9 | 13.9 | mla_reduce 仍有独立开销 |
+| 5 | O_proj | ~11.5(+10.2‖AR) | 21.4 | **~15.5** | **4.0** | ~~10~~ **FlatmmKernel (cktile) 更快** |
+| 6 | MoE routing+shared | ~34 | ~71 | **~43.2** | **9.2** | ~~37~~ **triton_poi 消失 + RS 缩短** |
+| 7 | MoE GEMM+finalize | ~167 | ~183 | ~194 | 27 | MoE GEMM 反而变慢 (+6%) |
+| **合计** | | **~283** | **~400** | **~364** | **~81** | ~~117~~ **缩小 36μs (31%)** |
 
 ##### 段 1：AR + RMSNorm + qkv_a 投影（GAP 13μs）
 
