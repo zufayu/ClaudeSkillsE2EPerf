@@ -110,14 +110,36 @@ def extract_kernels_in_window(evts, ts_start, ts_end):
 
 
 def split_layers(kernels):
-    """Split kernels into layers using reduce_scatter (odd = layer start)."""
+    """Split kernels into layers using reduce_scatter as boundary.
+
+    Auto-detects whether the first reduce_scatter is pre-attn or post-attn
+    by checking what follows (router/topk → post-attn, quant/gemm → pre-attn).
+    """
+    # Find all reduce_scatter positions
+    rs_positions = [i for i, k in enumerate(kernels)
+                    if "reduce_scatter_cross_device" in k.get("name", "")]
+
+    if len(rs_positions) < 2:
+        return [kernels]
+
+    # Determine if first RS is pre-attn or post-attn by looking at next non-RS kernel
+    first_rs = rs_positions[0]
+    # Look at kernels after first RS+rmsnorm pair (skip RS and rmsnorm)
+    look_ahead = min(first_rs + 3, len(kernels) - 1)
+    next_kernel = kernels[look_ahead].get("name", "")
+    # If followed by router (bf16gemm) or topk → first RS is post-attn (MoE phase)
+    first_is_post_attn = any(p in next_kernel for p in ["bf16gemm", "grouped_topk", "moe"])
+    # Pre-attn RS index parity: if first is post-attn, pre-attn starts at even; else odd
+    pre_attn_parity = 0 if first_is_post_attn else 1  # 0=even, 1=odd
+
     layers = []
     current = []
     rs_count = 0
     for k in kernels:
         if "reduce_scatter_cross_device" in k.get("name", ""):
             rs_count += 1
-            if rs_count % 2 == 1 and current:
+            # Pre-attn RS = layer start
+            if rs_count % 2 == pre_attn_parity and current:
                 layers.append(current)
                 current = []
         current.append(k)
