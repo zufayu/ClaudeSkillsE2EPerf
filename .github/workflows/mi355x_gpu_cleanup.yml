@@ -1,0 +1,60 @@
+name: "MI355X GPU Cleanup"
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 5
+    env:
+      CONTAINER: zufa_atom
+    steps:
+      - name: GPU status before cleanup
+        run: rocm-smi --showmeminfo vram 2>/dev/null || rocm-smi
+
+      - name: Kill GPU processes in container
+        run: |
+          echo "=== Killing python/vllm/atom processes in $CONTAINER ==="
+          podman exec $CONTAINER bash -c '
+            PIDS=$(ps aux | grep -E "python|vllm|atom.*serve|model_executor|multiprocessing" | grep -v grep | awk "{print \$2}")
+            if [ -n "$PIDS" ]; then
+              echo "Found processes:"
+              ps aux | grep -E "python|vllm|atom.*serve|model_executor|multiprocessing" | grep -v grep
+              echo ""
+              echo "Killing PIDs: $PIDS"
+              echo "$PIDS" | xargs kill -9 2>/dev/null || true
+              sleep 3
+              echo "Remaining:"
+              ps aux | grep -E "python|vllm|atom.*serve" | grep -v grep || echo "(none)"
+            else
+              echo "No GPU processes found in container"
+            fi
+          '
+
+      - name: Kill GPU processes on host
+        run: |
+          echo "=== Checking host GPU processes ==="
+          for dev in /dev/dri/renderD*; do
+            PIDS=$(fuser "$dev" 2>/dev/null | tr -s ' ')
+            if [ -n "$PIDS" ]; then
+              echo "$dev used by PIDs:$PIDS"
+            fi
+          done
+          echo ""
+          echo "=== Killing any remaining python GPU processes ==="
+          pkill -9 -f "python.*vllm\|python.*atom\|python.*model_executor" 2>/dev/null || echo "No host processes to kill"
+          sleep 3
+
+      - name: GPU status after cleanup
+        run: rocm-smi --showmeminfo vram 2>/dev/null || rocm-smi
+
+      - name: Verify GPUs are free
+        run: |
+          echo "=== VRAM usage check ==="
+          USED=$(rocm-smi 2>/dev/null | grep -oP '\d+%' | head -8 | tr '\n' ' ')
+          echo "VRAM% per GPU: $USED"
+          if echo "$USED" | grep -qP '[1-9]\d%'; then
+            echo "WARNING: Some GPUs still have significant VRAM usage"
+          else
+            echo "All GPUs are free"
+          fi

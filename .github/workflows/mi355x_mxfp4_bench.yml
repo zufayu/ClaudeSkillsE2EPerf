@@ -15,6 +15,12 @@ jobs:
       CONTAINER: zufa_atom2
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
     steps:
+      - name: Kill residual GPU processes
+        run: |
+          podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom.*serve|model_executor" 2>/dev/null || true'
+          pkill -9 -f "python.*vllm\|python.*atom" 2>/dev/null || true
+          sleep 5
+
       - name: Sync repo
         run: cd $REPO && git fetch origin && git reset --hard origin/main
 
@@ -97,6 +103,12 @@ jobs:
       CONTAINER: zufa_atom
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
     steps:
+      - name: Kill residual GPU processes
+        run: |
+          podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom.*serve|model_executor" 2>/dev/null || true'
+          pkill -9 -f "python.*vllm\|python.*atom" 2>/dev/null || true
+          sleep 5
+
       - name: Sync repo
         run: cd $REPO && git fetch origin && git reset --hard origin/main
 
@@ -177,6 +189,12 @@ jobs:
     env:
       REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
     steps:
+      - name: Kill residual GPU processes
+        run: |
+          podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom.*serve|model_executor" 2>/dev/null || true'
+          pkill -9 -f "python.*vllm\|python.*atom" 2>/dev/null || true
+          sleep 5
+
       - name: Sync repo
         run: cd $REPO && git fetch origin && git reset --hard origin/main
 

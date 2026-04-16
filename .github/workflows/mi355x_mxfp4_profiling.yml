@@ -21,6 +21,12 @@ jobs:
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
       RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm711_profiling
     steps:
+      - name: Kill residual GPU processes
+        run: |
+          podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom.*serve|model_executor" 2>/dev/null || true'
+          pkill -9 -f "python.*vllm\|python.*atom" 2>/dev/null || true
+          sleep 5
+
       - name: Sync repo (hard reset to drop any stuck local commits)
         run: cd $REPO && git fetch origin && git reset --hard origin/main
 
@@ -65,6 +71,12 @@ jobs:
       MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
       RESULT_DIR: results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711_profiling
     steps:
+      - name: Kill residual GPU processes
+        run: |
+          podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom.*serve|model_executor" 2>/dev/null || true'
+          pkill -9 -f "python.*vllm\|python.*atom" 2>/dev/null || true
+          sleep 5
+
       - name: Sync repo (hard reset to drop any stuck local commits)
         run: cd $REPO && git fetch origin && git reset --hard origin/main
 
