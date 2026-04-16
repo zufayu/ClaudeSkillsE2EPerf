@@ -19,7 +19,7 @@ jobs:
             podman start $CONTAINER
           else
             echo "Container $CONTAINER not found, creating..."
-            podman run -d --name $CONTAINER --device /dev/kfd --device /dev/dri --group-add video --ipc host --security-opt seccomp=unconfined -v /shared:/shared $IMAGE sleep infinity
+            podman run -d --name $CONTAINER --device /dev/kfd --device /dev/dri --group-add keep-groups --ipc host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined -v /shared:/shared $IMAGE sleep infinity
           fi
           echo ""
           echo "=== Running containers ==="
