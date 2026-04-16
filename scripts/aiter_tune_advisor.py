@@ -71,20 +71,39 @@ NOT_TUNABLE = {
     "triton_misc": {"patterns": ["triton_poi_fused"], "reason": "Triton JIT memory/transpose op"},
 }
 
-# ── Module → operator mapping (xlsx module name → logical operator) ──
+# ── Functional block definitions ──────────────────────────────
+# DeepSeek R1 decode layer = 4 functional blocks:
+#   1. Comm+Norm (pre-attention): TP reduce_scatter + RMSNorm
+#   2. MLA: qkv_a → norm+quant → q_b/k_up → RoPE → attention → uv → o_proj → transpose
+#   3. Comm+Norm (pre-MoE): TP reduce_scatter + RMSNorm
+#   4. MoE: router → topk+sort → quant+sort → gate_up GEMM → quant+sort → down GEMM
+FUNCTIONAL_BLOCKS = {
+    "comm_norm": ["pre_attn_comm", "pre_moe_comm"],
+    "mla": ["input_quant", "qkv_a", "q_a_norm", "kv_a_norm",
+            "q_b_proj", "k_up", "rope_cache", "mla_attn", "mla_reduce",
+            "uv", "o_proj", "mla_transpose"],
+    "moe": ["moe_router", "moe_topk", "moe_sort", "moe_quant_sort",
+            "moe_gate_up", "moe_down"],
+}
+
+# ── Module → operator mapping (xlsx cpu_module → logical operators) ──
 # Modules that map to multiple operators are listed in execution order.
 MODULE_TO_OPS = {
-    "gemm_a16w16": ["qkv_a", "router"],
-    "gemm_a8w8_bpreshuffle": ["qkv_a"],
-    "per_token_quant_hip": ["input_quant"],
-    "hipLaunchKernel": ["q_a_norm", "kv_a_norm"],
-    "q_proj_and_k_up_proj": ["q_b_proj", "k_up"],
-    "v_up_proj_and_o_proj": ["uv", "o_proj"],
-    "rope_and_kv_cache": ["rope_cache"],
-    "mla_decode": ["mla", "mla_reduce"],
+    # Comm+Norm
     "input_layernorm": ["pre_attn_comm"],
     "post_attn_layernorm": ["pre_moe_comm"],
-    "mxfp4_moe": ["moe_sort", "moe_quant", "moe_gate_up", "moe_down"],
+    # MLA
+    "per_token_quant_hip": ["input_quant"],               # FP8 model only
+    "gemm_a16w16": ["qkv_a", "moe_router"],               # BF16: 1st=qkv_a, 2nd=router
+    "gemm_a8w8_bpreshuffle": ["qkv_a"],                    # FP8 model
+    "hipLaunchKernel": ["q_a_norm", "kv_a_norm"],
+    "q_proj_and_k_up_proj": ["q_b_proj", "k_up"],
+    "rope_and_kv_cache": ["rope_cache"],
+    "mla_decode": ["mla_attn", "mla_reduce"],
+    "v_up_proj_and_o_proj": ["uv", "o_proj"],
+    # MoE
+    "mxfp4_moe": ["moe_topk", "moe_sort", "moe_quant_sort", "moe_gate_up", "moe_down"],
+    "rocm_aiter_biased_grouped_topk_impl": ["moe_topk", "moe_sort", "moe_quant_sort", "moe_gate_up", "moe_down"],
 }
 
 
@@ -104,7 +123,7 @@ def compute_shapes(tp, bs):
         "k_up": {"type": "batched", "B": heads_per_gpu, "M": bs, "K": kv_lora, "N": nope},
         "uv": {"type": "batched", "B": heads_per_gpu, "M": bs, "K": kv_lora, "N": v_head},
         "o_proj": {"type": "dense", "M": bs, "K": heads_per_gpu * v_head, "N": hidden},
-        "router": {"type": "dense", "M": bs, "K": hidden, "N": DSR1_CONFIG["n_routed_experts"]},
+        "moe_router": {"type": "dense", "M": bs, "K": hidden, "N": DSR1_CONFIG["n_routed_experts"]},
     }
 
 
@@ -145,7 +164,7 @@ def map_kernel_to_operator(kernel_name, module_name, position, all_kernels):
         elif len(bf16_positions) >= 3 and position == bf16_positions[2]:
             return "o_proj"
         elif len(bf16_positions) >= 4 and position == bf16_positions[3]:
-            return "router"
+            return "moe_router"
         return "qkv_a"  # default
 
     if "batched_gemm_a8w8" in kn_lower:
@@ -178,7 +197,7 @@ def map_kernel_to_operator(kernel_name, module_name, position, all_kernels):
         return "q_b_proj"
 
     if "mla_a8w8" in kn_lower:
-        return "mla"
+        return "mla_attn"
     if "kn_mla_reduce" in kn_lower:
         return "mla_reduce"
     if "kernel_moe_mxgemm" in kn_lower:
@@ -191,22 +210,25 @@ def map_kernel_to_operator(kernel_name, module_name, position, all_kernels):
         if position == rmsnorm_positions[0] if rmsnorm_positions else -1:
             return "q_a_norm"
         return "kv_a_norm"
+    # Comm+Norm block
     if "reduce_scatter" in kn_lower:
-        return "tp_reduce_scatter"
+        return "comm_reduce_scatter"
     if "local_device_load_rmsnorm" in kn_lower:
-        return "tp_load_rmsnorm"
+        return "comm_load_rmsnorm"
+    # MLA block
     if "fuse_qk_rope" in kn_lower:
         return "rope_cache"
+    if "dynamic_per_token_scaled_quant" in kn_lower:
+        return "input_quant"
+    if "triton_poi_fused" in kn_lower:
+        return "mla_transpose"
+    # MoE block
     if "grouped_topk" in kn_lower:
         return "moe_topk"
     if "moesorting" in kn_lower:
         return "moe_sort"
     if "fused_dynamic_mxfp4_quant" in kn_lower:
         return "moe_quant_sort"
-    if "dynamic_per_token_scaled_quant" in kn_lower:
-        return "input_quant"
-    if "triton_poi_fused" in kn_lower:
-        return "triton_transpose"
 
     return "unknown"
 
