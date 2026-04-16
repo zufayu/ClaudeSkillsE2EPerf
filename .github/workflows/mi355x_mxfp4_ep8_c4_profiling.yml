@@ -14,7 +14,6 @@ jobs:
       - name: Kill residual GPU processes
         run: |
           podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom.*serve|model_executor" 2>/dev/null || true'
-          pkill -9 -f "python.*vllm\|python.*atom" 2>/dev/null || true
           sleep 5
           echo "VRAM after cleanup:"
           podman exec $CONTAINER rocm-smi 2>/dev/null | grep -E "GPU|VRAM" | head -10 || true
