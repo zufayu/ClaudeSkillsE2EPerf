@@ -22,8 +22,8 @@ Usage:
     python3 scripts/run_parse_trace.py trace.json.gz --layer 40 --target-bs 64
 
 Output:
-    decode_breakdown.xlsx   (kernel breakdown at target bs)
-    prefill_breakdown.xlsx  (prefill breakdown, unchanged from upstream)
+    decode_breakdown_c64.xlsx   (kernel breakdown at target bs, suffix auto-detected from filename)
+    prefill_breakdown_c64.xlsx  (prefill breakdown, unchanged from upstream)
 
 Requires ATOM's tools/ on sys.path. Set ATOM_TOOLS env var if not at default.
 """
@@ -208,9 +208,18 @@ def main():
         "--capture-trace", type=str, default=None,
         help="Explicit path to capture_graph trace file (bypasses auto-detection)",
     )
+    parser.add_argument(
+        "--suffix", type=str, default=None,
+        help="Suffix for output files (e.g., 'c64'). Auto-detected from filename if not set.",
+    )
     args = parser.parse_args()
 
     filepath = args.filepath
+
+    # Auto-detect suffix from filename (e.g., ..._c64_full.log → c64)
+    if args.suffix is None:
+        m = re.search(r'_(c\d+)[_.]', os.path.basename(filepath))
+        args.suffix = m.group(1) if m else None
 
     print(f"Loading run trace: {filepath}")
     trace = parse_trace.load_trace(filepath)
@@ -236,7 +245,8 @@ def main():
     print("\n" + "=" * 60)
     print("PREFILL ANALYSIS")
     print("=" * 60)
-    parse_trace.parse_prefill(events, "prefill_breakdown.xlsx", target_layer=args.layer)
+    pfx = f"_{args.suffix}" if args.suffix else ""
+    parse_trace.parse_prefill(events, f"prefill_breakdown{pfx}.xlsx", target_layer=args.layer)
 
     # --- Decode: select target bs ---
     print("\n" + "=" * 60)
@@ -287,7 +297,7 @@ def main():
     print(f"Filtered events: {len(events)} -> {len(filtered_events)} (removed {len(events) - len(filtered_events)} other decode events)")
 
     parse_trace.parse_decode(
-        filtered_events, final_capture_events, "decode_breakdown.xlsx", target_layer=args.layer
+        filtered_events, final_capture_events, f"decode_breakdown{pfx}.xlsx", target_layer=args.layer
     )
 
 
