@@ -1,0 +1,224 @@
+name: "MI355X FP4 Full Model Compare"
+on:
+  workflow_dispatch:
+
+jobs:
+  full-compare:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 120
+    env:
+      MODEL_BASE: /shared/data/amd_int/models
+    steps:
+      - name: Find all FP4 directories
+        run: |
+          echo "=== All directories with fp4/FP4 in name ==="
+          ls -d $MODEL_BASE/*[Ff][Pp]4* 2>/dev/null | while read d; do
+            if [ -L "$d" ]; then
+              echo "  $(basename $d) -> SYMLINK to $(readlink -f $d)"
+            elif [ -d "$d" ]; then
+              echo "  $(basename $d) -> real dir"
+            fi
+          done
+
+      - name: Directory structure comparison
+        run: |
+          echo "=== File listing per model ==="
+          for d in $MODEL_BASE/*[Ff][Pp]4*; do
+            echo ""
+            echo "--- $(basename $d) ---"
+            ls -la "$d" | head -80
+            echo "Total files: $(ls "$d" | wc -l)"
+            echo "Safetensors: $(ls "$d"/*.safetensors 2>/dev/null | wc -l)"
+            TOTAL=$(du -sh "$d" 2>/dev/null | cut -f1)
+            echo "Total size: $TOTAL"
+          done
+
+      - name: File name and size diff (pairwise)
+        run: |
+          DIRS=($MODEL_BASE/*[Ff][Pp]4*)
+          REF="${DIRS[0]}"
+          echo "Reference: $(basename $REF)"
+          echo ""
+          # Generate file list with sizes for reference
+          (cd "$REF" && ls -1 | while read f; do echo "$(stat -c '%s' "$f" 2>/dev/null || echo 0) $f"; done | sort -k2) > /tmp/ref_files.txt
+          for d in "${DIRS[@]:1}"; do
+            echo "=== diff vs $(basename $d) ==="
+            (cd "$d" && ls -1 | while read f; do echo "$(stat -c '%s' "$f" 2>/dev/null || echo 0) $f"; done | sort -k2) > /tmp/cmp_files.txt
+            diff /tmp/ref_files.txt /tmp/cmp_files.txt || true
+            echo ""
+          done
+
+      - name: Config files full diff (all JSON/txt/md)
+        run: |
+          DIRS=($MODEL_BASE/*[Ff][Pp]4*)
+          echo "=== Config files found across all models ==="
+          CONFIG_FILES=""
+          for d in "${DIRS[@]}"; do
+            for f in "$d"/*.json "$d"/*.txt "$d"/*.md "$d"/*.py "$d"/*.yaml "$d"/*.yml; do
+              [ -f "$f" ] && CONFIG_FILES="$CONFIG_FILES $(basename $f)"
+            done
+          done
+          CONFIG_FILES=$(echo "$CONFIG_FILES" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+          echo "Config files: $CONFIG_FILES"
+          echo ""
+
+          REF="${DIRS[0]}"
+          for cf in $CONFIG_FILES; do
+            echo "=========================================="
+            echo "FILE: $cf"
+            echo "=========================================="
+            if [ ! -f "$REF/$cf" ]; then
+              echo "  [MISSING in reference $(basename $REF)]"
+            fi
+            for d in "${DIRS[@]}"; do
+              if [ ! -f "$d/$cf" ]; then
+                echo "  [MISSING in $(basename $d)]"
+              fi
+            done
+            echo ""
+            # Pairwise diff against reference
+            for d in "${DIRS[@]:1}"; do
+              if [ -f "$REF/$cf" ] && [ -f "$d/$cf" ]; then
+                RESULT=$(diff "$REF/$cf" "$d/$cf" 2>&1) || true
+                if [ -z "$RESULT" ]; then
+                  echo "  $(basename $REF) vs $(basename $d): IDENTICAL"
+                else
+                  echo "  $(basename $REF) vs $(basename $d): DIFFERENT"
+                  echo "$RESULT" | head -100
+                fi
+              fi
+            done
+            echo ""
+          done
+
+      - name: Safetensors inode comparison
+        run: |
+          DIRS=($MODEL_BASE/*[Ff][Pp]4*)
+          echo "=== Inode comparison (same inode = hardlink = identical bytes) ==="
+          # Get safetensors file names from first dir
+          SHARDS=$(ls "${DIRS[0]}"/*.safetensors 2>/dev/null | xargs -I{} basename {} | sort)
+          TOTAL=$(echo "$SHARDS" | wc -w)
+          echo "Total shards in reference: $TOTAL"
+          echo ""
+
+          for shard in $SHARDS; do
+            INODES=""
+            LINE="$shard:"
+            for d in "${DIRS[@]}"; do
+              if [ -f "$d/$shard" ]; then
+                INODE=$(stat -c %i "$d/$shard" 2>/dev/null)
+                SIZE=$(stat -c %s "$d/$shard" 2>/dev/null)
+                LINE="$LINE $(basename $d)=inode:$INODE,size:$SIZE"
+                INODES="$INODES $INODE"
+              else
+                LINE="$LINE $(basename $d)=MISSING"
+              fi
+            done
+            # Check if all inodes are the same
+            UNIQUE=$(echo $INODES | tr ' ' '\n' | sort -u | wc -l)
+            if [ "$UNIQUE" -eq 1 ]; then
+              echo "[HARDLINK] $shard (all identical, inode=$(echo $INODES | tr ' ' '\n' | head -1))"
+            else
+              echo "[DIFFER]   $LINE"
+            fi
+          done
+
+      - name: Full MD5 for differing safetensors
+        run: |
+          DIRS=($MODEL_BASE/*[Ff][Pp]4*)
+          echo "=== Full MD5 for shards with different inodes ==="
+          SHARDS=$(ls "${DIRS[0]}"/*.safetensors 2>/dev/null | xargs -I{} basename {} | sort)
+
+          for shard in $SHARDS; do
+            # Collect inodes
+            INODES=""
+            for d in "${DIRS[@]}"; do
+              [ -f "$d/$shard" ] && INODES="$INODES $(stat -c %i "$d/$shard" 2>/dev/null)"
+            done
+            UNIQUE=$(echo $INODES | tr ' ' '\n' | sort -u | wc -l)
+            if [ "$UNIQUE" -gt 1 ]; then
+              echo "--- $shard ---"
+              for d in "${DIRS[@]}"; do
+                if [ -f "$d/$shard" ]; then
+                  HASH=$(md5sum "$d/$shard" | cut -d' ' -f1)
+                  echo "  $(basename $d): $HASH"
+                fi
+              done
+            fi
+          done
+          echo ""
+          echo "=== Shards only in some models ==="
+          ALL_SHARDS=""
+          for d in "${DIRS[@]}"; do
+            S=$(ls "$d"/*.safetensors 2>/dev/null | xargs -I{} basename {} | sort)
+            ALL_SHARDS="$ALL_SHARDS $S"
+          done
+          ALL_SHARDS=$(echo "$ALL_SHARDS" | tr ' ' '\n' | sort -u)
+          for shard in $ALL_SHARDS; do
+            PRESENT=""
+            MISSING=""
+            for d in "${DIRS[@]}"; do
+              if [ -f "$d/$shard" ]; then
+                PRESENT="$PRESENT $(basename $d)"
+              else
+                MISSING="$MISSING $(basename $d)"
+              fi
+            done
+            if [ -n "$MISSING" ]; then
+              echo "  $shard: present in[$PRESENT ] missing in[$MISSING ]"
+            fi
+          done
+
+      - name: quantization_config deep compare
+        run: |
+          DIRS=($MODEL_BASE/*[Ff][Pp]4*)
+          echo "=== quantization_config from each model ==="
+          for d in "${DIRS[@]}"; do
+            echo ""
+            echo "--- $(basename $d) ---"
+            python3 -c "
+          import json
+          with open('$d/config.json') as f:
+              c = json.load(f)
+          qc = c.get('quantization_config', {})
+          print(json.dumps(qc, indent=2, sort_keys=True))
+          " 2>/dev/null || echo "(no config.json)"
+          done
+
+      - name: model_index / safetensors_index diff
+        run: |
+          DIRS=($MODEL_BASE/*[Ff][Pp]4*)
+          REF="${DIRS[0]}"
+          for idx_file in model.safetensors.index.json; do
+            echo "=== $idx_file ==="
+            if [ ! -f "$REF/$idx_file" ]; then
+              echo "Not found in reference"
+              continue
+            fi
+            for d in "${DIRS[@]:1}"; do
+              if [ -f "$d/$idx_file" ]; then
+                RESULT=$(diff <(python3 -c "import json; print(json.dumps(json.load(open('$REF/$idx_file')), indent=2, sort_keys=True))") <(python3 -c "import json; print(json.dumps(json.load(open('$d/$idx_file')), indent=2, sort_keys=True))") 2>&1) || true
+                if [ -z "$RESULT" ]; then
+                  echo "  $(basename $REF) vs $(basename $d): IDENTICAL"
+                else
+                  DIFF_LINES=$(echo "$RESULT" | wc -l)
+                  echo "  $(basename $REF) vs $(basename $d): $DIFF_LINES diff lines"
+                  echo "$RESULT" | head -50
+                fi
+              else
+                echo "  $(basename $d): MISSING"
+              fi
+            done
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "============================================"
+          echo "SUMMARY"
+          echo "============================================"
+          DIRS=($MODEL_BASE/*[Ff][Pp]4*)
+          echo "Models compared: ${#DIRS[@]}"
+          for d in "${DIRS[@]}"; do
+            echo "  - $(basename $d)"
+          done
