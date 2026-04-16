@@ -41,7 +41,7 @@ jobs:
           podman rm $CONTAINER 2>/dev/null || true
 
       - name: Create new container
-        run: podman run -d --name $CONTAINER --device /dev/kfd --device /dev/dri --group-add video --ipc host --shm-size 256g --security-opt seccomp=unconfined -v /shared:/shared $IMAGE sleep infinity
+        run: podman run -d --name $CONTAINER --device /dev/kfd --device /dev/dri --group-add video --ipc host --security-opt seccomp=unconfined -v /shared:/shared $IMAGE sleep infinity
 
       - name: Verify environment
         run: |
