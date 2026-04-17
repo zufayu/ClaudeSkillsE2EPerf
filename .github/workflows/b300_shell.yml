@@ -1,0 +1,24 @@
+name: "B300 Shell"
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'Command to run'
+        type: string
+        default: 'echo hello'
+      in_container:
+        description: 'Run inside zufa_sglang container'
+        type: boolean
+        default: false
+jobs:
+  shell:
+    runs-on: [self-hosted, b300]
+    timeout-minutes: 10
+    steps:
+      - name: Run
+        run: |
+          if [ "${{ inputs.in_container }}" = "true" ]; then
+            docker exec zufa_sglang bash -c '${{ inputs.command }}'
+          else
+            bash -c '${{ inputs.command }}'
+          fi
