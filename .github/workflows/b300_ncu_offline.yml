@@ -1,0 +1,93 @@
+name: "B300 NCU Offline bs64"
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_filter:
+        description: "Kernel name filter"
+        type: string
+        default: "fmhaSm100f"
+      launch_count:
+        description: "Kernel launches to capture"
+        type: string
+        default: "10"
+      ncu_set:
+        description: "NCU section set"
+        type: choice
+        options:
+          - pmsampling
+          - basic
+          - full
+        default: pmsampling
+      bs:
+        description: "Batch size"
+        type: string
+        default: "64"
+
+jobs:
+  ncu-offline:
+    runs-on: [self-hosted, b300]
+    timeout-minutes: 120
+    env:
+      CONTAINER: zufa_sglang
+      MODEL: /models/DeepSeek-R1-0528-NVFP4-v2
+      NCU: /opt/nvidia/nsight-compute/2025.4.1/ncu
+      REPO: /home/zufa/ClaudeSkillsE2EPerf
+      RESULT_DIR: results/b300_dsr_fp4/b300_ncu_offline
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Cleanup
+        continue-on-error: true
+        run: |
+          docker exec $CONTAINER bash -c 'pkill -9 -f sglang 2>/dev/null; pkill -9 -f ncu 2>/dev/null; true'
+          sleep 3
+
+      - name: "NCU offline bs=${{ inputs.bs }} (foreground, ~30 min)"
+        timeout-minutes: 90
+        run: |
+          docker exec $CONTAINER bash -c "
+            cd $REPO && mkdir -p $RESULT_DIR
+            $NCU --mode launch-and-attach \
+              --profile-from-start off \
+              --target-processes all \
+              --devices 0 \
+              --graph-profiling node \
+              -k '${{ inputs.kernel_filter }}' \
+              --launch-count ${{ inputs.launch_count }} \
+              --set ${{ inputs.ncu_set }} \
+              -f -o $RESULT_DIR/ncu_${{ inputs.kernel_filter }}_bs${{ inputs.bs }} \
+              python3 scripts/ncu_offline_bs64.py \
+                --model $MODEL \
+                --tp 8 \
+                --bs ${{ inputs.bs }} \
+                --input-len 1024 \
+                --output-len 64 \
+                --warmup 2 \
+              2>&1 | tee $RESULT_DIR/ncu_run.log
+          "
+
+      - name: Check results
+        if: always()
+        run: |
+          echo "=== .ncu-rep files ==="
+          docker exec $CONTAINER ls -lh $REPO/$RESULT_DIR/*.ncu-rep 2>/dev/null || echo "No .ncu-rep"
+          echo "=== Run log (last 20) ==="
+          docker exec $CONTAINER tail -20 $REPO/$RESULT_DIR/ncu_run.log 2>/dev/null || true
+
+      - name: Cleanup
+        if: always()
+        continue-on-error: true
+        run: docker exec $CONTAINER bash -c 'pkill -9 -f sglang 2>/dev/null; true'
+
+      - name: Commit results
+        if: always()
+        run: |
+          cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B300 CI'
+          git add -f $RESULT_DIR/*.ncu-rep $RESULT_DIR/*.log 2>/dev/null; true
+          if ! git diff --cached --quiet; then
+            git commit -m "data: B300 NCU offline bs=${{ inputs.bs }} (${{ inputs.kernel_filter }}, ${{ inputs.ncu_set }})"
+            git pull --rebase origin main && git push
+          else
+            echo "Nothing to commit"
+          fi
