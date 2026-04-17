@@ -324,22 +324,33 @@ def main():
         # Detect overlaps with type classification
         # Types:
         #   pdl:            same-stream overlap (<5μs) — PDL tail/preamble overlap
-        #   same_large:     same-stream overlap (>=5μs) — unexpected, likely data issue
+        #   cross_layer:    same-stream overlap (>=5μs) between EP_AR and qkv_a —
+        #                   this is the moefinalize ∥ qkv_a pipeline overlap across layers
+        #   same_large:     same-stream overlap (>=5μs), other cases — unexpected
         #   cross_parallel: cross-stream overlap (>=3μs) — true dual-stream parallelism
         #   cross_tail:     cross-stream overlap (<3μs) — just edge/boundary overlap
+        def is_cross_layer_overlap(kr_i, kr_j):
+            """Check if overlap is EP_AR ∥ qkv_a (cross-layer pipeline)."""
+            ops = {kr_i["op"], kr_j["op"]}
+            return ("EP_AR+residual+RMSNorm(fused)" in ops and "qkv_a_proj_GEMM" in ops)
+
         for i in range(len(kernel_rows)):
             overlaps = []
             for j in range(len(kernel_rows)):
                 if i == j:
                     continue
-                # Check if i and j overlap in time
                 ov_start = max(kernel_rows[i]["ts"], kernel_rows[j]["ts"])
                 ov_end = min(kernel_rows[i]["end"], kernel_rows[j]["end"])
                 if ov_end > ov_start + 0.1:  # >0.1μs overlap
                     ov_us = ov_end - ov_start
                     same_stream = kernel_rows[i]["stream"] == kernel_rows[j]["stream"]
                     if same_stream:
-                        ov_type = "pdl" if ov_us < 5.0 else "same_large"
+                        if ov_us >= 5.0 and is_cross_layer_overlap(kernel_rows[i], kernel_rows[j]):
+                            ov_type = "cross_layer"
+                        elif ov_us < 5.0:
+                            ov_type = "pdl"
+                        else:
+                            ov_type = "same_large"
                     else:
                         ov_type = "cross_parallel" if ov_us >= 3.0 else "cross_tail"
                     overlaps.append({
@@ -503,6 +514,36 @@ def main():
         for mod, total in mod_sums.items():
             pct = total / avg_ksum * 100
             print(f"    {mod:<15} {total:>8.1f}μs  ({pct:>5.1f}%)")
+
+        # Overlap breakdown by type
+        # Aggregate overlap amounts per type across all layers
+        ov_by_type = {}  # type → list of per-layer totals
+        for lk in all_layer_kernels:
+            layer_ov = {}  # type → total_us for this layer
+            for kr in lk:
+                for ov in kr.get("overlaps", []):
+                    t = ov["type"]
+                    # Avoid double-counting: only count from the earlier kernel
+                    j_idx = ov["with"] - 1
+                    if kr["idx"] < j_idx:
+                        layer_ov[t] = layer_ov.get(t, 0) + ov["us"]
+            for t in ("cross_layer", "cross_parallel", "cross_tail", "pdl", "same_large"):
+                if t not in ov_by_type:
+                    ov_by_type[t] = []
+                ov_by_type[t].append(layer_ov.get(t, 0))
+
+        print(f"\n  Overlap breakdown by type (avg per layer):")
+        total_typed = 0
+        for t in ("cross_layer", "cross_parallel", "cross_tail", "pdl", "same_large"):
+            vals = ov_by_type.get(t, [0])
+            avg_v = sum(vals) / len(vals) if vals else 0
+            if avg_v > 0.1:
+                total_typed += avg_v
+                print(f"    {t:<18} {avg_v:>6.1f}μs")
+        print(f"    {'TOTAL (typed)':<18} {total_typed:>6.1f}μs")
+        print(f"    {'TOTAL (ksum-wall)':<18} {avg_overlap:>6.1f}μs")
+        if abs(total_typed - avg_overlap) > 2:
+            print(f"    NOTE: typed total differs from ksum-wall by {total_typed - avg_overlap:.1f}μs")
 
         # Write CSV output — kernel map format with overlap and MI355X placeholder columns
         if args.output_dir:
