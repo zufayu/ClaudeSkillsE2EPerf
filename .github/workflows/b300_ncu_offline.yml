@@ -57,7 +57,7 @@ jobs:
           mkdir -p $2
           $3 --mode launch-and-attach \
             --target-processes all \
-            -k "$4" \
+            $([ -n "$4" ] && echo "-k \"$4\"") \
             --launch-skip $5 \
             --launch-count $6 \
             --set $7 \
