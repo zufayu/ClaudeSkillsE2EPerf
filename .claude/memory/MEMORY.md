@@ -1,0 +1,7 @@
+- [GPU Specs Reference](reference_gpu_specs.md) — B200/H200/H100/H20/MI355X/MI325X/MI300X HBM BW, TFLOPS, TDP, interconnect for inference perf analysis
+- [B200 PDL](reference_b200_pdl.md) — Programmatic Dependent Launch: same-stream kernel overlap via tail/preamble overlap, Hopper+ feature, ~2μs/boundary savings
+- [Dual-Stream Overlap](reference_dual_stream_overlap.md) — B200 dual-stream parallelism analysis for DeepSeek-V3, 66μs overlap = 39μs cross-stream + 27μs PDL, architecture-specific
+- [No Guessing](feedback_no_guessing.md) — 不要凭记忆推测算子shape/名称/类型，必须先读原始数据（CSV/profiling），以验证过的数据为准
+- [Remote Workflow Pitfalls](feedback_remote_workflow_pitfalls.md) — pkill自杀、health check、EP/TP搞混、workflow_dispatch缓存、数据mislabel
+- [Profiling Tool Pitfalls](feedback_profiling_tool_pitfalls.md) — ncu参数演进(15+fix)、NVTX SQLite schema摸索、roctx marker失败、container环境差异
+- [Cross-Platform Kernel Catalog](reference_cross_platform_catalog.md) — B200/MI355X已知kernel families、structural gaps、verified per-operator ratios、framework toggles
