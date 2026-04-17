@@ -1,0 +1,41 @@
+B200_Operator,B200_Raw_Kernel,B200_Stream,B200_Avg_us,B200_Overlap_us,B200_Overlap_With
+EP_AR+residual+RMSNorm(fused),"flashinfer::trtllm_allreduce_fusion::allreduce_fusion_kernel_oneshot_lamport<...",23,25.9,"pdl ~24(不稳定7-35)","qkv_a_proj_GEMM(pdl)"
+,,,,,
+,,,,,
+qkv_a_proj_GEMM,nvjet_tst_64x32_64x16_2x1_2cta_v_bz_splitK_TNT,23,31.9,0,"EP_AR+residual+RMSNorm(pdl) | qkv_a_splitK_reduce(pdl)"
+qkv_a_splitK_reduce,"cublasLt::splitKreduce_kernel<...>",23,3.7,0,"qkv_a_proj_GEMM(pdl) | q/k_norm_RMSNorm(pdl)"
+q/k_norm_RMSNorm,"flashinfer::norm::RMSNormKernel<...>",23,3.2,0,"qkv_a_splitK_reduce(pdl) | q/k_norm_RMSNorm(dual_stream)"
+q/k_norm_RMSNorm,"flashinfer::norm::RMSNormKernel<...>",385,2.4,0,"q/k_norm_RMSNorm(dual_stream)"
+q_b_proj_GEMM,nvjet_tst_48x64_64x15_4x1_v_bz_TNN,23,6.3,0,"uk_gemm(pdl)"
+uk_gemm(K_expansion),nvjet_tst_128x64_64x8_4x1_v_bz_TNT,23,4.4,0,"q_b_proj_GEMM(pdl)"
+RoPE+KV_cache_write,"flashinfer::RopeQuantizeKernel<...>",23,2.7,0,
+set_mla_kv,set_mla_kv_buffer_kernel,23,1.7,0,
+Attention(FMHA),fmhaSm100fKernel_QkvE4m3OBfloat16HQk576HV512PagedKvDenseP64VarSeqQ16Kv128Persist,23,20.3,0,
+,,,,,
+uv_gemm(V_expansion),nvjet_tst_64x32_64x16_2x2_2cta_h_bz_TNT,23,4,0,
+o_proj_quant(BF16→FP4),"cvt_fp16_to_fp4<...>",23,2.1,0,
+o_proj_GEMM,"_ZN7cutlass13device_kernelIN10flashinfer4gemm58DeviceGemmFp4GemmSm100___nv_bfloa",23,9.4,0,"EP_AR(pdl,0.2μs)"
+EP_AR+residual+RMSNorm(fused),"flashinfer::trtllm_allreduce_fusion::allreduce_fusion_kernel_oneshot_lamport<...",23,11,"双流 9μs","router_GEMM(dual_stream,9.2μs) | o_proj_GEMM(pdl,0.2μs)"
+,,,,,
+shared_quant(BF16→FP4),"cvt_fp16_to_fp4<...>",23,2.5,双流,"router_GEMM(dual_stream) | router_splitK_reduce(dual_stream)"
+shared_gate_up_GEMM(FP4),"_ZN7cutlass13device_kernelIN10flashinfer4gemm57DeviceGemmFp4GemmSm100___nv_bfloa",23,10.2,双流,"router_splitK_reduce(dual_stream) | MoE_input_quant(dual_stream) | tensor_copy(dual_stream)"
+SiLU×Mul,"flashinfer::activation::act_and_mul_kernel<...>",23,3.2,双流,"TopK_select(dual_stream) | expert_sort(dual_stream)"
+shared_quant(BF16→FP4),"cvt_fp16_to_fp4<...>",23,1.7,双流,"expert_sort(dual_stream) | TopK_select(dual_stream)"
+shared_down_GEMM(FP4),"_ZN7cutlass13device_kernelIN10flashinfer4gemm57DeviceGemmFp4GemmSm100___nv_bfloa",23,5.8,双流,"gate_up_GEMM(dual_stream) | expert_sort(dual_stream)"
+,,,,,
+router_GEMM,nvjet_tst_64x32_64x16_2x2_2cta_h_bz_splitK_TNT,385,13.5,双流,"EP_AR(dual_stream,9.2μs) | shared_quant(dual_stream) | router_splitK_reduce(pdl)"
+router_splitK_reduce,"cublasLt::splitKreduce_kernel<...>",385,3.6,双流,"router_GEMM(pdl) | shared_gate_up_GEMM(dual_stream) | MoE_input_quant(pdl)"
+MoE_input_quant(BF16→FP4),"tensorrt_llm::kernels::quantize_with_block_size<...>",385,3.8,双流,"shared_gate_up_GEMM(dual_stream) | router_splitK_reduce(pdl)"
+tensor_copy,"at::native::unrolled_elementwise_kernel<...>",385,3.2,双流,"shared_gate_up_GEMM(dual_stream)"
+TopK_select,"moe::dev::routing::routingDeepSeek::routingMainKernel<...>",385,4.5,双流,"expert_sort(pdl) | SiLU×Mul(dual_stream) | shared_quant(dual_stream)"
+expert_sort,"moe::dev::routing::routingDeepSeek::routingIndicesClusterKernel<...>",385,5.3,双流,"TopK_select(pdl) | SiLU×Mul(dual_stream) | shared_quant(dual_stream) | shared_down_GEMM(dual_stream) | gate_up_GEMM(pdl)"
+gate_up_GEMM(+SwiGLU),"bmm_E2m1_E2m1E2m1_Fp32_bA16_bB16_bC16_t128x16x512_s5_et128x16_m128x16x64_cga1x1x",385,101.7,0,"shared_down_GEMM(dual_stream) | down_GEMM(pdl) | expert_sort(pdl)"
+down_GEMM,"bmm_Bfloat16_E2m1E2m1_Fp32_bA16_bB16_t128x16x256_s6_et128x16_m128x16x64_cga1x1x1",385,55.8,0,"gate_up_GEMM(pdl) | MoE_finalize+residual(pdl)"
+MoE_finalize+residual,"moe::dev::finalize::finalizeKernelVecLoad<...>",385,7.5,0,"down_GEMM(pdl)"
+residual_add,"at::native::vectorized_elementwise_kernel<...>",23,2.1,0,
+,,,,,
+B200 TOTAL (kernel_sum),,,353.4,,
+B200 Walltime,,,288.5,,
+B200 Overlap,,,64.9,,
+Single-stream (PDL),,,34.4,,
+Dual-stream,,,30.5,,

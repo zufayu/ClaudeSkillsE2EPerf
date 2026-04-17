@@ -2,8 +2,8 @@
 name: B200 PDL (Programmatic Dependent Launch)
 description: NVIDIA PDL mechanism enabling same-stream kernel overlap by overlapping tail of kernel A with preamble of kernel B. Hopper+ feature. Key to understanding B200 overlap savings.
 type: reference
+originSessionId: ef6a5f82-0e8a-4423-8898-b406f3722dca
 ---
-
 # PDL — Programmatic Dependent Launch
 
 ## What It Is
@@ -40,13 +40,19 @@ PDL same-stream:
 
 Typical saving: ~2μs per kernel boundary.
 
-## Impact on DeepSeek-V3 B200 Analysis
+## Impact on DeepSeek-V3 B200 Analysis (verified from trace)
 
-- 29 kernels/layer → 28 boundaries × ~2μs ≈ ~27μs PDL savings (out of 66μs total overlap)
-- Remaining ~39μs comes from dual-stream cross-stream parallelism
-- PDL savings scale with kernel count — DeepSeek-V3's MLA decomposition creates many small kernels (10 for attention alone), amplifying PDL benefit
-- Standard dense Transformer (~10 kernels): PDL saves only ~18μs
+Total single-stream PDL overlap: **~34μs/layer** (out of ~65μs total overlap), broken down:
+
+| Component | μs | Mechanism |
+|-----------|---:|-----------|
+| EP_AR ∥ qkv_a (cross-layer pipeline) | ~22 (unstable, 7-35μs) | moefinalize tail overlaps qkv_a preamble. **NOT real compute savings** — qkv_a duration is inflated 1:1 by EP_AR wait time (r=1.000 correlation). qkv_a actual compute = ~15μs. |
+| Kernel boundary PDL (~14 boundaries) | ~12 (stable) | ~0.1-2.5μs per boundary, saves kernel launch overhead |
+
+**Key finding**: EP_AR∥qkv_a overlap looks large (~22μs avg) but is mostly EP_AR allreduce wait time stuffed into qkv_a's PDL preamble. Without PDL, qkv_a would be ~15μs (not 31.7μs). The true PDL benefit for MI355X gap analysis is the **~12μs boundary savings** (structural, no AMD equivalent).
+
 - MI355X/ROCm has NO equivalent mechanism — `hipGridDependencySynchronize` does not exist
+- MI355X can partially compensate via kernel fusion (fewer boundaries = less launch overhead to hide)
 
 ## cuBLAS / CUTLASS Integration
 

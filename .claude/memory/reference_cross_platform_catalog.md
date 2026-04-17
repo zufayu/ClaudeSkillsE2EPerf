@@ -19,7 +19,7 @@ originSessionId: ef6a5f82-0e8a-4423-8898-b406f3722dca
 | **moefinalize_lamport** | `moefinalize_lamport` | Lamport-style EP AllReduce + weighted sum + residual + pre-attn RMSNorm, all fused | 33.11μs (TP8), overlaps with qkv_a_proj via PDL |
 | **allreduce_fusion_kernel_oneshot_lamport** | `allreduce_fusion_kernel_oneshot_lamport` | SGLang flashinfer lamport allreduce on symmetric memory, separate stream | 25.9μs (TP4), overlaps with qkv_a GEMM |
 | **SM100-native attention** | `fmhaSm100f`, `QkvE4m3` | Blackwell-native FlashMHA with FP8 E4M3 KV cache, includes multi-head reduce | 20.3-20.7μs (fused reduce) |
-| **SM100 FP4 GEMM** | `DeviceGemmFp4GemmSm100`, `nvjet_ootst`, `bmm_E2m1` | Blackwell FP4 (E2M1) GEMM via cuBLAS/CUTLASS | gate_up: 59.55μs(TP8), 101.7μs(TP4) |
+| **SM100 FP4 GEMM** | `DeviceGemmFp4GemmSm100`, `nvjet_ootst`, `bmm_E2m1` | Blackwell FP4 (E2M1) GEMM via cuBLAS/CUTLASS. **Note**: DeviceGemmFp4 is used for BOTH o_proj AND shared expert — distinguish by position: before EP_AR#2 = o_proj, after = shared expert (gate_up/down) | gate_up: 59.55μs(TP8), 101.7μs(TP4) |
 | **splitK two-phase** | `nvjet_splitK_TNT` + `splitKreduce` | cuBLAS splits GEMM into parallel tiles then reduces; MI355X CK does single-kernel | 3.7μs overhead per splitK GEMM |
 | **Block-scale FP4 quantize** | `quantize_with_block_size`, `cvt_fp16_to_fp4` | BF16→FP4 block-scale quantization, standalone kernel (not always fused) | ~2-4μs per occurrence |
 
@@ -39,14 +39,17 @@ originSessionId: ef6a5f82-0e8a-4423-8898-b406f3722dca
 | **Tensile GEMM** | `Cijk_BBS_MT*_SK*_ISA950` | AMD Tensile BF16 GEMM for non-quantized paths | qkv_a: 16.1μs(TP4), router: 9.2μs(TP4) |
 | **Single-stream execution** | All ops on one HIP stream | HIP Graph captures entire layer on single stream, no multi-stream overlap | **0μs overlap** vs B200's ~66μs |
 | **Shared expert fused into MoE** | No separate shared_expert kernels | Shared expert treated as always-active expert inside grouped GEMM | Eliminates separate shared expert kernels |
+| **FlatmmKernel (CK tile)** | `ck_tile::FlatmmKernel` | New CK tile-based FP8 GEMM for o_proj (replaces Tensile Cijk_ in newer ATOM) | 11.27μs (TP4) |
+| **fused_qk_rmsnorm_group_quant** | `fused_qk_rmsnorm_group_quant_kernel` | Fuses q_a norm + kv_a norm + FP8 group quant into single kernel (replaces 2× add_rmsnorm_quant) | 4.2μs (vs 10.9μs for 2 separate) |
+| **mxfp4_quant_moe_sort** | `mxfp4_quant_moe_sort_kernel` | BF16→MXFP4 quant + expert sort (renamed from _fused_dynamic_mxfp4_quant_moe_sort) | 4.65-4.8μs |
 
 ## 3. Structural Gaps (Architecture-Level)
 
 | Gap | B200 | MI355X | Delta | Reducible? |
 |-----|------|--------|-------|-----------|
-| **PDL overlap** | ~27μs/layer | 0 (no equivalent in ROCm) | 27μs | No — hardware/runtime feature gap |
-| **Dual-stream overlap** | ~39μs/layer (TP4: shared exp ∥ MoE routing) | 0 (single HIP stream) | 39μs | Partially — AMD could implement multi-stream, but HIP Graph currently single-stream |
-| **Total overlap** | ~66μs/layer (19% of kernel sum) | 0 | 66μs | Partially — structural advantage |
+| **PDL overlap** | ~34μs/layer (boundary ~12μs + EP_AR∥qkv_a ~22μs) | 0 (no equivalent in ROCm) | 34μs | Boundary ~12μs: No (hardware). EP_AR∥qkv_a: not real savings — qkv_a duration inflated by EP_AR wait (r=1.000 correlation, actual qkv_a compute ~15μs) |
+| **Dual-stream overlap** | ~31μs/layer (EP_AR∥router ~9μs + shared expert∥MoE routing ~22μs) | 0 (single HIP stream) | 31μs | Yes — AMD could implement multi-stream + split shared expert from grouped GEMM |
+| **Total overlap** | ~65μs/layer (18% of kernel sum) | 0 | 65μs | Partially — dual-stream ~31μs addressable, PDL boundary ~12μs structural |
 | **NVLink5 vs IF4 BW** | 1,800 GB/s | 1,075 GB/s | 1.67x | No — interconnect hardware |
 | **TP allreduce+norm fusion** | userbuffers_rmsnorm (15.15μs) | reduce_scatter + rmsnorm (24.92μs) | 10μs | Yes — fusion kernel development |
 | **MLA reduce fusion** | Fused into fmhaSm100f | Separate kn_mla_reduce_v1 (7-9μs) | 7-9μs | Yes — kernel development |
@@ -75,7 +78,7 @@ originSessionId: ef6a5f82-0e8a-4423-8898-b406f3722dca
 | Critical path (walltime) | 286.9 μs | 399.6 μs | 1.39x |
 | E2E decode (61 layers) | ~17.5 ms | ~23.7 ms | 1.35x |
 
-**Key insight**: At TP=8, MI355X kernel sum is actually **faster** than B200 (267.58 vs 276.91). The E2E gap comes entirely from B200's ~66μs/layer overlap savings + framework-level differences.
+**Key insight**: At TP=8, MI355X kernel sum is actually **faster** than B200 (267.58 vs 276.91). The E2E gap comes from B200's ~65μs/layer overlap (PDL 34μs + dual-stream 31μs). PDL boundary savings (~12μs) are structural hardware gap. EP_AR∥qkv_a overlap (~22μs) is NOT real savings — qkv_a duration is inflated by EP_AR allreduce wait (correlation r=1.000, actual qkv_a compute ~15μs). Dual-stream (~31μs) is software/runtime, addressable by MI355X.
 
 ## 5. Framework Toggle/Env Table
 
