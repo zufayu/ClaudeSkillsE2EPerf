@@ -50,24 +50,34 @@ jobs:
       - name: "NCU offline bs=${{ inputs.bs }} (foreground, ~30 min)"
         timeout-minutes: 90
         run: |
-          docker exec $CONTAINER bash -c "
-            cd $REPO && mkdir -p $RESULT_DIR
-            $NCU --mode launch-and-attach \
-              --target-processes all \
-              -k '${{ inputs.kernel_filter }}' \
-              --launch-skip ${{ inputs.launch_skip }} \
-              --launch-count ${{ inputs.launch_count }} \
-              --set ${{ inputs.ncu_set }} \
-              -f -o $RESULT_DIR/ncu_${{ inputs.kernel_filter }}_bs${{ inputs.bs }} \
-              python3 scripts/ncu_offline_bs64.py \
-                --model $MODEL \
-                --tp 8 \
-                --bs ${{ inputs.bs }} \
-                --input-len 1024 \
-                --output-len 64 \
-                --warmup 2 \
-              2>&1 | tee $RESULT_DIR/ncu_run.log
-          "
+          cat > /tmp/ncu_run.sh << 'SCRIPT'
+          #!/bin/bash
+          set -e
+          cd $1
+          mkdir -p $2
+          $3 --mode launch-and-attach \
+            --target-processes all \
+            -k "$4" \
+            --launch-skip $5 \
+            --launch-count $6 \
+            --set $7 \
+            -f -o $2/ncu_decode_bs$8 \
+            python3 scripts/ncu_offline_bs64.py \
+              --model $9 \
+              --tp 8 \
+              --bs $8 \
+              --input-len 1024 \
+              --output-len 128 \
+              --warmup 3 \
+            2>&1 | tee $2/ncu_run.log
+          SCRIPT
+          chmod +x /tmp/ncu_run.sh
+          docker cp /tmp/ncu_run.sh $CONTAINER:/tmp/ncu_run.sh
+          docker exec $CONTAINER bash /tmp/ncu_run.sh \
+            "$REPO" "$RESULT_DIR" "$NCU" \
+            "${{ inputs.kernel_filter }}" \
+            "${{ inputs.launch_skip }}" "${{ inputs.launch_count }}" \
+            "${{ inputs.ncu_set }}" "${{ inputs.bs }}" "$MODEL"
 
       - name: Check results
         if: always()
