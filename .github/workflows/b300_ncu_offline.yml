@@ -18,6 +18,10 @@ on:
           - basic
           - full
         default: pmsampling
+      launch_skip:
+        description: "Kernel launches to skip (warmup)"
+        type: string
+        default: "300000"
       bs:
         description: "Batch size"
         type: string
@@ -49,10 +53,9 @@ jobs:
           docker exec $CONTAINER bash -c "
             cd $REPO && mkdir -p $RESULT_DIR
             $NCU --mode launch-and-attach \
-              --profile-from-start off \
               --target-processes all \
-              --graph-profiling node \
               -k '${{ inputs.kernel_filter }}' \
+              --launch-skip ${{ inputs.launch_skip }} \
               --launch-count ${{ inputs.launch_count }} \
               --set ${{ inputs.ncu_set }} \
               -f -o $RESULT_DIR/ncu_${{ inputs.kernel_filter }}_bs${{ inputs.bs }} \

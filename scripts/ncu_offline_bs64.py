@@ -18,8 +18,8 @@ def main():
     parser.add_argument("--tp", type=int, default=8)
     parser.add_argument("--bs", type=int, default=64)
     parser.add_argument("--input-len", type=int, default=1024)
-    parser.add_argument("--output-len", type=int, default=64)
-    parser.add_argument("--warmup", type=int, default=2, help="warmup rounds")
+    parser.add_argument("--output-len", type=int, default=128)
+    parser.add_argument("--warmup", type=int, default=3, help="warmup rounds")
     args = parser.parse_args()
 
     import sglang as sgl
@@ -51,10 +51,7 @@ def main():
 
     torch.cuda.synchronize()
     print("Warmup done. Starting profiled inference...")
-
-    # Profile
-    torch.cuda.cudart().cudaProfilerStart()
-    print("cudaProfilerStart() called")
+    print("(NCU --launch-skip handles skipping warmup kernels)")
 
     t0 = time.time()
     engine.generate(
@@ -63,9 +60,6 @@ def main():
     )
     elapsed = time.time() - t0
     print(f"Profiled inference: {elapsed:.1f}s, bs={args.bs}, output_len={args.output_len}")
-
-    torch.cuda.cudart().cudaProfilerStop()
-    print("cudaProfilerStop() called")
 
     engine.shutdown()
     print("Done.")
