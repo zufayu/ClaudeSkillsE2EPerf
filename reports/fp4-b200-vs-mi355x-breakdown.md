@@ -592,24 +592,8 @@ bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
 
 > B200 SGLang (EP8 TP8, chat c=4) vs MI355X ATOM (EP8 TP8, chat c=4)
 > 数据文件: `b200_vs_mi355x_kernel_map_c4_ep8.csv`
-
-#### PASS 功能分组汇总 (c=4 EP8)
-
-| Pass | B200 (μs) | MI355X (μs) | B200/MI355X | 说明 |
-|------|-----------|-------------|-------------|------|
-| EP_AR (pre-MHA) | 26.7 | 19.7 | 1.36x | B200 fused allreduce; MI355X reduce_scatter+load_rmsnorm |
-| MHA | 37.7 | 59.8 | 0.63x | MI355X: 含 add_rmsnorm_quant×2 + qkv + rope + mla + batched_gemm |
-| O_proj | 20.3 | 11.8 | 1.72x | B200: FP4 quant+GEMM×2; MI355X: single BF16 GEMM |
-| EP_AR (pre-MOE) | 8.8 | 21.6 | 0.41x | MI355X: post_attn (15.9) + triton_clone (5.6) |
-| MOE | 89.6 | 89.0 | 1.01x | MoE 几乎持平 |
-| **TOTAL (kernel_sum)** | **183.1** | **201.8** | **0.91x** | |
-| **Walltime** | **122.1** | **~196** | **0.62x** | B200 overlap 61μs (33%); MI355X 无 multi-stream overlap |
-
-**关键发现 (c=4 vs c=64 对比):**
-- c=4 下 MoE GEMM 持平 (1.01x)，而 c=64 下 B200 MoE 优势更大 → bs-dependent tile efficiency
-- B200 multi-stream overlap 在 c=4 下依然提供 33% kernel_sum 缩减
-- MI355X 在 EP_AR 两个 pass 都显著慢于 B200 (reduce_scatter vs fused allreduce)
-- MHA pass MI355X 反而更慢 (0.63x)，因为 add_rmsnorm_quant 和 mla_reduce 额外开销
+>
+> **注：c=4 数据待刷新，PASS 汇总暂略。**
 
 ## NCU 硬件级 Profiling 进展
 
