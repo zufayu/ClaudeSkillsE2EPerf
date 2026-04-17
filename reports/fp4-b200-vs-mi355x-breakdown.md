@@ -215,6 +215,19 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 | EP_AR before MOE | 11.0 | 31.2 | **17.5** | -6.5 | ~~31.2~~ RS(13.0)+rmsnorm(4.5) — **triton_poi 消失，RS 大幅缩短** |
 | **sum** | **353.4** | **399.6** | **363.8** | **-10.4** | ~~-46.2~~ **总差距从 46→10 μs** |
 
+#### B200 Multi-stream Overlap 分解
+
+> B200 kernel_sum (353.4μs) 与 walltime (288.5μs) 的差 64.9μs 来自两种并行机制：
+
+| 类型 | μs/layer | 占比 | 主要位置 |
+|------|----------|------|----------|
+| Single-stream (PDL) | 34.4 | 53% | EP_AR#1 ∥ qkv_a 跨层 pipeline (~24μs) + 各 boundary PDL (~10μs) |
+| Dual-stream | 30.5 | 47% | EP_AR#2 ∥ router (~9μs) + shared expert ∥ MoE routing (~21μs) |
+| **TOTAL** | **64.9** | **100%** | = kernel_sum(353.4) - walltime(288.5) |
+
+> **MI355X 无此优化：** 单 HIP stream 串行执行，kernel_sum ≈ walltime。B200 关键路径 288.5μs vs MI355X 363.8μs 的 **75μs 差距中 ~65μs (87%) 来自 overlap 优势**，仅 ~10μs (13%) 来自算子效率差距。
+>
+> **v32 更新：** MI355X rocm722 kernel sum 从 399.6→363.8μs (缩小 36μs)，但 walltime 差距仍有 75μs，因为 overlap 是架构级优势无法通过软件栈升级弥补。
 
 #### TP=4 单层分段执行分析
 
