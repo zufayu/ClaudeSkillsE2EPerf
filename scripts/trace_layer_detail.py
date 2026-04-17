@@ -497,36 +497,50 @@ def main():
             pct = total / avg_ksum * 100
             print(f"    {mod:<15} {total:>8.1f}μs  ({pct:>5.1f}%)")
 
-        # Overlap breakdown by type
-        # Aggregate overlap amounts per type across all layers
-        ov_by_type = {}  # type → list of per-layer totals
+        # Overlap breakdown: PDL (same-stream) vs Dual-stream (cross-stream)
+        # Computed from walltime, NOT from pairwise overlap sums (avoids double-counting).
+        #   total_overlap = kernel_sum - walltime                     (exact)
+        #   pdl           = Σ per-stream (stream_kernel_sum - stream_walltime)  (exact)
+        #   dual_stream   = total_overlap - pdl                       (exact, by subtraction)
+        all_pdl = []
+        all_dual = []
         for lk in all_layer_kernels:
-            layer_ov = {}  # type → total_us for this layer
-            for kr in lk:
-                for ov in kr.get("overlaps", []):
-                    t = ov["type"]
-                    # Avoid double-counting: only count from the earlier kernel
-                    j_idx = ov["with"] - 1
-                    if kr["idx"] < j_idx:
-                        layer_ov[t] = layer_ov.get(t, 0) + ov["us"]
-            for t in ("pdl", "dual_stream"):
-                if t not in ov_by_type:
-                    ov_by_type[t] = []
-                ov_by_type[t].append(layer_ov.get(t, 0))
+            ksum = sum(k["dur"] for k in lk)
+            wall_start = min(k["ts"] for k in lk)
+            wall_end = max(k["end"] for k in lk)
+            total_ov = ksum - (wall_end - wall_start)
 
-        print(f"\n  Overlap breakdown by type (avg per layer):")
-        total_typed = 0
-        for t in ("pdl", "dual_stream"):
-            vals = ov_by_type.get(t, [0])
-            avg_v = sum(vals) / len(vals) if vals else 0
-            if avg_v > 0.1:
-                total_typed += avg_v
-                label = "Single-stream (PDL)" if t == "pdl" else "Dual-stream"
-                print(f"    {label:<25} {avg_v:>6.1f}μs")
-        print(f"    {'TOTAL (typed)':<25} {total_typed:>6.1f}μs")
-        print(f"    {'TOTAL (ksum-wall)':<25} {avg_overlap:>6.1f}μs")
-        if abs(total_typed - avg_overlap) > 2:
-            print(f"    NOTE: typed > ksum-wall by {total_typed - avg_overlap:.1f}μs (multi-kernel overlap double-counting)")
+            # Per-stream PDL: merge intervals on each stream, compute overlap
+            from collections import defaultdict
+            stream_kernels = defaultdict(list)
+            for k in lk:
+                stream_kernels[k["stream"]].append((k["ts"], k["end"]))
+
+            pdl_total = 0
+            for stream, intervals in stream_kernels.items():
+                stream_ksum = sum(end - start for start, end in intervals)
+                # Merge overlapping intervals to get stream walltime
+                intervals.sort()
+                merged = [intervals[0]]
+                for start, end in intervals[1:]:
+                    if start <= merged[-1][1]:
+                        merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+                    else:
+                        merged.append((start, end))
+                stream_wall = sum(end - start for start, end in merged)
+                pdl_total += max(0, stream_ksum - stream_wall)
+
+            dual_total = max(0, total_ov - pdl_total)
+            all_pdl.append(pdl_total)
+            all_dual.append(dual_total)
+
+        avg_pdl = sum(all_pdl) / len(all_pdl)
+        avg_dual = sum(all_dual) / len(all_dual)
+
+        print(f"\n  Overlap breakdown (exact, no double-counting):")
+        print(f"    {'Single-stream (PDL)':<25} {avg_pdl:>6.1f}μs")
+        print(f"    {'Dual-stream':<25} {avg_dual:>6.1f}μs")
+        print(f"    {'TOTAL':<25} {avg_pdl + avg_dual:>6.1f}μs  (ksum-wall: {avg_overlap:.1f}μs)")
 
         # Write CSV output — kernel map format with overlap and MI355X placeholder columns
         if args.output_dir:
