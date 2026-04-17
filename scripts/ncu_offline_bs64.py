@@ -28,9 +28,10 @@ def main():
     engine = sgl.Engine(
         model_path=args.model,
         tp_size=args.tp,
-        mem_fraction_static=0.85,
+        mem_fraction_static=0.80,
         chunked_prefill_size=16384,
         kv_cache_dtype="fp8_e4m3",
+        cuda_graph_max_bs=args.bs,  # only need graphs up to target bs
     )
 
     # Build prompts
