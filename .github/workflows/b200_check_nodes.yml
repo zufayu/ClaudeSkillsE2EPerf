@@ -1,0 +1,22 @@
+name: "B200 Check All Nodes"
+on:
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 5
+    steps:
+      - name: Check all nodes
+        run: |
+          for i in 1 2 3 4 5 6 7 8; do
+            NODE="hungry-hippo-fin-03-$i"
+            echo "=== $NODE ==="
+            ssh -o ConnectTimeout=5 $NODE "
+              echo \"GPUs: \$(nvidia-smi -L 2>/dev/null | wc -l)\"
+              echo \"GPU VRAM usage:\"
+              nvidia-smi --query-gpu=index,memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null | head -8
+              echo \"Containers:\"
+              docker ps --format 'table {{.Names}}\t{{.Status}}' 2>/dev/null | head -5
+              echo \"\"
+            " 2>/dev/null || echo "  unreachable"
+          done
