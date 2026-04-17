@@ -247,60 +247,69 @@ SA InferenceX 报告的 B200 FP4 性能大幅领先 MI355X FP4，需要 breakdow
 | 7 | MoE GEMM+finalize | ~167 | ~183 | ~194 | 27 | MoE GEMM 反而变慢 (+6%) |
 | **合计** | | **~283** | **~400** | **~364** | **~81** | ~~117~~ **缩小 36μs (31%)** |
 
-##### 段 1：AR + RMSNorm + qkv_a 投影（GAP 13μs）
+##### 段 1：AR + RMSNorm + qkv_a 投影（v32 GAP 20.9μs）
 
-B200 将 AllReduce+residual+RMSNorm 融合为单个 lamport kernel，利用 PDL 在同一 Stream 上提前发射 qkv_a_proj_GEMM，两者重叠执行。含后续 splitKreduce 共 ~32μs。MI355X 两个算子串行执行，合计 ~45μs。
+B200 将 AllReduce+residual+RMSNorm 融合为单个 lamport kernel，利用 PDL 在同一 Stream 上提前发射 qkv_a_proj_GEMM，两者重叠执行。含后续 splitKreduce 共 ~32μs。MI355X v32 新增 per_token_quant (FP8 输入量化)，qkv_a 从 BF16 改为 FP8 GEMM (gemm_xdl)，合计 ~53μs。
 
-| B200 算子 | μs | MI355X 算子 | μs |
-|-----------|------|-------------|------|
-| AR+residual+RMSNorm(fused) ‖ qkv_a(PDL) | 25.9 | reduce_scatter+load_rmsnorm | 29 |
-| qkv_a_proj_GEMM | 31.9(overlap) | bf16gemm_splitk (qkv_a) | 16.1 |
-| splitKreduce | 3.7 | — | — |
-| **关键路径** | **~32** | **串行合计** | **~45** |
+| B200 算子 | μs | MI355X 算子 (v32 rocm722) | μs |
+|-----------|------|---------------------------|------|
+| AR+residual+RMSNorm(fused) ‖ qkv_a(PDL) | 25.9 | reduce_scatter | 33.1 |
+| qkv_a_proj_GEMM | 31.9(overlap) | load_rmsnorm | 4.8 |
+| splitKreduce | 3.7 | per_token_quant (NEW) | 4.1 |
+| — | — | gemm_xdl (qkv_a, FP8) | 10.9 |
+| **关键路径** | **~32** | **串行合计** | **~52.9** |
 
-##### 段 2：q/k Norm + q_b + k_up 投影（GAP 19.6μs）
+> v32 变化：qkv_a 从 bf16gemm (16.1μs) → gemm_xdl FP8 (10.9μs) 快了 32%，但新增 per_token_quant (4.1μs) 量化步骤。RS 从 29→33.1μs 变慢（可能因 TP=4 通信量不变但 RCCL 版本差异）。
 
-B200 串行执行 q/k_norm + q_b_proj + uk_gemm，另一 Stream 并行执行第二个 RMSNorm，整体 ~14μs。MI355X 五个算子串行 ~33.6μs，其中 q/k_norm_RMSNormx2 (10.8μs) 是最大差距来源。
+##### 段 2：q/k Norm + q_b + k_up 投影（v32 GAP 1.9μs ~~19.6~~）
 
-| B200 算子 | μs | Stream | MI355X 算子 | μs |
-|-----------|------|--------|-------------|------|
-| q/k_norm_RMSNorm | 3.2 | 23 | add_rmsnorm_quant ×2 | 5.5 |
-| q/k_norm_RMSNorm(并行) | 2.4 | 385 | q/k_norm_RMSNormx2 | 10.8 |
-| q_b_proj_GEMM | 6.3 | 23 | gemm_xdl (q_b) | 11.8 |
-| uk_gemm(K_expansion) | 4.4 | 23 | batched_gemm_a8w8 | 5.5 |
-| **关键路径** | **~14** | | **串行合计** | **~33.6** |
+B200 串行执行 q/k_norm + q_b_proj + uk_gemm，另一 Stream 并行执行第二个 RMSNorm，整体 ~14μs。MI355X v32 **大幅缩短**：fused_qk_rmsnorm_group_quant 将 q/k norm + FP8 量化融合为单个 4.2μs kernel（旧版需要 2 个 add_rmsnorm_quant 共 10.9μs），q_b GEMM 从 Cijk(11.8)→gemm_xdl(7.1)，合计 ~15.9μs。
+
+| B200 算子 | μs | Stream | MI355X 算子 (v32) | μs |
+|-----------|------|--------|-------------------|------|
+| q/k_norm_RMSNorm | 3.2 | 23 | fused_qk_rmsnorm_group_quant (NEW) | 4.2 |
+| q/k_norm_RMSNorm(并行) | 2.4 | 385 | — | — |
+| q_b_proj_GEMM | 6.3 | 23 | gemm_xdl (q_b) | 7.1 |
+| uk_gemm(K_expansion) | 4.4 | 23 | batched_gemm_a8w8 (k_up) | 4.6 |
+| **关键路径** | **~14** | | **串行合计** | **~15.9** |
+
+> v32 变化：**最大改善段**。fused norm+quant 省了 6.7μs，q_b GEMM 快了 4.7μs。GAP 从 19.6→1.9μs，MI355X 几乎追平 B200。
 
 ##### 段 3：RoPE + KV cache（GAP 0.9μs）
 
-B200 通过 RoPE+KV_cache_write 与 set_mla_kv 串行实现 4.4μs；MI355X 单个融合算子 5.3μs。
+B200 通过 RoPE+KV_cache_write 与 set_mla_kv 串行实现 4.4μs；MI355X v32 从 5.3→4.5μs。
 
-| B200 算子 | μs | MI355X 算子 | μs |
-|-----------|------|-------------|------|
-| RoPE+KV_cache_write | 2.7 | fuse_qk_rope_concat_cache | 5.3 |
+| B200 算子 | μs | MI355X 算子 (v32) | μs |
+|-----------|------|-------------------|------|
+| RoPE+KV_cache_write | 2.7 | fuse_qk_rope_concat_cache | 4.5 |
 | set_mla_kv | 1.7 | — | — |
-| **合计** | **4.4** | | **5.3** |
+| **合计** | **4.4** | | **4.5** |
 
-##### 段 4：MLA Decode + uv_gemm（GAP 15.3μs）
+##### 段 4：MLA Decode + uv_gemm（v32 GAP 13.9μs ~~15.3~~）
 
-B200 串行执行 FMHA + uv_gemm ~24μs。MI355X 需额外 mla_reduce 步骤，三算子串行 ~39.3μs。
+B200 串行执行 FMHA + uv_gemm ~24μs。MI355X 需额外 mla_reduce 步骤，v32 三算子串行 ~37.9μs（旧 39.3μs）。
 
-| B200 算子 | μs | MI355X 算子 | μs |
-|-----------|------|-------------|------|
-| fmhaSm100f (FMHA) | 20.3 | mla_a8w8_qh16 | 25.5 |
-| nvjet_h_bz_TNT (uv_gemm) | 4.0 | mla_reduce_v1 | 7.2 |
-| — | — | batched_gemm_a8w8 (uv) | 6.6 |
-| **合计** | **~24** | **合计** | **~39.3** |
+| B200 算子 | μs | MI355X 算子 (v32) | μs |
+|-----------|------|-------------------|------|
+| fmhaSm100f (FMHA) | 20.3 | mla_a8w8_qh16 | 26.1 |
+| nvjet_h_bz_TNT (uv_gemm) | 4.0 | mla_reduce_v1 | 5.9 |
+| — | — | batched_gemm_a8w8 (v_up) | 5.9 |
+| **合计** | **~24** | **合计** | **~37.9** |
 
-##### 段 5：输出投影（GAP ~10μs）
+> v32 变化：mla_reduce 7.2→5.9μs，v_up 6.6→5.9μs。
 
-B200 执行 o_proj_quant + o_proj_GEMM#1 合计 11.5μs，GEMM#2 (10.2μs) 执行期间同步启动另一 Stream 的融合 Reduce-RMSNorm，成功隐藏约 10μs 延迟。MI355X 单个 GEMM 完成 21.4μs。表面耗时相近，但 B200 利用 GEMM#2 与下段 AR 的重叠，有效缩短了关键路径。
+##### 段 5：输出投影（v32 GAP 4.0μs ~~10~~）
 
-| B200 算子 | μs | MI355X 算子 | μs |
-|-----------|------|-------------|------|
-| o_proj_quant(BF16→FP4) | 2.1 | — | — |
-| o_proj_GEMM #1 | 9.4 | gemm_xdl (o_proj) | 21.4 |
+B200 执行 o_proj_quant + o_proj_GEMM#1 合计 11.5μs，GEMM#2 (10.2μs) 执行期间同步启动另一 Stream 的融合 Reduce-RMSNorm，成功隐藏约 10μs 延迟。MI355X v32 使用 FlatmmKernel (cktile) 替代 Cijk (Tensile)，从 21.4→15.5μs。
+
+| B200 算子 | μs | MI355X 算子 (v32) | μs |
+|-----------|------|-------------------|------|
+| o_proj_quant(BF16→FP4) | 2.1 | per_token_quant (NEW) | 4.2 |
+| o_proj_GEMM #1 | 9.4 | FlatmmKernel (o_proj, cktile) | 11.3 |
 | o_proj_GEMM #2（与段 6 AR 重叠） | 10.2 | — | — |
-| **kernel sum** | **21.7** | **合计** | **21.4** |
+| **kernel sum** | **21.7** | **合计** | **15.5** |
+
+> v32 变化：**o_proj GEMM 从 Cijk(21.4μs)→FlatmmKernel(11.3μs)** 快了 47%！新增 per_token_quant(4.2μs) 但总体仍省 5.9μs。
 
 ##### 段 6：MoE Routing + Shared Expert（GAP 37μs）
 
