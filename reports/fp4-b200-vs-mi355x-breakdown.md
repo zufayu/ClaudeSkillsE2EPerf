@@ -18,9 +18,9 @@
     - [PASS 功能分组汇总](#pass-功能分组汇总)
     - [TP=4 单层分段执行分析](#tp4-单层分段执行分析)
     - [分析和结论（v33）](#分析和结论v33)
+  - [TP=8 C=4 算子级对比](#tp8-c4-算子级对比)
 - [MI355X TPOT 来源分析](#mi355x-tpot-来源分析)
 - [精度说明](#精度说明)
-- [TP=8 C=4 算子级对比](#tp8-c4-算子级对比)
 - [NCU 硬件级 Profiling 进展](#ncu-硬件级-profiling-进展)
 - [迭代日志](#迭代日志)
 
@@ -588,12 +588,12 @@ bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
 - [x] 4GPU 跨框架对比表（v23：B200 SGLang/TRT-LLM + MI355X ATOM，ratio=0.8 对齐，含 SA InferenceX 基线）
 - [x] B200 4GPU per-layer torch trace 分析（v24：SGLang 4GPU TP=4 EP=4，torch profiler，FMHA 层切分+position module 分配，25 算子 × 8 module）
 
-## TP=8 C=4 算子级对比
+### TP=8 C=4 算子级对比
 
 > B200 SGLang (EP8 TP8, chat c=4) vs MI355X ATOM (EP8 TP8, chat c=4)
 > 数据文件: `b200_vs_mi355x_kernel_map_c4_ep8.csv`
 
-### PASS 功能分组汇总 (c=4 EP8)
+#### PASS 功能分组汇总 (c=4 EP8)
 
 | Pass | B200 (μs) | MI355X (μs) | B200/MI355X | 说明 |
 |------|-----------|-------------|-------------|------|
