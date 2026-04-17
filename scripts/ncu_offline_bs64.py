@@ -28,10 +28,11 @@ def main():
     engine = sgl.Engine(
         model_path=args.model,
         tp_size=args.tp,
-        mem_fraction_static=0.80,
+        mem_fraction_static=0.20,  # low to avoid OOM under NCU (NCU reserves GPU0 memory)
         chunked_prefill_size=16384,
         kv_cache_dtype="fp8_e4m3",
-        cuda_graph_max_bs=args.bs,  # only need graphs up to target bs
+        cuda_graph_max_bs=args.bs,
+        disable_cuda_graph=True,  # avoid extra memory from graph capture
     )
 
     # Build prompts

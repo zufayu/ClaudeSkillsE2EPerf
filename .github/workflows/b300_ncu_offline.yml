@@ -51,7 +51,6 @@ jobs:
             $NCU --mode launch-and-attach \
               --profile-from-start off \
               --target-processes all \
-              --devices 0 \
               --graph-profiling node \
               -k '${{ inputs.kernel_filter }}' \
               --launch-count ${{ inputs.launch_count }} \
