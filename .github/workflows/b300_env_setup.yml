@@ -1,0 +1,60 @@
+name: "B300 Env Setup"
+on:
+  workflow_dispatch:
+jobs:
+  setup:
+    runs-on: [self-hosted, b300]
+    timeout-minutes: 30
+    steps:
+      - name: Check GPU
+        run: |
+          echo "=== GPU ==="
+          nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv,noheader
+          echo "GPU count: $(nvidia-smi -L | wc -l)"
+          echo ""
+          echo "=== Docker ==="
+          docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" || echo "No docker"
+          echo ""
+          echo "=== NCU ==="
+          which ncu 2>/dev/null && ncu --version 2>/dev/null | head -1 || echo "NCU not on host"
+          echo ""
+          echo "=== Repo ==="
+          ls -la /home/zufa/ClaudeSkillsE2EPerf/ | head -5
+          echo ""
+          echo "=== Model ==="
+          ls -ld /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2 2>/dev/null && echo "Model: OK" || echo "Model: NOT FOUND — check path"
+
+      - name: Pull SGLang image
+        run: docker pull lmsysorg/sglang:v0.5.9-cu130
+
+      - name: Create zufa_sglang container
+        run: |
+          if docker ps -a --format '{{.Names}}' | grep -q '^zufa_sglang$'; then
+            echo "Container exists, starting..."
+            docker start zufa_sglang
+          else
+            echo "Creating zufa_sglang..."
+            docker run -d --name zufa_sglang \
+              --gpus all --ipc=host --net=host \
+              --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
+              -v /home/zufa:/home/zufa \
+              -v /SFS-aGqda6ct:/SFS-aGqda6ct \
+              -w /home/zufa \
+              lmsysorg/sglang:v0.5.9-cu130 \
+              sleep infinity
+          fi
+
+      - name: Verify container
+        run: |
+          echo "=== Container ==="
+          docker exec zufa_sglang bash -c '
+            echo "Python: $(python3 --version)"
+            python3 -c "import sglang; print(f\"SGLang: {sglang.__version__}\")"
+            python3 -c "import torch; print(f\"PyTorch: {torch.__version__}, GPUs: {torch.cuda.device_count()}\")"
+            echo "NCU:"
+            which ncu 2>/dev/null && ncu --version 2>/dev/null | head -1 || echo "  NCU not in container"
+            echo "gdb:"
+            which gdb 2>/dev/null && echo "  gdb available" || echo "  gdb NOT available"
+            echo "Model:"
+            ls -ld /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2 2>/dev/null && echo "  OK" || echo "  NOT FOUND"
+          '
