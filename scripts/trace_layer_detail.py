@@ -94,8 +94,15 @@ MODULE_MAP = {
 }
 
 
-def classify_kernel(name, before_fmha, after_moe_start):
-    """Classify kernel name to operator, handling position-dependent cases."""
+def classify_kernel(name, before_fmha, after_moe_start, after_first_ep_ar):
+    """Classify kernel name to operator, handling position-dependent cases.
+
+    Position flags:
+        before_fmha: kernel is before FMHA in the layer
+        after_moe_start: kernel is after TopK/expert_sort (MoE routing started)
+        after_first_ep_ar: kernel is after the first EP_AR that follows FMHA
+            (= after o_proj, in the shared expert / MoE region)
+    """
     for pattern, label in OPERATOR_MAP:
         if not re.search(pattern, name, re.IGNORECASE):
             continue
@@ -111,9 +118,13 @@ def classify_kernel(name, before_fmha, after_moe_start):
                 return "o_proj_GEMM(pre-attn)"  # shouldn't happen
             if after_moe_start:
                 return "shared_GEMM(FP4)"
+            if after_first_ep_ar:
+                return "shared_GEMM(FP4)"
             return "o_proj_GEMM"
         if "cvt_fp16_to_fp4" in pattern:
             if after_moe_start:
+                return "shared_quant(BF16→FP4)"
+            if after_first_ep_ar:
                 return "shared_quant(BF16→FP4)"
             return "o_proj_quant(BF16→FP4)"
     return f"other:{name[:60]}"
@@ -149,13 +160,29 @@ def main():
     print(f"GPU PID: {gpu_pid} (from {len(gpu_pids)} PIDs)")
 
     # Get all GPU kernels for rank 0
+    # fix_torch_trace_pro.py moves PDL-overlapping kernels to _hack/_overlap streams
+    # for Perfetto visualization. These are NOT duplicates — each kernel exists on
+    # exactly one stream (either original or _hack). We include all of them but
+    # normalize the stream ID back to the original stream for classification.
     gpu_kernels = []
+    hack_count = 0
     for e in events:
         if (e.get("ph") == "X" and e.get("pid") == gpu_pid and
                 e.get("cat") in ("kernel", "gpu_memcpy", "gpu_memset")):
+            tid = str(e.get("tid", ""))
+            # Normalize _hack/_overlap stream back to original stream ID
+            if "_hack" in tid or "_overlap" in tid:
+                hack_count += 1
+                # Extract original stream: "23_hack" → 23, "stream 23 23_overlap" → 23
+                original = tid.split("_")[0].split()[-1]
+                try:
+                    e["tid"] = int(original)
+                except ValueError:
+                    e["tid"] = original
+                e["_was_hack"] = True  # mark for overlap detection
             gpu_kernels.append(e)
     gpu_kernels.sort(key=lambda x: x["ts"])
-    print(f"GPU kernels: {len(gpu_kernels)}")
+    print(f"GPU kernels: {len(gpu_kernels)} ({hack_count} from _hack/_overlap streams, normalized)")
 
     # Find FMHA events
     fmha_events = [k for k in gpu_kernels if "fmhaSm100" in k.get("name", "")]
@@ -264,14 +291,23 @@ def main():
                 moe_start_ts = k["ts"] - base_ts
                 break
 
+        # Detect first EP_AR after FMHA (boundary between o_proj and shared expert)
+        # On stream 23: FMHA → uv → o_proj_quant → o_proj_GEMM → [EP_AR] → shared expert
+        first_ep_ar_after_fmha_ts = None
+        for k in layer_kernels:
+            if k["ts"] > fmha_start["ts"] and re.search(r"allreduce_fusion_kernel.*lamport", k.get("name", ""), re.IGNORECASE):
+                first_ep_ar_after_fmha_ts = k["ts"] - base_ts
+                break
+
         # Build kernel list with classification
         kernel_rows = []
         for ki, k in enumerate(layer_kernels):
             rel_ts = k["ts"] - base_ts
             before_fmha = (k["ts"] < fmha_start["ts"])
             after_moe = (moe_start_ts is not None and rel_ts >= moe_start_ts)
+            after_first_ep_ar = (first_ep_ar_after_fmha_ts is not None and rel_ts > first_ep_ar_after_fmha_ts)
             raw_name = k.get("name", "")
-            op = classify_kernel(raw_name, before_fmha, after_moe)
+            op = classify_kernel(raw_name, before_fmha, after_moe, after_first_ep_ar)
             module = MODULE_MAP.get(op, "Other")
             kernel_rows.append({
                 "idx": ki,
@@ -285,7 +321,12 @@ def main():
                 "end": rel_ts + k.get("dur", 0),
             })
 
-        # Detect overlaps
+        # Detect overlaps with type classification
+        # Types:
+        #   pdl:            same-stream overlap (<5μs) — PDL tail/preamble overlap
+        #   same_large:     same-stream overlap (>=5μs) — unexpected, likely data issue
+        #   cross_parallel: cross-stream overlap (>=3μs) — true dual-stream parallelism
+        #   cross_tail:     cross-stream overlap (<3μs) — just edge/boundary overlap
         for i in range(len(kernel_rows)):
             overlaps = []
             for j in range(len(kernel_rows)):
@@ -297,10 +338,15 @@ def main():
                 if ov_end > ov_start + 0.1:  # >0.1μs overlap
                     ov_us = ov_end - ov_start
                     same_stream = kernel_rows[i]["stream"] == kernel_rows[j]["stream"]
+                    if same_stream:
+                        ov_type = "pdl" if ov_us < 5.0 else "same_large"
+                    else:
+                        ov_type = "cross_parallel" if ov_us >= 3.0 else "cross_tail"
                     overlaps.append({
                         "with": j + 1,  # 1-based
                         "us": ov_us,
                         "same_stream": same_stream,
+                        "type": ov_type,
                     })
             kernel_rows[i]["overlaps"] = overlaps
 
@@ -318,8 +364,7 @@ def main():
                 for ov in kr["overlaps"]:
                     j_idx = ov["with"] - 1  # 0-based
                     j_kr = kernel_rows[j_idx]
-                    tag = "same" if ov["same_stream"] else "cross"
-                    ov_desc_parts.append(f"{j_kr['op']}({ov['us']:.1f}μs,{tag})")
+                    ov_desc_parts.append(f"{j_kr['op']}({ov['us']:.1f}μs,{ov['type']})")
             kr["ov_desc"] = " | ".join(ov_desc_parts) if ov_desc_parts else ""
 
         # Print layer table
@@ -361,7 +406,11 @@ def main():
                     kr = lk_by_key[op_key]
                     op_data[op_key]["durs"].append(kr["dur"])
                     op_data[op_key]["ov_descs"].append(kr.get("ov_desc", ""))
-                    op_data[op_key]["ov_totals"].append(sum(ov["us"] for ov in kr.get("overlaps", [])))
+                    # Only count cross_parallel overlap for B200_Overlap_us
+                    # PDL and cross_tail are too small / structural to report as "overlap"
+                    op_data[op_key]["ov_totals"].append(
+                        sum(ov["us"] for ov in kr.get("overlaps", []) if ov.get("type") == "cross_parallel")
+                    )
 
         # Determine most common overlap for each op_key
         def most_common_ov(descs):
@@ -374,7 +423,15 @@ def main():
                     paren = part.find("(")
                     if paren > 0:
                         partner = part[:paren]
-                        tag = "cross" if "cross" in part else "same"
+                        # Extract type tag: pdl, cross_parallel, cross_tail, same_large
+                        if "cross_parallel" in part:
+                            tag = "cross"
+                        elif "cross_tail" in part:
+                            tag = "cross_tail"
+                        elif "pdl" in part:
+                            tag = "pdl"
+                        else:
+                            tag = "same"
                         partner_counts[(partner, tag)] += 1
             result = []
             for (partner, tag), cnt in partner_counts.most_common():
@@ -383,14 +440,16 @@ def main():
             return " | ".join(result) if result else ""
 
         def most_common_ov_with_us(descs):
-            """Get overlap partners with avg μs, appearing in >50% of layers."""
+            """Get overlap partners with avg μs, appearing in >50% of layers.
+            Only includes cross_parallel overlaps in output."""
             from collections import defaultdict
             partner_us = defaultdict(list)
             for d in descs:
                 if not d:
                     continue
                 for part in d.split(" | "):
-                    m = re.match(r'(.+?)\(([\d.]+)μs,(same|cross)\)', part.strip())
+                    # New format: op_name(1.2μs,cross_parallel)
+                    m = re.match(r'(.+?)\(([\d.]+)μs,(\w+)\)', part.strip())
                     if m:
                         key = (m.group(1), m.group(3))
                         partner_us[key].append(float(m.group(2)))
