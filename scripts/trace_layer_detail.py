@@ -321,19 +321,12 @@ def main():
                 "end": rel_ts + k.get("dur", 0),
             })
 
-        # Detect overlaps with type classification
-        # Types:
-        #   pdl:            same-stream overlap (<5μs) — PDL tail/preamble overlap
-        #   cross_layer:    same-stream overlap (>=5μs) between EP_AR and qkv_a —
-        #                   this is the moefinalize ∥ qkv_a pipeline overlap across layers
-        #   same_large:     same-stream overlap (>=5μs), other cases — unexpected
-        #   cross_parallel: cross-stream overlap (>=3μs) — true dual-stream parallelism
-        #   cross_tail:     cross-stream overlap (<3μs) — just edge/boundary overlap
-        def is_cross_layer_overlap(kr_i, kr_j):
-            """Check if overlap is EP_AR ∥ qkv_a (cross-layer pipeline)."""
-            ops = {kr_i["op"], kr_j["op"]}
-            return ("EP_AR+residual+RMSNorm(fused)" in ops and "qkv_a_proj_GEMM" in ops)
-
+        # Detect overlaps — two categories:
+        #   pdl:          same-stream overlap — PDL tail/preamble overlap on one CUDA stream
+        #                 includes small boundaries (~1-2μs) AND cross-layer pipeline
+        #                 overlap (EP_AR ∥ qkv_a, ~24μs via moefinalize PDL)
+        #   dual_stream:  cross-stream overlap — two kernels on different streams running
+        #                 concurrently (e.g. shared expert on s23 ∥ MoE routing on s385)
         for i in range(len(kernel_rows)):
             overlaps = []
             for j in range(len(kernel_rows)):
@@ -344,15 +337,7 @@ def main():
                 if ov_end > ov_start + 0.1:  # >0.1μs overlap
                     ov_us = ov_end - ov_start
                     same_stream = kernel_rows[i]["stream"] == kernel_rows[j]["stream"]
-                    if same_stream:
-                        if ov_us >= 5.0 and is_cross_layer_overlap(kernel_rows[i], kernel_rows[j]):
-                            ov_type = "cross_layer"
-                        elif ov_us < 5.0:
-                            ov_type = "pdl"
-                        else:
-                            ov_type = "same_large"
-                    else:
-                        ov_type = "cross_parallel" if ov_us >= 3.0 else "cross_tail"
+                    ov_type = "pdl" if same_stream else "dual_stream"
                     overlaps.append({
                         "with": j + 1,  # 1-based
                         "us": ov_us,
@@ -417,10 +402,10 @@ def main():
                     kr = lk_by_key[op_key]
                     op_data[op_key]["durs"].append(kr["dur"])
                     op_data[op_key]["ov_descs"].append(kr.get("ov_desc", ""))
-                    # Only count cross_parallel overlap for B200_Overlap_us
-                    # PDL and cross_tail are too small / structural to report as "overlap"
+                    # B200_Overlap_us: count dual_stream overlap only
+                    # PDL overlap is same-stream and handled separately
                     op_data[op_key]["ov_totals"].append(
-                        sum(ov["us"] for ov in kr.get("overlaps", []) if ov.get("type") == "cross_parallel")
+                        sum(ov["us"] for ov in kr.get("overlaps", []) if ov.get("type") == "dual_stream")
                     )
 
         # Determine most common overlap for each op_key
@@ -434,15 +419,12 @@ def main():
                     paren = part.find("(")
                     if paren > 0:
                         partner = part[:paren]
-                        # Extract type tag: pdl, cross_parallel, cross_tail, same_large
-                        if "cross_parallel" in part:
-                            tag = "cross"
-                        elif "cross_tail" in part:
-                            tag = "cross_tail"
+                        if "dual_stream" in part:
+                            tag = "dual_stream"
                         elif "pdl" in part:
                             tag = "pdl"
                         else:
-                            tag = "same"
+                            tag = part.split(",")[-1].rstrip(")") if "," in part else "unknown"
                         partner_counts[(partner, tag)] += 1
             result = []
             for (partner, tag), cnt in partner_counts.most_common():
@@ -527,23 +509,24 @@ def main():
                     j_idx = ov["with"] - 1
                     if kr["idx"] < j_idx:
                         layer_ov[t] = layer_ov.get(t, 0) + ov["us"]
-            for t in ("cross_layer", "cross_parallel", "cross_tail", "pdl", "same_large"):
+            for t in ("pdl", "dual_stream"):
                 if t not in ov_by_type:
                     ov_by_type[t] = []
                 ov_by_type[t].append(layer_ov.get(t, 0))
 
         print(f"\n  Overlap breakdown by type (avg per layer):")
         total_typed = 0
-        for t in ("cross_layer", "cross_parallel", "cross_tail", "pdl", "same_large"):
+        for t in ("pdl", "dual_stream"):
             vals = ov_by_type.get(t, [0])
             avg_v = sum(vals) / len(vals) if vals else 0
             if avg_v > 0.1:
                 total_typed += avg_v
-                print(f"    {t:<18} {avg_v:>6.1f}μs")
-        print(f"    {'TOTAL (typed)':<18} {total_typed:>6.1f}μs")
-        print(f"    {'TOTAL (ksum-wall)':<18} {avg_overlap:>6.1f}μs")
+                label = "Single-stream (PDL)" if t == "pdl" else "Dual-stream"
+                print(f"    {label:<25} {avg_v:>6.1f}μs")
+        print(f"    {'TOTAL (typed)':<25} {total_typed:>6.1f}μs")
+        print(f"    {'TOTAL (ksum-wall)':<25} {avg_overlap:>6.1f}μs")
         if abs(total_typed - avg_overlap) > 2:
-            print(f"    NOTE: typed total differs from ksum-wall by {total_typed - avg_overlap:.1f}μs")
+            print(f"    NOTE: typed > ksum-wall by {total_typed - avg_overlap:.1f}μs (multi-kernel overlap double-counting)")
 
         # Write CSV output — kernel map format with overlap and MI355X placeholder columns
         if args.output_dir:
