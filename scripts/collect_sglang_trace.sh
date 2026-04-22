@@ -52,6 +52,10 @@ CONTAINER_IMAGE=""
 MODEL_NAME="dsr1"
 QUANT="fp4"
 ENV=""
+# Platform tag — used in TAG (filename) and passed to extract_cuda_kernels --platform.
+# Valid values: b200, b300, h20, mi355x. Default kept as b200 for backward compat with
+# pre-refactor workflows that don't pass --platform.
+PLATFORM_TAG="b200"
 
 # SA InferenceX server parameters (from dsr1_fp4_b200.sh)
 MEM_FRACTION_STATIC=0.85
@@ -86,6 +90,8 @@ Options:
                         enters steady-state region)
   --flush-timeout N     Max seconds to wait for trace flush (default: 300)
   --container-image IMG Container image name for metadata
+  --platform NAME       Platform tag for output filename + analysis (default: b200;
+                        valid: b200|b300|h20|mi355x). Affects kernel_registry mapping.
   -h, --help            Show this help
 
 Profiling methodology:
@@ -117,6 +123,7 @@ while [[ $# -gt 0 ]]; do
         --model-name)      MODEL_NAME="$2"; shift 2 ;;
         --quant)           QUANT="$2"; shift 2 ;;
         --env)             ENV="$2"; shift 2 ;;
+        --platform)        PLATFORM_TAG="$2"; shift 2 ;;
         -h|--help)         usage ;;
         *)                 echo "Unknown option: $1"; usage ;;
     esac
@@ -169,7 +176,7 @@ SCHEDULER_RECV_INTERVAL=10
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
 PROFILE_END_STEP=$((PROFILE_START_STEP + PROFILE_STEPS))
-TAG="trace_torch_b200_sglang_${MODEL_NAME}_${QUANT}_${ENV}_${SCENARIO}_ep${EP}_tp${TP}_c${CONCURRENCY}_step${PROFILE_START_STEP}-${PROFILE_END_STEP}"
+TAG="trace_torch_${PLATFORM_TAG}_sglang_${MODEL_NAME}_${QUANT}_${ENV}_${SCENARIO}_ep${EP}_tp${TP}_c${CONCURRENCY}_step${PROFILE_START_STEP}-${PROFILE_END_STEP}"
 
 log "============================================================"
 log "  SGLang Torch Profiler Trace Capture"
@@ -417,11 +424,11 @@ FIRST_TRACE=$(find "$RESULT_DIR" -maxdepth 1 -name "*.trace.json.gz" ! -name "*_
 if [[ -f "$EXTRACT_SCRIPT" ]] && [[ -n "$FIRST_TRACE" ]]; then
     log "Running CUDA Graph kernel breakdown on $(basename "$FIRST_TRACE")..."
     BREAKDOWN_CSV="$RESULT_DIR/kernel_breakdown_${TAG}.csv"
-    python3 "$EXTRACT_SCRIPT" "$FIRST_TRACE" --platform b200 --csv "$BREAKDOWN_CSV" --max-steps 0 --skip-first 5 --show-steps 0 2>&1 | tee "$RESULT_DIR/kernel_breakdown_${TAG}.log" || log "WARNING: kernel breakdown extraction failed"
+    python3 "$EXTRACT_SCRIPT" "$FIRST_TRACE" --platform "$PLATFORM_TAG" --csv "$BREAKDOWN_CSV" --max-steps 0 --skip-first 5 --show-steps 0 2>&1 | tee "$RESULT_DIR/kernel_breakdown_${TAG}.log" || log "WARNING: kernel breakdown extraction failed"
 
     log "Running per-layer analysis (layers 10-40)..."
     PER_LAYER_CSV="$RESULT_DIR/per_layer_breakdown_${TAG}.csv"
-    python3 "$EXTRACT_SCRIPT" "$FIRST_TRACE" --platform b200 --max-steps 0 --skip-first 5 --show-steps 0 --per-layer --layer-range 10-40 --per-layer-csv "$PER_LAYER_CSV" 2>&1 | tee "$RESULT_DIR/per_layer_breakdown_${TAG}.log" || log "WARNING: per-layer analysis failed"
+    python3 "$EXTRACT_SCRIPT" "$FIRST_TRACE" --platform "$PLATFORM_TAG" --max-steps 0 --skip-first 5 --show-steps 0 --per-layer --layer-range 10-40 --per-layer-csv "$PER_LAYER_CSV" 2>&1 | tee "$RESULT_DIR/per_layer_breakdown_${TAG}.log" || log "WARNING: per-layer analysis failed"
 else
     if [[ ! -f "$EXTRACT_SCRIPT" ]]; then
         log "WARNING: extract_cuda_kernels_torch_trace.py not found at $EXTRACT_SCRIPT"

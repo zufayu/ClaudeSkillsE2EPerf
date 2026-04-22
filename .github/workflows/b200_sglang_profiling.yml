@@ -66,8 +66,8 @@ jobs:
       - name: "Phase 1: Torch trace capture"
         run: |
           source scripts/ci_lib.sh && ci_load_platform b200
-          # collect_sglang_trace.sh uses --env for env_tag, --quant for quant type
-          ARGS="--model $MODEL --tp ${{ inputs.tp }} --ep ${{ inputs.ep }} --scenario ${{ inputs.scenario }} --concurrency ${{ inputs.concurrency }} --quant $QUANT --env $ENV_TAG --container-image $IMAGE --result-dir ./$RESULT_DIR"
+          # collect_sglang_trace.sh uses --env for env_tag, --quant for quant type, --platform for output naming + analysis
+          ARGS="--model $MODEL --tp ${{ inputs.tp }} --ep ${{ inputs.ep }} --scenario ${{ inputs.scenario }} --concurrency ${{ inputs.concurrency }} --quant $QUANT --env $ENV_TAG --platform $PLATFORM --container-image $IMAGE --result-dir ./$RESULT_DIR"
           ci_exec "cd $REPO && bash scripts/collect_sglang_trace.sh $ARGS"
 
       - name: "Phase 2: Fix overlapping kernels"
