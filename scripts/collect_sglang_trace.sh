@@ -150,8 +150,13 @@ if [[ -z "$PROFILE_START_STEP" ]]; then
 fi
 if [[ -z "$PROFILE_STEPS" ]]; then
     PROFILE_STEPS=$(( ESTIMATED_TOTAL_STEPS / 50 ))
-    [[ $PROFILE_STEPS -lt 30 ]] && PROFILE_STEPS=30    # floor: enough samples for kernel stats
-    [[ $PROFILE_STEPS -gt 100 ]] && PROFILE_STEPS=100  # cap: stay under watchdog/buffer ceiling
+    # Floor 100: downstream analysis averages operator time over decode steps;
+    # need ≥100 samples for stable per-operator means (user requirement).
+    [[ $PROFILE_STEPS -lt 100 ]] && PROFILE_STEPS=100
+    # Cap 100: empirically safe for watchdog (300s) and profiler buffer at c=4..256.
+    # Larger windows risk SGLang scheduler stall on 671B MoE. Override --profile-steps
+    # if you've validated higher works for your config.
+    [[ $PROFILE_STEPS -gt 100 ]] && PROFILE_STEPS=100
     PROFILE_PARAMS_AUTO="${PROFILE_PARAMS_AUTO}num_steps"
 fi
 
