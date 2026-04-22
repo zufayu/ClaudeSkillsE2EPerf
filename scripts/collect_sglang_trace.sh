@@ -39,8 +39,14 @@ CONCURRENCY=64
 RESULT_DIR=""
 TRACE_DIR="/tmp/sglang_trace"
 PROFILE_NUM_PROMPTS=""
-PROFILE_STEPS=1000
-PROFILE_START_STEP=30
+# Empty = auto-derive from bench params (OSL × num_prompts / concurrency).
+# Old hardcoded 1000 caused torch profiler buffer to swamp CUDA queue,
+# triggering SGLang scheduler watchdog (timeout=300s) → SIGQUIT on large MoE
+# (DeepSeek-R1 671B FP4). New default uses ~2% of total bench in steady-state
+# middle window — enough decode-step samples for kernel breakdown, well
+# within profiler buffer + watchdog safety margin.
+PROFILE_STEPS=""
+PROFILE_START_STEP=""
 FLUSH_TIMEOUT=300
 CONTAINER_IMAGE=""
 MODEL_NAME="dsr1"
@@ -74,8 +80,10 @@ Options:
   --concurrency N       Max concurrency (default: 64)
   --port N              Server port (default: 8888)
   --profile-prompts N   Prompts during profiling (default: CONC*10, full load)
-  --profile-steps N     Forward steps to profile (default: 200)
-  --profile-start-step N Skip first N steps to capture steady-state (default: 30)
+  --profile-steps N     Forward steps to profile (default: auto = max(30, min(100, total/50))
+                        where total = OSL * num_prompts / concurrency)
+  --profile-start-step N Skip first N steps before profiling (default: auto = total/4,
+                        enters steady-state region)
   --flush-timeout N     Max seconds to wait for trace flush (default: 300)
   --container-image IMG Container image name for metadata
   -h, --help            Show this help
@@ -130,6 +138,23 @@ WARMUP_NUM_PROMPTS=$((CONCURRENCY * 2))
 [[ -z "$PROFILE_NUM_PROMPTS" ]] && PROFILE_NUM_PROMPTS=$((CONCURRENCY * 10))
 GPU_COUNT=$((TP > EP ? TP : EP))
 
+# Auto-derive profile window from bench params (if not user-overridden).
+# Each scheduler iteration produces 1 token per in-flight request, so:
+#   total_steps ≈ OSL × num_prompts / concurrency
+# Steady state lives in the middle ~50%; we sample 2% deep inside it.
+ESTIMATED_TOTAL_STEPS=$(( OSL * PROFILE_NUM_PROMPTS / CONCURRENCY ))
+PROFILE_PARAMS_AUTO=""
+if [[ -z "$PROFILE_START_STEP" ]]; then
+    PROFILE_START_STEP=$(( ESTIMATED_TOTAL_STEPS / 4 ))
+    PROFILE_PARAMS_AUTO="${PROFILE_PARAMS_AUTO}start_step "
+fi
+if [[ -z "$PROFILE_STEPS" ]]; then
+    PROFILE_STEPS=$(( ESTIMATED_TOTAL_STEPS / 50 ))
+    [[ $PROFILE_STEPS -lt 30 ]] && PROFILE_STEPS=30    # floor: enough samples for kernel stats
+    [[ $PROFILE_STEPS -gt 100 ]] && PROFILE_STEPS=100  # cap: stay under watchdog/buffer ceiling
+    PROFILE_PARAMS_AUTO="${PROFILE_PARAMS_AUTO}num_steps"
+fi
+
 # Scheduler recv interval: SA uses 30 for conc>=16, 10 otherwise
 SCHEDULER_RECV_INTERVAL=10
 [[ $CONCURRENCY -ge 16 ]] && SCHEDULER_RECV_INTERVAL=30
@@ -150,6 +175,9 @@ log "  TP=$TP  EP=$EP  GPU_COUNT=$GPU_COUNT"
 log "  Concurrency: $CONCURRENCY"
 log "  Warmup:      $WARMUP_NUM_PROMPTS prompts"
 log "  Profile:     $PROFILE_NUM_PROMPTS prompts (steps=$PROFILE_STEPS, start_step=$PROFILE_START_STEP)"
+if [[ -n "$PROFILE_PARAMS_AUTO" ]]; then
+    log "  Profile window auto-derived: $PROFILE_PARAMS_AUTO  (est total steps=$ESTIMATED_TOTAL_STEPS = OSL×N/CONC)"
+fi
 log "  Trace Dir:   $TRACE_DIR"
 log "  Result Dir:  $RESULT_DIR"
 log "  Tag:         $TAG"
