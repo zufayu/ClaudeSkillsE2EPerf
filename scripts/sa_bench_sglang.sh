@@ -156,7 +156,7 @@ stop_gpu_monitor
 log "Stopping server..."
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
-pkill -f "sglang.launch_server" 2>/dev/null || true
+safe_kill "sglang.launch_server"
 sleep 3
 
 # ======================== Summary Report ======================================

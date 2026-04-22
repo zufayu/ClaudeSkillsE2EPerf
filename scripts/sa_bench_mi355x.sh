@@ -225,8 +225,8 @@ kill_server() {
         kill "$SERVER_PID" 2>/dev/null || true
         wait "$SERVER_PID" 2>/dev/null || true
     fi
-    # Kill ATOM server processes
-    pkill -f "atom.entrypoints" 2>/dev/null || true
+    # Kill ATOM server processes (safe_kill avoids pkill -f self-kill, see R4)
+    safe_kill "atom.entrypoints"
     # Kill anything still holding the server port (e.g. orphaned workers)
     local port_pids
     port_pids=$(lsof -ti :"$SERVER_PORT" 2>/dev/null) || true

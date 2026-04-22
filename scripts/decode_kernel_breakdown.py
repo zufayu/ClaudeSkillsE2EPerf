@@ -19,6 +19,10 @@ import os
 import re
 import sys
 
+# Import shared trace utilities (R5)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from trace_utils import load_trace_events  # noqa: E402
+
 
 # ============================================================================
 # Layer structure for DeepSeek-R1 (per transformer layer, execution order):
@@ -72,13 +76,8 @@ def classify_kernel_positional(kernel_name, occurrence_counters):
 
 
 def load_trace(path):
-    print(f"Loading {path} ({os.path.getsize(path)/1e6:.0f}MB)...")
-    opener = gzip.open if path.endswith(".gz") else open
-    with opener(path, "rt") as f:
-        data = json.load(f)
-    evts = data.get("traceEvents", [])
-    print(f"  {len(evts)} events")
-    return evts
+    """Delegates to trace_utils.load_trace_events."""
+    return load_trace_events(path)
 
 
 def select_decode(evts, target_bs, skip_ratio=0.5):

@@ -23,17 +23,15 @@ import sys
 from collections import Counter
 from statistics import median
 
-
-def load_trace(filepath):
-    opener = gzip.open if filepath.endswith(".gz") else open
-    with opener(filepath, "rt", encoding="utf-8") as f:
-        data = json.load(f)
-    events = data.get("traceEvents", data if isinstance(data, list) else [])
-    print(f"Loaded: {len(events)} events")
-    return events
-
+# Import shared trace utilities (R5)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from trace_utils import load_trace_events as load_trace  # noqa: E402
 
 # Operator classification matching user's table
+# NOTE: This OPERATOR_MAP uses report-friendly names (e.g. "uk_gemm(K_expansion)")
+# which differ from kernel_registry's canonical names. Kept here because these
+# are output format, not classification data. The regex patterns align with
+# kernel_registry.B200_OPERATOR_MAP.
 OPERATOR_MAP = [
     (r"allreduce_fusion_kernel.*lamport", "EP_AR+residual+RMSNorm(fused)"),
     (r"nvjet_sm100_tst.*splitK_TNT|splitK_TNT", None),  # position-dependent

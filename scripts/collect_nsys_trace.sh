@@ -148,8 +148,7 @@ case "$CONFIG" in
 esac
 
 # ======================== Utilities ===========================================
-TS() { date '+%Y-%m-%d %H:%M:%S'; }
-log() { echo "[$(TS)] $*"; }
+# log() and TS() inherited from benchmark_lib.sh
 
 # ======================== Tag & Output Setup ==================================
 TAG="trace_nsys_b200_trt_${MODEL_NAME}_${QUANT}_${ENV}_${SCENARIO}_ep${EP}_tp${TP}_c${CONCURRENCY}_iter${ITER_RANGE}"
@@ -180,107 +179,17 @@ log "  Tag:         $TAG"
 log "============================================================"
 
 # ======================== Adaptive Parameters =================================
-# Reused from sa_bench_b200.sh compute_adaptive_params()
-compute_adaptive_params() {
-    local quant=$1 isl=$2 osl=$3 conc=$4 dp_attn=$5 ep_size=$6 has_mtp=$7
-
-    MOE_BACKEND="TRTLLM"
-    PIECEWISE_CUDA_GRAPHS="false"
-    CUDA_GRAPH_MAX_BATCH_SIZE=$conc
-    KV_CACHE_FREE_MEM_FRACTION=0.8
-    DELAY_BATCHING="false"
-    MTP_LAYERS=0
-    ENABLE_CONFIGURABLE_MOE_FLAG=""
-
-    if [[ "$has_mtp" == "true" ]]; then
-        MTP_LAYERS=3
-    fi
-
-    if [[ "$quant" == "fp4" ]]; then
-        if [[ "$has_mtp" == "false" ]]; then
-            if [[ "$dp_attn" == "true" ]]; then
-                MOE_BACKEND="CUTLASS"
-                CUDA_GRAPH_MAX_BATCH_SIZE=$(( conc < 4 ? conc : conc / 4 ))
-            fi
-            if [[ "$isl" == "1024" && "$osl" == "1024" ]]; then
-                if [[ "$TP" == "8" && "$ep_size" == "8" ]]; then
-                    PIECEWISE_CUDA_GRAPHS="true"
-                fi
-            fi
-        else
-            if [[ "$dp_attn" == "true" ]]; then
-                CUDA_GRAPH_MAX_BATCH_SIZE=$(( conc < 4 ? conc : conc / 4 ))
-                MOE_BACKEND="CUTLASS"
-                MTP_LAYERS=1
-            fi
-            if [[ "$isl" == "1024" && "$osl" == "1024" ]]; then
-                if [[ $conc == 32 || $conc == 64 ]]; then
-                    PIECEWISE_CUDA_GRAPHS="true"
-                elif [[ $conc == 128 && "$dp_attn" == "false" ]]; then
-                    PIECEWISE_CUDA_GRAPHS="true"
-                fi
-            elif [[ "$isl" == "1024" && "$osl" == "8192" ]]; then
-                if [[ $conc == 64 ]]; then
-                    PIECEWISE_CUDA_GRAPHS="true"
-                fi
-            fi
-        fi
-    elif [[ "$quant" == "fp8" ]]; then
-        if [[ "$has_mtp" == "false" ]]; then
-            if [[ "$isl" == "1024" && "$osl" == "1024" ]]; then
-                if [[ $conc -ge 128 ]]; then
-                    PIECEWISE_CUDA_GRAPHS="true"
-                    DELAY_BATCHING="true"
-                    KV_CACHE_FREE_MEM_FRACTION=0.7
-                elif [[ $conc -ge 64 ]]; then
-                    PIECEWISE_CUDA_GRAPHS="true"
-                    DELAY_BATCHING="true"
-                fi
-            elif [[ "$isl" == "1024" && "$osl" == "8192" ]]; then
-                if [[ $conc -ge 256 ]]; then
-                    CUDA_GRAPH_MAX_BATCH_SIZE=$(( conc / 8 ))
-                    MOE_BACKEND="DEEPGEMM"
-                    KV_CACHE_FREE_MEM_FRACTION=0.7
-                elif [[ $conc -ge 128 ]]; then
-                    PIECEWISE_CUDA_GRAPHS="true"
-                fi
-            elif [[ "$isl" == "8192" && "$osl" == "1024" ]]; then
-                if [[ $conc -ge 64 ]]; then
-                    PIECEWISE_CUDA_GRAPHS="true"
-                fi
-                if [[ "$TP" == "4" ]]; then
-                    KV_CACHE_FREE_MEM_FRACTION=0.75
-                fi
-            fi
-            if [[ "$dp_attn" == "true" ]]; then
-                MOE_BACKEND="CUTLASS"
-            fi
-        else
-            PIECEWISE_CUDA_GRAPHS="true"
-            if [[ "$dp_attn" == "true" ]]; then
-                MOE_BACKEND="DEEPGEMM"
-                PIECEWISE_CUDA_GRAPHS="false"
-                CUDA_GRAPH_MAX_BATCH_SIZE=$(( conc < 8 ? conc : conc / 8 ))
-                KV_CACHE_FREE_MEM_FRACTION=0.7
-                ENABLE_CONFIGURABLE_MOE_FLAG="1"
-                MTP_LAYERS=1
-            fi
-            if [[ "$isl" == "1024" && "$osl" == "1024" ]]; then
-                if [[ $conc -le 4 ]]; then
-                    PIECEWISE_CUDA_GRAPHS="false"
-                fi
-            elif [[ "$isl" == "1024" && "$osl" == "8192" ]]; then
-                if [[ $conc -le 8 ]]; then
-                    PIECEWISE_CUDA_GRAPHS="false"
-                fi
-            elif [[ "$isl" == "8192" && "$osl" == "1024" ]]; then
-                if [[ $conc -le 16 ]]; then
-                    PIECEWISE_CUDA_GRAPHS="false"
-                fi
-            fi
-        fi
-    fi
-}
+# Loaded from configs/adaptive/ (same source as sa_bench_trt.sh)
+# Previously: 100-line copy-paste from sa_bench_b200.sh
+PLATFORM="${PLATFORM:-b200}"
+_ADAPTIVE="$SCRIPT_DIR/../configs/adaptive/${PLATFORM}_trt.sh"
+if [[ -f "$_ADAPTIVE" ]]; then
+    source "$_ADAPTIVE"
+    log "Loaded adaptive config: ${PLATFORM}_trt.sh"
+else
+    source "$SCRIPT_DIR/../configs/adaptive/default_trt.sh"
+    log "WARN: No adaptive config for '$PLATFORM', using defaults"
+fi
 
 # ======================== Generate Config YAML ================================
 generate_config_yaml() {

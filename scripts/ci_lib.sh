@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+# =============================================================================
+# CI Library — Platform-aware execution abstraction
+#
+# Source this on the runner (jumphost or GPU node).
+# All functions read env vars: NODE, CONTAINER, REPO, EXEC_MODE
+# which come from platform env files + workflow inputs.
+#
+# Usage in workflow steps:
+#   source scripts/ci_lib.sh
+#   ci_load_platform b200
+#   export NODE="${{ inputs.node }}" CONTAINER="${{ inputs.container }}"
+#   ci_sync
+#   ci_exec "nvidia-smi"
+# =============================================================================
+
+set -euo pipefail
+
+# -----------------------------------------------------------------------------
+# Platform loading
+# -----------------------------------------------------------------------------
+
+ci_load_platform() {
+  local platform=$1
+  local dir
+  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../configs/platforms" && pwd)"
+  if [[ ! -f "$dir/${platform}.env" ]]; then
+    echo "ERROR: Platform config not found: $dir/${platform}.env"
+    return 1
+  fi
+  source "$dir/${platform}.env"
+}
+
+# -----------------------------------------------------------------------------
+# Execution abstraction
+# -----------------------------------------------------------------------------
+
+# Execute command inside container (handles ssh+docker / docker / podman)
+ci_exec() {
+  local cmd="$1"
+  case "${EXEC_MODE:-}" in
+    ssh+docker)
+      ssh "$NODE" "docker exec $CONTAINER bash -c '${cmd}'"
+      ;;
+    docker)
+      docker exec "$CONTAINER" bash -c "${cmd}"
+      ;;
+    podman)
+      podman exec "$CONTAINER" bash -c "${cmd}"
+      ;;
+    *)
+      echo "ERROR: Unknown EXEC_MODE='${EXEC_MODE:-}'"
+      return 1
+      ;;
+  esac
+}
+
+# Execute command on the host (not in container)
+ci_exec_host() {
+  local cmd="$1"
+  case "${EXEC_MODE:-}" in
+    ssh+docker)
+      ssh "$NODE" "${cmd}"
+      ;;
+    docker|podman)
+      eval "${cmd}"
+      ;;
+    *)
+      echo "ERROR: Unknown EXEC_MODE='${EXEC_MODE:-}'"
+      return 1
+      ;;
+  esac
+}
+
+# Execute container inspect (runtime-aware)
+ci_inspect() {
+  local fmt="$1"
+  case "${EXEC_MODE:-}" in
+    ssh+docker)
+      ssh "$NODE" "docker inspect $CONTAINER --format '${fmt}'" 2>/dev/null || echo unknown
+      ;;
+    docker)
+      docker inspect "$CONTAINER" --format "${fmt}" 2>/dev/null || echo unknown
+      ;;
+    podman)
+      podman inspect "$CONTAINER" --format "${fmt}" 2>/dev/null || echo unknown
+      ;;
+  esac
+}
+
+# -----------------------------------------------------------------------------
+# Git operations
+# -----------------------------------------------------------------------------
+
+# Sync repo to origin/main (hard reset — the only reliable strategy)
+ci_sync() {
+  ci_exec_host "cd $REPO && git fetch origin && git reset --hard origin/main"
+  ci_exec_host "cd $REPO && git log --oneline -3"
+}
+
+# -----------------------------------------------------------------------------
+# GPU / container checks
+# -----------------------------------------------------------------------------
+
+ci_verify_gpu() {
+  ci_exec "nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -8"
+}
+
+# Get container image name → sets IMAGE env var
+ci_get_image() {
+  IMAGE=$(ci_inspect '{{.Config.Image}}')
+  export IMAGE
+  echo "IMAGE=$IMAGE"
+}
+
+# Kill residual GPU processes (MI355X needs this between runs)
+# CRITICAL: Never use pkill -f — it matches its own cmdline and kills itself (exit 143).
+#   See: 9564e80, 7a8b506, 53c5b8f, 482c67e, a71cff4 (5 fix commits for this bug)
+#   Use pgrep + grep -v $$ + xargs kill instead.
+ci_kill_gpu_procs() {
+  case "${EXEC_MODE:-}" in
+    podman)
+      podman exec "$CONTAINER" bash -c \
+        'for pat in "python" "vllm" "atom.*serve" "model_executor"; do pgrep -f "$pat" 2>/dev/null | grep -v $$ | xargs -r kill -9 2>/dev/null; done; true'
+      pgrep -f "python.*vllm\|python.*atom" 2>/dev/null | grep -v $$ | xargs -r kill -9 2>/dev/null || true
+      sleep 5
+      ;;
+    ssh+docker|docker)
+      ci_exec 'for pat in "sglang" "trtllm"; do pgrep -f "$pat" 2>/dev/null | grep -v $$ | xargs -r kill -9 2>/dev/null; done; true'
+      sleep 3
+      ;;
+  esac
+}
+
+# -----------------------------------------------------------------------------
+# Version / env_tag detection
+# -----------------------------------------------------------------------------
+
+# Detect env_tag (includes framework abbreviation)
+# TRT → post2/post3/rc10,  SGLang → sglang059,  ATOM → rocm722
+ci_detect_env_tag() {
+  local framework=$1
+  case "$framework" in
+    trt)
+      local ver
+      ver=$(ci_exec "pip show tensorrt-llm 2>/dev/null | grep ^Version | cut -d' ' -f2" 2>/dev/null || true)
+      if [[ -z "$ver" ]]; then
+        ver=$(echo "${IMAGE:-}" | grep -oP 'release:\K[0-9a-z.]+' || echo unknown)
+      fi
+      case "$ver" in
+        *post2*) echo "post2" ;;
+        *post3*) echo "post3" ;;
+        *rc10*)  echo "rc10" ;;
+        *)       echo "$(echo "$ver" | sed 's/[^a-zA-Z0-9]/_/g')" ;;
+      esac
+      ;;
+    sglang)
+      local ver
+      ver=$(ci_exec "python3 -c 'import sglang; print(sglang.__version__)'" 2>/dev/null || echo "0.0.0")
+      echo "sglang$(echo "$ver" | tr -d '.')"
+      ;;
+    atom)
+      local ver
+      ver=$(ci_exec "cat /opt/rocm/.info/version 2>/dev/null || echo unknown" 2>/dev/null | tr -d '\n')
+      echo "rocm$(echo "$ver" | tr -d '.')"
+      ;;
+    *)
+      echo "unknown"
+      ;;
+  esac
+}
+
+# -----------------------------------------------------------------------------
+# Config parsing & result dir
+# -----------------------------------------------------------------------------
+
+# Parse configs string → sets QUANT, MODE, and MTP env vars
+# e.g. "fp4-throughput" → QUANT=fp4, MODE=throughput, MTP=mtp0
+#      "mxfp4-latency"  → QUANT=mxfp4, MODE=latency, MTP=mtp3
+ci_parse_configs() {
+  local configs=$1
+  # Handle multi-word quant types like mxfp4
+  MODE="${configs##*-}"
+  QUANT="${configs%-*}"
+  case "$MODE" in
+    throughput) MTP="mtp0" ;;
+    latency)    MTP="mtp3" ;;
+    *)          echo "ERROR: Unknown mode '$MODE' in configs '$configs'"; return 1 ;;
+  esac
+  export QUANT MODE MTP
+}
+
+# Generate result directory path
+ci_result_dir() {
+  local platform=$1 quant=$2 mtp=$3 ep=$4 tp=$5 env_tag=$6 suffix=${7:-}
+  echo "results/${platform}_dsr_${quant}/${platform}_dsr_${quant}_${mtp}_ep${ep}_tp${tp}_${env_tag}${suffix}"
+}
+
+# -----------------------------------------------------------------------------
+# Result commit
+# -----------------------------------------------------------------------------
+
+# Fix file ownership (container uid != host uid)
+ci_fix_ownership() {
+  local result_dir=$1
+  ci_exec "chown -R \$(stat -c %u:%g $REPO/.git) $REPO/${result_dir} 2>/dev/null; true" 2>/dev/null || true
+}
+
+# Commit results and push
+ci_commit_results() {
+  local result_dir=$1
+  local message=$2
+
+  ci_fix_ownership "$result_dir"
+
+  ci_exec_host "cd $REPO && git config user.email '$CI_USER_EMAIL' && git config user.name '$CI_USER_NAME'"
+
+  # Stage result files (exclude large trace binaries)
+  ci_exec_host "cd $REPO && git reset HEAD 2>/dev/null; true"
+  ci_exec_host "cd $REPO && for ext in json log yml md csv xlsx; do git add -f ${result_dir}/*.\$ext 2>/dev/null; done; true"
+  ci_exec_host "cd $REPO && git diff --cached --name-only"
+
+  ci_exec_host "cd $REPO && if ! git diff --cached --quiet; then git commit -m '${message}
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
+}
+
+# -----------------------------------------------------------------------------
+# Dry-run mode (for local testing)
+# -----------------------------------------------------------------------------
+
+# When CI_DRY_RUN=1, print commands instead of executing
+if [[ "${CI_DRY_RUN:-0}" == "1" ]]; then
+  ci_exec()      { echo "[DRY-RUN ci_exec] $1"; }
+  ci_exec_host() { echo "[DRY-RUN ci_exec_host] $1"; }
+  ci_inspect()   { echo "[DRY-RUN ci_inspect] $1"; echo "dry-run-image:latest"; }
+fi

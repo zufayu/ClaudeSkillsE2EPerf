@@ -1,5 +1,13 @@
 # Cross-Platform Kernel Profiling Skill
 
+## Pre-execution Checklist (MANDATORY)
+
+Before starting any profiling or analysis task:
+1. Read `RULES.md` from project root — especially R4 (no pkill -f), R5 (kernel_registry), R7 (preflight)
+2. Kernel classification must use `from kernel_registry import classify_kernel` — do NOT define inline maps
+3. Trace loading must use `from trace_utils import load_trace` — do NOT copy-paste load_trace()
+4. If running on GPU node: call `preflight_trt()` / `preflight_sglang()` / `preflight_atom()` first
+
 ## When to Use
 
 Activate when the user needs to:

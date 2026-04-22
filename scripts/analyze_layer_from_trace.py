@@ -22,45 +22,21 @@ import argparse
 import csv
 import gzip
 import json
+import os
 import re
 import sys
 from collections import defaultdict, OrderedDict
 from statistics import median, stdev
 
-
-def load_trace(filepath):
-    """Load Chrome trace JSON (optionally gzipped)."""
-    opener = gzip.open if filepath.endswith(".gz") else open
-    with opener(filepath, "rt", encoding="utf-8") as f:
-        data = json.load(f)
-    events = data.get("traceEvents", data if isinstance(data, list) else [])
-    print(f"Loaded {filepath}: {len(events)} events")
-    return events
+# Import shared trace utilities (R5)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from trace_utils import load_trace_events as load_trace  # noqa: E402
+from trace_utils import find_gpu_kernels as _find_gpu_kernels  # noqa: E402
 
 
 def find_gpu_kernels(events, gpu_pid=None):
-    """Extract GPU kernel events for rank 0 (smallest PID), sorted by ts."""
-    kernels = []
-    pids = set()
-    for e in events:
-        if e.get("ph") != "X":
-            continue
-        cat = e.get("cat", "")
-        if cat in ("kernel", "gpu_memcpy", "gpu_memset"):
-            kernels.append(e)
-            pids.add(e.get("pid"))
-
-    if gpu_pid is not None:
-        kernels = [k for k in kernels if k.get("pid") == gpu_pid]
-    elif len(pids) > 1:
-        min_pid = min(pids)
-        kernels = [k for k in kernels if k.get("pid") == min_pid]
-        print(f"  Multiple GPU PIDs ({len(pids)}), using PID {min_pid} (rank 0)")
-
-    kernels.sort(key=lambda x: x.get("ts", 0))
-    print(f"  GPU kernel events: {len(kernels)}")
-
-    # Show unique TIDs (streams)
+    """Wrapper that adds TID/stream info to trace_utils output."""
+    kernels = _find_gpu_kernels(events, gpu_pid=gpu_pid)
     tids = set(k.get("tid") for k in kernels)
     print(f"  GPU streams (TIDs): {sorted(tids)}")
     return kernels

@@ -176,7 +176,7 @@ cleanup() {
     log "Cleaning up..."
     fuser -k -9 "${PORT}/tcp" 2>/dev/null || true
     sleep 2
-    pkill -f "sglang.launch_server" 2>/dev/null || true
+    safe_kill "sglang.launch_server"
     sleep 2
     rm -rf "$TRACE_DIR"
     log "Cleanup done."
@@ -191,7 +191,7 @@ trap_cleanup() {
         kill "$SERVER_PID" 2>/dev/null || true
         wait "$SERVER_PID" 2>/dev/null || true
     fi
-    pkill -f "sglang.launch_server" 2>/dev/null || true
+    safe_kill "sglang.launch_server"
 }
 trap trap_cleanup EXIT INT TERM
 
@@ -337,7 +337,7 @@ log "Stopping server..."
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
 SERVER_PID=""
-pkill -f "sglang.launch_server" 2>/dev/null || true
+safe_kill "sglang.launch_server"
 sleep 3
 
 # ======================== Step 7: Collect Traces ==============================

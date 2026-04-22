@@ -1,0 +1,78 @@
+name: "B300 SGLang Bench"
+on:
+  workflow_dispatch:
+    inputs:
+      container:
+        type: string
+        default: "zufa_sglang"
+      configs:
+        type: choice
+        options: [fp4-throughput, fp4-latency]
+        default: fp4-throughput
+      ep:
+        type: string
+        default: "8"
+      tp:
+        type: string
+        default: "8"
+      scenario:
+        type: choice
+        options: [chat, reasoning, summarize]
+        default: chat
+      concurrency:
+        type: string
+        default: "64"
+
+jobs:
+  bench:
+    runs-on: [self-hosted, b300]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          export CONTAINER="${{ inputs.container }}"
+          ci_parse_configs "${{ inputs.configs }}"
+          MODEL="$MODEL_FP4"
+          ci_get_image
+          ENV_TAG=$(ci_detect_env_tag sglang)
+          RESULT_DIR=$(ci_result_dir "$PLATFORM" "$QUANT" "$MTP" "${{ inputs.ep }}" "${{ inputs.tp }}" "$ENV_TAG")
+          for var in CONTAINER MODEL QUANT MTP MODE IMAGE ENV_TAG RESULT_DIR REPO EXEC_MODE CI_USER_NAME CI_USER_EMAIL; do
+            echo "$var=${!var}" >> $GITHUB_ENV
+          done
+          echo "CONTAINER=$CONTAINER ENV_TAG=$ENV_TAG"
+          echo "${{ inputs.configs }} → QUANT=$QUANT MTP=$MTP"
+          echo "EP=${{ inputs.ep }} TP=${{ inputs.tp }} ${{ inputs.scenario }} c=${{ inputs.concurrency }}"
+          echo "RESULT_DIR=$RESULT_DIR"
+
+      - name: Sync repo
+        run: source scripts/ci_lib.sh && ci_load_platform b300 && ci_sync
+
+      - name: Verify container
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          ci_verify_gpu
+          ci_exec "python3 -c 'import sglang; print(f\"SGLang {sglang.__version__}\")'"
+
+      - name: Run benchmark
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          ARGS="--model $MODEL --tp ${{ inputs.tp }} --ep ${{ inputs.ep }} --scenario ${{ inputs.scenario }} --concurrency ${{ inputs.concurrency }} --container-image $IMAGE --result-dir ./$RESULT_DIR"
+          ci_exec "cd $REPO && bash scripts/sa_bench_sglang.sh $ARGS"
+
+      - name: Show results
+        if: always()
+        run: cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo "No summary"
+
+      - name: Fix ownership and commit
+        if: always()
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          ci_commit_results "$RESULT_DIR" \
+            "data: B300 SGLang ${{ inputs.configs }} EP=${{ inputs.ep }} TP=${{ inputs.tp }} bench (${{ inputs.scenario }} c=${{ inputs.concurrency }}, $ENV_TAG)"
+
+      - name: Show final state
+        if: always()
+        run: cd $REPO && git log --oneline -3

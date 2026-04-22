@@ -1,5 +1,12 @@
 # E2EDeepPerf - Claude Context
 
+## CRITICAL: 规则库（每次任务前必读）
+
+**执行任何 benchmark、profiling、workflow 修改任务前，必须：**
+1. 完整阅读 `RULES.md` — 7 条从 222 次修复中提炼的强制规则
+2. 对当前任务逐条检查规则是否适用，适用则严格遵循
+3. 特别注意：R1（不要创建新 workflow）、R4（禁止 pkill -f）、R5（kernel 分类从 registry 导入）
+
 ## Project Overview
 Benchmark comparison dashboard for DeepSeek R1 671B inference across GPU platforms.
 - Dashboard: https://zufayu.github.io/ClaudeSkillsE2EPerf/ (password: `deepperf2026`)

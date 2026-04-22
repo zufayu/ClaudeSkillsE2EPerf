@@ -1,0 +1,92 @@
+name: "MI355X ATOM Profiling"
+on:
+  workflow_dispatch:
+    inputs:
+      container:
+        description: "ATOM container (zufa_atom=ROCm7.1.1, zufa_atom2=ROCm7.2.1)"
+        type: choice
+        options: [zufa_atom, zufa_atom2]
+        default: zufa_atom2
+      configs:
+        type: choice
+        options: [mxfp4-throughput, mxfp4-latency]
+        default: mxfp4-throughput
+      ep:
+        description: "Expert parallel (1 = off, >1 = on)"
+        type: string
+        default: "4"
+      tp:
+        type: string
+        default: "4"
+      scenario:
+        type: choice
+        options: [chat, reasoning, summarize]
+        default: chat
+      concurrency:
+        type: string
+        default: "64"
+
+jobs:
+  profiling:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform mi355x
+          export CONTAINER="${{ inputs.container }}"
+          ci_parse_configs "${{ inputs.configs }}"
+          MODEL="$MODEL_MXFP4"
+          ci_get_image
+          ENV_TAG=$(ci_detect_env_tag atom)
+          RESULT_DIR=$(ci_result_dir "$PLATFORM" "$QUANT" "$MTP" "${{ inputs.ep }}" "${{ inputs.tp }}" "$ENV_TAG" "_profiling")
+          for var in CONTAINER MODEL QUANT MTP MODE IMAGE ENV_TAG RESULT_DIR REPO EXEC_MODE CI_USER_NAME CI_USER_EMAIL; do
+            echo "$var=${!var}" >> $GITHUB_ENV
+          done
+          echo "CONTAINER=$CONTAINER ENV_TAG=$ENV_TAG"
+          echo "RESULT_DIR=$RESULT_DIR"
+
+      - name: Kill residual GPU processes
+        continue-on-error: true
+        run: source scripts/ci_lib.sh && ci_load_platform mi355x && ci_kill_gpu_procs
+
+      - name: Sync repo
+        run: source scripts/ci_lib.sh && ci_load_platform mi355x && ci_sync
+
+      - name: Clean old results
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform mi355x
+          ci_exec "rm -rf $REPO/$RESULT_DIR/result_profiled_*.json $REPO/$RESULT_DIR/*.log $REPO/$RESULT_DIR/summary.md 2>/dev/null; true"
+
+      - name: "Phase 1: Collect ATOM trace"
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform mi355x
+          # collect_atom_trace.sh: --ep is flag (no value), --profile-prompts for trace depth
+          ARGS="--model $MODEL --scenario ${{ inputs.scenario }} --concurrency ${{ inputs.concurrency }} --tp ${{ inputs.tp }} --profile-prompts 640 --roctracer-max-events 20000000 --env $ENV_TAG --result-dir ./$RESULT_DIR"
+          [[ "${{ inputs.ep }}" -gt 1 ]] && ARGS="$ARGS --ep"
+          ci_exec "cd $REPO && bash scripts/collect_atom_trace.sh $ARGS"
+
+      - name: "Phase 2: Parse trace breakdown"
+        continue-on-error: true
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform mi355x
+          ci_exec "cd $REPO/$RESULT_DIR && TRACE=\$(ls trace_torch_*_c*_full.json.gz 2>/dev/null | head -1) && CAPTURE=\$(ls capture_graph_trace_*_c*_full.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE\" ]; then python3 $REPO/scripts/run_parse_trace.py \$TRACE --target-bs ${{ inputs.concurrency }} --layer 40 \$([ -n \"\$CAPTURE\" ] && echo \"--capture-trace \$CAPTURE\"); else echo 'No trace file'; fi"
+
+      - name: Show results
+        if: always()
+        run: |
+          ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'
+          cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'
+
+      - name: Commit results
+        if: always()
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform mi355x
+          ci_commit_results "$RESULT_DIR" \
+            "data: MI355X ATOM ${{ inputs.configs }} EP=${{ inputs.ep }} TP=${{ inputs.tp }} profiling (${{ inputs.scenario }} c=${{ inputs.concurrency }}, $ENV_TAG)"
+
+      - name: Show final state
+        if: always()
+        run: cd $REPO && git log --oneline -3

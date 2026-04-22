@@ -3,8 +3,141 @@
 # Shared Benchmark Utilities for ClaudeSkillsE2EPerf
 #
 # Ported from InferenceX/InferenceMAX benchmark_lib.sh
-# Provides: GPU monitoring, server readiness, benchmark_serving client
+# Provides: logging, process management, GPU monitoring, server readiness,
+#           benchmark_serving client, preflight environment checks
+#
+# Source this at the top of any bench/collect script:
+#   source "$SCRIPT_DIR/benchmark_lib.sh"
 # =============================================================================
+
+# --------------------------------
+# Error trapping — auto-capture failures to .last_error
+# Scripts can opt-in by calling enable_error_trap after sourcing.
+# --------------------------------
+
+enable_error_trap() {
+  local repo_dir
+  repo_dir="$(cd "$(dirname "${BASH_SOURCE[1]}")/.." 2>/dev/null && pwd || pwd)"
+  local trap_file="${repo_dir}/.last_error"
+  trap 'echo "[$(date)] FAILED: $BASH_COMMAND (exit $?, script=${BASH_SOURCE[0]:-unknown})" >> "'"$trap_file"'"' ERR
+}
+
+# --------------------------------
+# Logging (eliminates 15 duplicate definitions across scripts)
+# --------------------------------
+
+# Guard: only define if not already defined by the sourcing script
+if ! declare -f TS >/dev/null 2>&1; then
+  TS() { date '+%Y-%m-%d %H:%M:%S'; }
+fi
+if ! declare -f log >/dev/null 2>&1; then
+  log() { echo "[$(TS)] $*"; }
+fi
+
+# --------------------------------
+# Safe process management
+# CRITICAL: Never use pkill -f — it matches its own cmdline → exit 143
+#   Evidence: 9 fix commits (9564e80, 7a8b506, 53c5b8f, 482c67e, a71cff4...)
+#   Rule: R4 in feedback_workflow_architecture.md
+# --------------------------------
+
+# Kill processes matching pattern, excluding self and own process tree.
+# Uses a temp file to avoid the pattern appearing in the pgrep cmdline.
+safe_kill() {
+  local pattern="$1"
+  local signal="${2:--9}"
+  local tmpf
+  tmpf=$(mktemp /tmp/safe_kill_XXXXXX)
+  echo "$pattern" > "$tmpf"
+  local pids=""
+  # Read pattern from file so it doesn't appear in our cmdline
+  pids="$(pgrep -f "$(cat "$tmpf")" 2>/dev/null || true)"
+  rm -f "$tmpf"
+  if [[ -z "$pids" ]]; then return 0; fi
+  # Exclude own PID and parent PID
+  local my_pid=$$ parent_pid=$PPID
+  pids="$(echo "$pids" | grep -vE "^(${my_pid}|${parent_pid})$" || true)"
+  if [[ -n "$pids" ]]; then
+    echo "$pids" | xargs -r kill "$signal" 2>/dev/null || true
+    log "Killed processes matching '$pattern': $(echo $pids | tr '\n' ' ')"
+  fi
+}
+
+# Kill all server processes for a given framework
+kill_framework_procs() {
+  local framework="$1"
+  case "$framework" in
+    trt)
+      safe_kill "trtllm-serve"
+      safe_kill "trtllm-bench"
+      ;;
+    sglang)
+      safe_kill "sglang.launch_server"
+      safe_kill "sglang.bench_serving"
+      ;;
+    atom|vllm)
+      safe_kill "atom.entrypoints"
+      safe_kill "vllm.entrypoints"
+      safe_kill "model_executor"
+      ;;
+    *)
+      log "WARN: Unknown framework '$framework' for kill_framework_procs"
+      ;;
+  esac
+}
+
+# --------------------------------
+# Preflight environment checks
+# Evidence: 10 fix commits for container env differences
+#   (bfab83f, cb07c51, 3c95740, 0f3bbc0, 712d43d...)
+#   Rule: R7 in feedback_workflow_architecture.md
+# --------------------------------
+
+# Check that a tool exists, exit if not
+require_tool() {
+  local tool="$1"
+  if ! command -v "$tool" &>/dev/null; then
+    log "ERROR: Required tool '$tool' not found in PATH"
+    log "  PATH=$PATH"
+    return 1
+  fi
+}
+
+# Preflight for TRT-LLM environment
+preflight_trt() {
+  log "Preflight: TRT-LLM environment"
+  require_tool python3
+  require_tool trtllm-serve || log "WARN: trtllm-serve not found (may not be needed for bench mode)"
+  python3 -c "import tensorrt_llm; print(f'  TRT-LLM {tensorrt_llm.__version__}')" 2>/dev/null || \
+    log "WARN: tensorrt_llm import failed"
+  python3 -c "import torch; print(f'  PyTorch {torch.__version__}, CUDA {torch.version.cuda}')" 2>/dev/null || \
+    log "WARN: torch import failed"
+}
+
+# Preflight for SGLang environment
+preflight_sglang() {
+  log "Preflight: SGLang environment"
+  require_tool python3
+  python3 -c "import sglang; print(f'  SGLang {sglang.__version__}')" 2>/dev/null || \
+    { log "ERROR: sglang import failed"; return 1; }
+  python3 -c "import torch; print(f'  PyTorch {torch.__version__}, CUDA {torch.version.cuda}')" 2>/dev/null || \
+    log "WARN: torch import failed"
+}
+
+# Preflight for ATOM/vLLM environment
+preflight_atom() {
+  log "Preflight: ATOM/vLLM environment"
+  require_tool python3
+  python3 -c "import vllm; print(f'  vLLM {vllm.__version__}')" 2>/dev/null || \
+    log "WARN: vllm import failed (trying atom...)"
+  python3 -c "
+try:
+    from atom import __version__; print(f'  ATOM {__version__}')
+except (ImportError, AttributeError):
+    # atom.__version__ doesn't exist in some versions (see fix ec2eaca)
+    import importlib; m = importlib.import_module('atom'); print('  ATOM (version unknown)')
+" 2>/dev/null || log "WARN: atom import failed"
+}
 
 # --------------------------------
 # GPU monitoring helpers
@@ -153,7 +286,7 @@ kill_server() {
         kill "$SERVER_PID" 2>/dev/null || true
         wait "$SERVER_PID" 2>/dev/null || true
     fi
-    pkill -f "trtllm-serve" 2>/dev/null || true
+    safe_kill "trtllm-serve"
     sleep 3
 }
 
