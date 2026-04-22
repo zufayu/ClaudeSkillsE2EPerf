@@ -32,40 +32,43 @@ except ImportError:
 
 
 # ── B200 operator → PASS classification ──
+# PASS_MAP — direct operator → PASS lookup (user's 7-PASS taxonomy).
+# Used by get_pass() for canonical operator names; pattern-matching fallback
+# for 'other:' prefixed kernels handled in get_pass() body.
 PASS_MAP = {
-    "EP_AR+residual+RMSNorm(fused)": None,  # position-dependent: #1→EP_AR_before_MHA, #2→EP_AR_before_MOE
-    "qkv_a_proj_GEMM": "MHA",
-    "qkv_a_splitK_reduce": "MHA",
-    "q/k_norm_RMSNorm": "MHA",
-    "q_b_proj_GEMM": "MHA",
-    "uk_gemm(K_expansion)": "MHA",
-    "k_concat": "MHA",
-    "RoPE+KV_cache_write": "MHA",
-    "set_mla_kv": "MHA",
-    "Attention(FMHA)": "MHA",
-    "uv_gemm(V_expansion)": "MHA",
-    "q_b_proj_GEMM #2": "MHA",
-    "o_proj_quant(BF16→FP4)": "O_proj",
-    "o_proj_GEMM": "O_proj",
-    "o_proj_GEMM #1": "O_proj",
-    "o_proj_GEMM #2": "O_proj",
-    "o_proj_quant(BF16→FP4) #1": "O_proj",
-    "o_proj_quant(BF16→FP4) #2": "O_proj",
-    "Moe_Expert_quant(BF16→FP4)": "MOE",
-    "router_GEMM": "MOE",
-    "router_splitK_reduce": "MOE",
-    "MoE_input_quant(BF16→FP4)": "MOE",
-    "tensor_copy": "MOE",
-    "TopK_select": "MOE",
-    "expert_sort": "MOE",
-    "SiLU×Mul": "MOE",
-    "shared_quant(BF16→FP4)": "MOE",
-    "shared_GEMM(FP4)": "MOE",
-    "gate_up_GEMM(+SwiGLU)": "MOE",
-    "down_GEMM": "MOE",
-    "MoE_finalize+residual": "MOE",
-    "MoE_finalize": "MOE",
-    "residual_add": "MOE",
+    "EP_AR+residual+RMSNorm(fused)": "EP_AR",
+    "qkv_a_proj_GEMM":                  "MHA",
+    "qkv_a_splitK_reduce":              "MHA",
+    "q/k_norm_RMSNorm":                 "MHA",
+    "q_b_proj_GEMM":                    "MHA",
+    "uk_gemm(K_expansion)":             "MHA",
+    "k_concat":                         "MHA",
+    "RoPE+KV_cache_write":              "MHA",
+    "set_mla_kv":                       "MHA",
+    "Attention(FMHA)":                  "MHA",
+    "uv_gemm(V_expansion)":             "MHA",
+    "q_b_proj_GEMM #2":                 "MHA",
+    "o_proj_quant(BF16→FP4)":           "O_proj",
+    "o_proj_GEMM":                      "O_proj",
+    "o_proj_GEMM #1":                   "O_proj",
+    "o_proj_GEMM #2":                   "O_proj",
+    "o_proj_quant(BF16→FP4) #1":        "O_proj",
+    "o_proj_quant(BF16→FP4) #2":        "O_proj",
+    "router_GEMM":                      "MoE_Route",
+    "router_splitK_reduce":             "MoE_Route",
+    "MoE_input_quant(BF16→FP4)":        "MoE_Route",
+    "TopK_select":                      "MoE_Route",
+    "expert_sort":                      "MoE_Route",
+    "Moe_Expert_quant(BF16→FP4)":       "MoE_Expert",
+    "gate_up_GEMM(+SwiGLU)":            "MoE_Expert",
+    "down_GEMM":                        "MoE_Expert",
+    "MoE_finalize+residual":            "MoE_Expert",
+    "MoE_finalize":                     "MoE_Expert",
+    "shared_quant(BF16→FP4)":           "Shared_Exp",
+    "shared_GEMM(FP4)":                 "Shared_Exp",
+    "SiLU×Mul":                         "Shared_Exp",
+    "tensor_copy":                      "Residual",
+    "residual_add":                     "Residual",
 }
 
 # ── MI355X module → PASS classification ──
@@ -73,19 +76,19 @@ PASS_MAP = {
 # This is needed because B200's cross-stream overlap can place o_proj_GEMM after
 # router_GEMM, causing MI355X MoE kernels to be mapped to a B200 O_proj row.
 MI355X_MODULE_PASS = {
-    "input_layernorm": "EP_AR_before_MHA",
-    "gemm_a16w16": None,  # position-dependent (MHA or MOE)
-    "hipLaunchKernel": "MHA",
-    "q_proj_and_k_up_proj": "MHA",
-    "rope_and_kv_cache": "MHA",
-    "mla_decode": "MHA",
-    "v_up_proj_and_o_proj": "MHA",
-    "triton_poi_fused_as_strided_clone_copy__0": "MHA",
-    "post_attn_layernorm": "EP_AR_before_MOE",
-    "triton_poi_fused_as_strided_clone_1": "EP_AR_before_MOE",
-    "triton_poi": "EP_AR_before_MOE",
-    "rocm_aiter_biased_grouped_topk_impl": "MOE",
-    "mxfp4_moe": "MOE",
+    "input_layernorm":                          "EP_AR",
+    "gemm_a16w16":                              None,   # position-dependent (MHA or MoE_Route)
+    "hipLaunchKernel":                          "MHA",
+    "q_proj_and_k_up_proj":                     "MHA",
+    "rope_and_kv_cache":                        "MHA",
+    "mla_decode":                               "MHA",
+    "v_up_proj_and_o_proj":                     "MHA",
+    "triton_poi_fused_as_strided_clone_copy__0":"MHA",
+    "post_attn_layernorm":                      "EP_AR",
+    "triton_poi_fused_as_strided_clone_1":      "EP_AR",
+    "triton_poi":                               "EP_AR",
+    "rocm_aiter_biased_grouped_topk_impl":      "MoE_Route",
+    "mxfp4_moe":                                None,   # position-dependent: kernel-name disambiguates router/expert/shared
 }
 
 
@@ -94,30 +97,29 @@ def get_pass(operator, occurrence_num):
 
     Operators from trace_layer_detail.py may have 'other:' prefix with full
     kernel name (e.g. 'other:void router_gemm_kernel_float_output<...').
-    We pattern-match these to the correct PASS.
+    Pattern-match these to the correct PASS using user's 7-PASS taxonomy.
     """
     p = PASS_MAP.get(operator)
     if p is not None:
         return p
-    # EP_AR is position-dependent
+    # EP_AR — both occurrences map to the same PASS (no longer split into
+    # before_MHA / before_MOE; user's taxonomy treats them uniformly)
     if "EP_AR" in operator:
-        return "EP_AR_before_MHA" if occurrence_num == 1 else "EP_AR_before_MOE"
+        return "EP_AR"
     # Pattern-match 'other:' prefixed operators by kernel name keywords
     op_lower = operator.lower()
-    if "router_gemm" in op_lower:
-        return "MOE"
+    if "router_gemm" in op_lower or "routingmainkernel" in op_lower or "routingindices" in op_lower:
+        return "MoE_Route"
+    if "fused_a_gemm" in op_lower:
+        return "MoE_Route"
+    if "act_and_mul" in op_lower or "shared" in op_lower:
+        return "Shared_Exp"
     if "finalizekernel" in op_lower or "finalize" in op_lower:
-        return "MOE"
-    if "routingmainkernel" in op_lower or "routingindices" in op_lower:
-        return "MOE"
+        return "MoE_Expert"
     if "bmm_" in op_lower and ("e2m1" in op_lower or "bfloat16" in op_lower):
-        return "MOE"
-    if "act_and_mul" in op_lower:
-        return "MOE"
-    if "fused_a_gemm" in op_lower or "shared" in op_lower:
-        return "MOE"
-    # other/unknown → other
-    return "other"
+        return "MoE_Expert"
+    # other/unknown
+    return "Other"
 
 
 def get_mi355x_pass(module, b200_pass):
@@ -292,12 +294,20 @@ def classify_b200_op(operator):
         return "mla_uv_o_proj"
     if "router" in op:
         return "moe_router"
-    if any(kw in op for kw in ["topk", "expert_sort", "silu", "gate_up", "down_gemm",
-                                "shared", "moe_finalize", "moe_input_quant",
-                                "tensor_copy", "residual_add", "moe_expert_quant",
-                                "bmm_", "finalizekernel", "routingmain", "routingindices",
-                                "act_and_mul", "fused_a_gemm"]):
-        return "moe_compute"
+    # MoE_Route: routing GEMM, TopK, expert sort, MoE input quant
+    if any(kw in op for kw in ["topk", "expert_sort", "moe_input_quant",
+                                "routingmain", "routingindices", "fused_a_gemm"]):
+        return "moe_router"
+    # Shared_Exp: shared expert (silu/mul, shared_quant, shared_GEMM)
+    if any(kw in op for kw in ["silu", "shared", "act_and_mul"]):
+        return "shared_compute"
+    # Residual: tensor_copy, residual_add
+    if any(kw in op for kw in ["tensor_copy", "residual_add"]):
+        return "residual"
+    # MoE_Expert: gate_up_GEMM, down_GEMM, MoE_finalize
+    if any(kw in op for kw in ["gate_up", "down_gemm", "moe_finalize", "moe_expert_quant",
+                                "bmm_", "finalizekernel"]):
+        return "moe_expert"
     return "other"
 
 
@@ -348,8 +358,18 @@ def classify_mi355x_row(module, kernel, gemm_a16w16_count):
         return "comm_pre_moe"
     if "triton_poi" in mod:
         return "comm_pre_moe"
-    if "mxfp4_moe" in mod or "rocm_aiter_biased_grouped_topk" in mod:
-        return "moe_compute"
+    if "rocm_aiter_biased_grouped_topk" in mod:
+        return "moe_router"
+    if "mxfp4_moe" in mod:
+        # mxfp4_moe lumps router (sort/topk) + expert (gemm) on MI355X.
+        # Disambiguate by kernel name: sort/topk → router; gemm → expert.
+        if "sort" in kn or "topk" in kn or "moesort" in kn:
+            return "moe_router"
+        if "moe_gemm" in kn or "moe_mxgemm" in kn:
+            return "moe_expert"
+        if "quant" in kn:
+            return "shared_compute"  # mxfp4_quant_moe_sort_kernel = quant for shared expert
+        return "moe_router"  # default for sort phases
 
     # ── Fallback: kernel name only (when module is empty or unknown) ──
     if "reduce_scatter" in kn or "local_device_load_rmsnorm" in kn:
@@ -366,17 +386,19 @@ def classify_mi355x_row(module, kernel, gemm_a16w16_count):
         return "mla_rope_cache"
     if "bf16gemm" in kn:
         return "mla_qkv_a"
-    if "kernel_moe_mxgemm" in kn or "moesorting" in kn or "grouped_topk" in kn:
-        return "moe_compute"
+    if "kernel_moe_mxgemm" in kn or "moe_gemm" in kn:
+        return "moe_expert"
+    if "moesorting" in kn or "grouped_topk" in kn:
+        return "moe_router"
     if "mxfp4_quant" in kn:
-        return "moe_compute"
+        return "shared_compute"
     if "per_token_scaled_quant" in kn:
         return "mla_input_quant"
 
     return "other"
 
 
-# Canonical order of logical operator groups
+# Canonical order of logical operator groups (execution order in a layer)
 LOGICAL_OP_ORDER = [
     "comm_pre_attn",
     "mla_input_quant",
@@ -389,25 +411,29 @@ LOGICAL_OP_ORDER = [
     "mla_transpose",
     "comm_pre_moe",
     "moe_router",
-    "moe_compute",
+    "shared_compute",
+    "moe_expert",
+    "residual",
     "other",
 ]
 
-# Map logical operator group → PASS name
+# Map logical operator group → PASS name (user's 7-PASS taxonomy)
 LOGOP_TO_PASS = {
-    "comm_pre_attn": "EP_AR_before_MHA",
+    "comm_pre_attn":   "EP_AR",
     "mla_input_quant": "MHA",
-    "mla_qkv_a": "MHA",
-    "mla_qk_norm": "MHA",
-    "mla_q_b_k_up": "MHA",
-    "mla_rope_cache": "MHA",
-    "mla_attn": "MHA",
-    "mla_uv_o_proj": "O_proj",
-    "mla_transpose": "O_proj",
-    "comm_pre_moe": "EP_AR_before_MOE",
-    "moe_router": "MOE",
-    "moe_compute": "MOE",
-    "other": "other",
+    "mla_qkv_a":       "MHA",
+    "mla_qk_norm":     "MHA",
+    "mla_q_b_k_up":    "MHA",
+    "mla_rope_cache":  "MHA",
+    "mla_attn":        "MHA",
+    "mla_uv_o_proj":   "O_proj",
+    "mla_transpose":   "O_proj",
+    "comm_pre_moe":    "EP_AR",
+    "moe_router":      "MoE_Route",
+    "shared_compute":  "Shared_Exp",
+    "moe_expert":      "MoE_Expert",
+    "residual":        "Residual",
+    "other":           "Other",
 }
 
 
@@ -591,69 +617,81 @@ def generate_map(b200_rows, b200_totals, mi355x_rows, mi355x_total, b200_csv_pat
     if unmapped_mi355x:
         checksum_notes.append(f"WARNING: {len(unmapped_mi355x)} MI355X operators unmapped")
 
-    # ── Write CSV ──
-    with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
-        w = csv.writer(f)
+    # ── Write XLSX ──
+    # 11 columns total: PASS + 9 original data columns + Notes
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "kernel_map"
 
-        # Header
-        w.writerow(["B200_Operator", "B200_Raw_Kernel", "B200_Stream", "B200_Avg_us",
-                     "B200_Overlap_us", "B200_Overlap_With",
-                     "MI355X_Module", "MI355X_Kernel", "MI355X_Avg_us", "Notes"])
+    def fmt(v, prec=1):
+        if isinstance(v, (int, float)) and v != "":
+            return f"{v:.{prec}f}"
+        return v
 
-        # Data rows
-        for r in output_rows:
-            w.writerow([
-                r["b200_operator"], r["b200_raw_kernel"], r["b200_stream"],
-                f'{r["b200_avg_us"]:.1f}' if isinstance(r["b200_avg_us"], (int, float)) and r["b200_avg_us"] != "" else r["b200_avg_us"],
-                f'{r["b200_overlap_us"]:.1f}' if isinstance(r["b200_overlap_us"], (int, float)) and r["b200_overlap_us"] != "" else r["b200_overlap_us"],
-                r["b200_overlap_with"],
-                r["mi355x_module"], r["mi355x_kernel"],
-                f'{r["mi355x_avg_us"]:.2f}' if isinstance(r["mi355x_avg_us"], (int, float)) and r["mi355x_avg_us"] != "" else r["mi355x_avg_us"],
-                r["notes"],
-            ])
+    # Header (11 cols)
+    ws.append([
+        "PASS",
+        "B200_Operator", "B200_Raw_Kernel", "B200_Stream", "B200_Avg_us",
+        "B200_Overlap_us", "B200_Overlap_With",
+        "MI355X_Module", "MI355X_Kernel", "MI355X_Avg_us",
+        "Notes",
+    ])
 
-        # Blank line
-        w.writerow([])
+    # Data rows
+    for r in output_rows:
+        ws.append([
+            r.get("pass", ""),
+            r["b200_operator"], r["b200_raw_kernel"], r["b200_stream"],
+            fmt(r["b200_avg_us"], 1),
+            fmt(r["b200_overlap_us"], 1),
+            r["b200_overlap_with"],
+            r["mi355x_module"], r["mi355x_kernel"],
+            fmt(r["mi355x_avg_us"], 2),
+            r["notes"],
+        ])
 
-        # Totals
-        w.writerow(["B200 TOTAL (kernel_sum)", "", "", f"{b200_sum_check:.1f}", "", "",
-                     "MI355X TOTAL", "", f"{mi355x_sum_check:.2f}", ""])
-        if b200_totals.get("walltime"):
-            w.writerow(["B200 Walltime", "", "", f'{b200_totals["walltime"]:.1f}', "", "", "", "", "", ""])
-        if b200_totals.get("overlap"):
-            overlap = b200_totals["overlap"]
-            pct = overlap / b200_sum_check * 100 if b200_sum_check > 0 else 0
-            w.writerow(["B200 Overlap", "", "", f"{overlap:.1f}", "", "", "", "", "",
-                         f"{overlap:.1f}us overlap = {pct:.1f}% of kernel sum"])
+    # Blank line
+    ws.append([])
 
-        # Blank line
-        w.writerow([])
+    # Totals
+    ws.append(["", "B200 TOTAL (kernel_sum)", "", "", f"{b200_sum_check:.1f}", "", "",
+                "MI355X TOTAL", "", f"{mi355x_sum_check:.2f}", ""])
+    if b200_totals.get("walltime"):
+        ws.append(["", "B200 Walltime", "", "", f'{b200_totals["walltime"]:.1f}', "", "", "", "", "", ""])
+    if b200_totals.get("overlap"):
+        overlap = b200_totals["overlap"]
+        pct = overlap / b200_sum_check * 100 if b200_sum_check > 0 else 0
+        ws.append(["", "B200 Overlap", "", "", f"{overlap:.1f}", "", "", "", "", "",
+                   f"{overlap:.1f}us overlap = {pct:.1f}% of kernel sum"])
 
-        # PASS summary
-        w.writerow(["", "Silicon NV", "Silicon AMD", "", "", "", "", "", "", ""])
-        w.writerow(["PASS", "B200", "MI355X", "gap", "NV_Kernels", "AMD_Kernels", "", "", "", ""])
+    ws.append([])
 
-        pass_order = ["EP_AR_before_MHA", "MHA", "O_proj", "EP_AR_before_MOE", "MOE", "other"]
-        for pname in pass_order:
-            b200_val = pass_b200.get(pname, 0)
-            mi355x_val = pass_mi355x.get(pname, 0)
-            gap = mi355x_val - b200_val
-            nv_k = "\n".join(pass_nv_kernels.get(pname, []))
-            amd_k = "\n".join(pass_amd_kernels.get(pname, []))
-            if b200_val > 0 or mi355x_val > 0:
-                w.writerow([pname, f"{b200_val:.1f}", f"{mi355x_val:.2f}",
-                            f"{gap:+.1f}", nv_k, amd_k, "", "", "", ""])
+    # PASS summary (user's 7-PASS taxonomy)
+    ws.append(["", "", "Silicon NV", "Silicon AMD", "", "", "", "", "", "", ""])
+    ws.append(["PASS", "", "B200", "MI355X", "gap", "NV_Kernels", "AMD_Kernels", "", "", "", ""])
+    pass_order = ["EP_AR", "MHA", "O_proj", "MoE_Route", "Shared_Exp", "MoE_Expert", "Residual", "Other"]
+    for pname in pass_order:
+        b200_val = pass_b200.get(pname, 0)
+        mi355x_val = pass_mi355x.get(pname, 0)
+        gap = mi355x_val - b200_val
+        nv_k = "\n".join(pass_nv_kernels.get(pname, []))
+        amd_k = "\n".join(pass_amd_kernels.get(pname, []))
+        if b200_val > 0 or mi355x_val > 0:
+            ws.append([pname, "", f"{b200_val:.1f}", f"{mi355x_val:.2f}",
+                       f"{gap:+.1f}", nv_k, amd_k, "", "", "", ""])
 
-        # Blank line
-        w.writerow([])
+    ws.append([])
 
-        # Footer: data sources + checksum
-        w.writerow(["# Data Sources:", "", "", "", "", "", "", "", "", ""])
-        w.writerow([f"#   B200: {os.path.abspath(b200_csv_path)}", "", "", "", "", "", "", "", "", ""])
-        w.writerow([f"#   MI355X: {os.path.abspath(mi355x_xlsx_path)}", "", "", "", "", "", "", "", "", ""])
-        w.writerow(["# Checksum:", "", "", "", "", "", "", "", "", ""])
-        for note in checksum_notes:
-            w.writerow([f"#   {note}", "", "", "", "", "", "", "", "", ""])
+    # Footer: data sources + checksum
+    ws.append(["# Data Sources:"])
+    ws.append([f"#   B200: {os.path.abspath(b200_csv_path)}"])
+    ws.append([f"#   MI355X: {os.path.abspath(mi355x_xlsx_path)}"])
+    ws.append(["# Checksum:"])
+    for note in checksum_notes:
+        ws.append([f"#   {note}"])
+
+    wb.save(output_path)
 
     print(f"Written: {output_path}")
     print(f"  B200 operators: {len(b200_rows)}, MI355X operators: {len(mi355x_rows)}")
@@ -666,8 +704,11 @@ def main():
     parser = argparse.ArgumentParser(description="Generate B200 vs MI355X kernel map")
     parser.add_argument("--b200-csv", required=True, help="B200 layer_kernel_avg.csv")
     parser.add_argument("--mi355x-xlsx", required=True, help="MI355X decode_breakdown.xlsx")
-    parser.add_argument("--output", default="b200_vs_mi355x_kernel_map.csv", help="Output CSV path")
+    parser.add_argument("--output", default="kernel_map_b200_vs_mi355x.xlsx",
+                        help="Output XLSX path (default: kernel_map_b200_vs_mi355x.xlsx)")
     args = parser.parse_args()
+    if not args.output.endswith(".xlsx"):
+        print(f"WARNING: --output '{args.output}' doesn't end in .xlsx; this script writes XLSX format only.", file=sys.stderr)
 
     b200_rows, b200_totals = parse_b200_csv(args.b200_csv)
     mi355x_rows, mi355x_total = parse_mi355x_xlsx(args.mi355x_xlsx)
