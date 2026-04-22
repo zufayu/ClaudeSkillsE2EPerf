@@ -1,9 +1,9 @@
 # FP4 性能差距分析：B200 vs MI355X — Breakdown 调查
 
-> **Last updated:** 2026-04-17 v33
+> **Last updated:** 2026-04-22 v34
 > **Model:** DeepSeek-R1-0528-NVFP4-v2, FP4
 > **配置：** EP=8, DP=false, c=64, TP=8, chat 1K/1K
-> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅；**MI355X TP=8+EP 公平对标完成 ✅**；**B200 4GPU torch trace per-layer 分析完成 ✅**；**Multi-stream overlap 分析完成 ✅**；**TP=4 分段执行分析+优化方向完成 ✅**；**v33 PASS 级优化预估完成 ✅**
+> **状态：** B200 trace 完成 ✅；Per-Module Kernel 分析完成 ✅；10 层平均数据完成 ✅；nvjet E4M3 源码考证完成 ✅；权重精度考证完成 ✅；算子级重构完成 ✅；MI355X 复现完成 ✅；MI355X 配置对齐复测完成 ✅；MI355X TPOT 25ms 来源分析完成 ✅；MI355X bs=64 kernel breakdown 修正完成 ✅；**MI355X TP=8+EP 公平对标完成 ✅**；**B200 4GPU torch trace per-layer 分析完成 ✅**；**Multi-stream overlap 分析完成 ✅**；**TP=4 分段执行分析+优化方向完成 ✅**；**v33 PASS 级优化预估完成 ✅**；**v34 EP1 TP4 算子级对比完成 ✅**
 
 ## 目录
 
@@ -18,6 +18,7 @@
     - [PASS 功能分组汇总](#pass-功能分组汇总)
     - [TP=4 单层分段执行分析](#tp4-单层分段执行分析)
     - [分析和结论（v33）](#分析和结论v33)
+  - [TP4-C64 EP1 算子级对比](#tp4-c64-ep1-算子级对比)
   - [TP=8 C=4 算子级对比](#tp8-c4-算子级对比)
 - [MI355X TPOT 来源分析](#mi355x-tpot-来源分析)
 - [精度说明](#精度说明)
@@ -82,6 +83,8 @@
 | **MI355X** | **ATOM 0.1.3** | **EP1 TP4** | **bench** | **5411.0** | **1352.8** | **2704.9** | **22.4** | **90.3** | **44.57** |
 | **MI355X** | **ATOM 0.1.3** | **EP4 TP4** | **bench** | **5079.0** | **1269.8** | **2538.9** | **24.6** | **97.9** | **40.66** |
 | **MI355X** | **ATOM 0.1.3** | **EP4 TP4** | **profiling** | **4966.7** | **1241.7** | **2482.8** | **25.1** | **101.5** | — |
+| **MI355X** | **ATOM 0.1.3** | **EP1 TP4** | **profiling** | **5013.4** | **1253.4** | **2506.1** | **24.6** | **103.1** | — |
+| B200 | SGLang | EP1 TP4 | Ours-profiling | 5893.7 | 1473.4 | 2946.2 | 19.1 | 412.6 | — |
 | B200 | SGLang | EP4 TP4 | Ours-profiling | 6152.7 | 1538.2 | 3075.6 | 19.0 | 401.0 | 52.63 |
 | ~~MI355X~~ | ~~ATOM 0.1.1~~ | ~~EP1 TP4~~ | ~~bench~~ | ~~4906.9~~ | ~~1226.7~~ | ~~2452.9~~ | ~~25.5~~ | ~~104.4~~ | ~~39.28~~ |
 | ~~MI355X~~ | ~~ATOM 0.1.1~~ | ~~EP4 TP4~~ | ~~bench~~ | ~~4753.6~~ | ~~1188.4~~ | ~~2376.3~~ | ~~26.2~~ | ~~100.9~~ | ~~38.17~~ |
@@ -587,6 +590,82 @@ bs_weighted_avg_gap = sum(gap_ms × bs) / sum(bs)
 - [x] MI355X TP=8+EP 公平对标（v21：TP/EP 与 B200 对齐，kernel sum 267.6μs 反超 B200 276.9μs，MoE 差距从 2x→1.1x）
 - [x] 4GPU 跨框架对比表（v23：B200 SGLang/TRT-LLM + MI355X ATOM，ratio=0.8 对齐，含 SA InferenceX 基线）
 - [x] B200 4GPU per-layer torch trace 分析（v24：SGLang 4GPU TP=4 EP=4，torch profiler，FMHA 层切分+position module 分配，25 算子 × 8 module）
+
+### TP4-C64 EP1 算子级对比
+
+> **v34 新增：EP1 TP4 c=64 算子级对比**
+>
+> **数据来源：**
+> - B200: SGLang v0.5.9 torch profiler trace，TP=4 EP=1，chat 1K/1K c=64。FMHA 层锚点切分，position-based module 分配，第 10-40 层平均，4410 层样本。
+>   - Kernel sum: 346.1μs/layer，Elapsed(关键路径): 285.9μs/layer，Overlap: 60.1μs (17.4%)
+>   - 验证: 285.9 × 61 = 17.56ms ≈ decode walltime 17.57ms（误差 <0.1%）
+> - MI355X: ATOM rocm722 (0.1.3.dev71) Kineto trace，TP=4 EP=1，chat 1K/1K c=64。reduce_scatter 层锚点切分，第 3-59 层平均，56 层样本，**334.9μs/layer**
+>   - 单流串行执行（HIP Graph 单 stream capture），无 multi-stream overlap
+>   - 验证: 334.9 × 61 = 20.43ms ≈ decode walltime 20.03ms（误差 2%）
+> - **配置对齐：** 两平台均 4GPU TP=4 EP=1，per-GPU MoE 权重量相同（256 experts/GPU，全复制）
+> - **对比基准：** B200 使用 elapsed（关键路径），MI355X 使用 kernel sum（=elapsed，单流）
+
+#### EP1 算子级对比表（按执行时序对齐）
+
+| # | B200_Module | B200_Operator | B200_Kernel | B200_us | MI355X_Module | MI355X_Kernel | MI355X_us | Notes |
+|---|------------|--------------|-------------|---------|--------------|--------------|-----------|-------|
+| 1 | EP_AR | EP_AR+residual+RMSNorm(fused) | allreduce_fusion_kernel_oneshot_lamport | 13.0* | input_layernorm | reduce_scatter_cross_device_store | 14.1 | B200 fuses AR+residual+RMSNorm; *estimated from 23.5/2 |
+| 2 | | | | | input_layernorm | local_device_load_rmsnorm | 4.7 | MI355X only (comm+norm split) |
+| 3 | | | | | input_layernorm | dynamic_per_token_scaled_quant<32> | 4.3 | MI355X only (FP8 input quant) |
+| 4 | Attention | qkv_a_proj_GEMM | nvjet_splitK_TNT | 19.4 | gemm_a8w8 | kernel_gemm_xdl_cshuffle_v3_multi_d_b_preshuffle (128×16×32) | 11.1 | B200 FP4 splitK; MI355X FP8 preshuffle |
+| 5 | Attention | qkv_a_splitK_reduce | splitKreduce_kernel | 3.7 | | | | B200 only |
+| 6 | Attention | q/k_norm_RMSNorm ×2 | RMSNormKernel | 5.5 | q_proj_and_k_up_proj | fused_qk_rmsnorm_group_quant_kernel | 4.2 | MI355X fuses both norms into 1 kernel |
+| 7 | Attention | q_b_proj_GEMM | nvjet_v_bz_TNN | 6.4 | gemm_a8w8 | kernel_gemm_xdl_cshuffle_v3_multi_d_b_preshuffle (256×32×64) | 7.0 | |
+| 8 | Attention | uk_gemm(K_expansion) | nvjet_v_bz_TNT | 4.4 | batched_gemm | batched_gemm_a8w8_M32_N128_K128 | 5.8 | |
+| 9 | Attention | RoPE+KV_cache_write | RopeQuantizeKernel | 2.7 | rope_and_kv_cache | fuse_qk_rope_concat_and_cache_mla_per_head_kernel | 4.5 | |
+| 10 | Attention | set_mla_kv | set_mla_kv_buffer_kernel | 1.7 | | | | B200 only |
+| 11 | Attention | Attention(FMHA) | fmhaSm100fKernel | 20.5 | mla_decode | mla_a8w8_qh16_qseqlen1_gqaratio16_ps | 26.4 | |
+| 12 | | | | | mla_decode | kn_mla_reduce_v1_ps<512,16,1> | 5.5 | MI355X only (MLA reduce) |
+| 13 | Proj | o_proj_quant(BF16→FP4) | cvt_fp16_to_fp4 | 2.2 | | dynamic_per_token_scaled_quant<16> | 4.3 | |
+| 14 | Proj | uv_gemm(V_expansion) | nvjet_h_bz_TNT | 4.0 | v_up_proj_and_o_proj | batched_gemm_a8w8_M32_N64_K128 | 4.7 | |
+| 15 | Proj | o_proj_GEMM | DeviceGemmFp4GemmSm100 (256×256) | 11.2 | v_up_proj_and_o_proj | FlatmmKernel (FlyDSL cktile) | 11.4 | B200 FP4 Cutlass; MI355X FP8 FlatMM |
+| 16 | EP_AR | EP_AR+residual+RMSNorm(fused) #2 | allreduce_fusion_kernel_oneshot_lamport | 10.5* | post_attn_layernorm | reduce_scatter_cross_device_store | 14.1 | *estimated from 23.5/2 |
+| 17 | | | | | post_attn_layernorm | local_device_load_rmsnorm | 4.7 | MI355X only |
+| 18 | | | | | | triton_poi_fused_as_strided_clone ×3 | 13.5 | MI355X only (tensor reshape) |
+| 19 | MoE_Route | shared_expert(FP4 GEMMs+SiLU) | DeviceGemmFp4 ×2 + SiLU + cvt×2 | 29.0 | gemm_a16w16 | bf16gemm_fp32bf16_tn_64x64_splitk_clean | 8.9 | B200 shared expert parallel w/ MoE(cross-stream); MI355X router GEMM |
+| 20 | MoE_Route | router_GEMM | nvjet_h_bz_splitK_TNT | 12.6 | mxfp4_moe | grouped_topk_opt_sort_kernel | 4.2 | |
+| 21 | MoE_Route | router_splitK_reduce | splitKreduce_kernel | 3.5 | mxfp4_moe | MoeSortingMultiPhaseKernel_P0_v2 + P23 | 8.7 | |
+| 22 | MoE_Route | TopK_select | routingMainKernel | 4.5 | mxfp4_moe | mxfp4_quant_moe_sort_kernel<256> | 7.7 | |
+| 23 | MoE_Route | expert_sort | routingIndicesClusterKernel | 5.4 | mxfp4_moe | mxfp4_quant_moe_sort_kernel<8> | 5.6 | |
+| 24 | MoE_Expert | MoE_input_quant(BF16→FP4) | quantize_with_block_size | 3.7 | | | | B200 only: FP4 quant for MoE input |
+| 25 | MoE_Expert | tensor_copy | unrolled_elementwise_kernel | 3.6 | | | | B200 only |
+| 26 | MoE_Expert | gate_up_GEMM(+SwiGLU) | bmm_E2m1_E2m1E2m1 | 101.7 | mxfp4_moe | kernel_moe_mxgemm_2lds<MulABScaleShuffled> (CK) | 102.1 | EP1: FlyDSL tune match (expert=257,topk=9) |
+| 27 | MoE_Expert | down_GEMM | bmm_Bfloat16_E2m1E2m1 | 66.5 | mxfp4_moe | kernel_moe_mxgemm_2lds<MulABScaleExpertWeight> (CK) | 57.0 | |
+| 28 | MoE_Expert | MoE_finalize+residual | finalizeKernelVecLoad | 8.3 | | | | B200 only |
+| 29 | Residual | residual_add | vectorized_elementwise_kernel | 2.1 | | | | B200 only |
+| | | | | **B200 kernel_sum: 346.1** | | | | |
+| | | | | **B200 walltime: 285.9** | | | **MI355X TOTAL: 334.9** | |
+| | | | | **B200 overlap: 60.1** | | | | |
+
+#### EP1 PASS 功能分组汇总
+
+| PASS | B200 kernel_sum | B200 walltime | MI355X EP1 | MI355X EP4 | EP1 vs EP4 |
+|------|----------------|---------------|-----------|-----------|-----------|
+| EP_AR before MHA | 13.0 | ~13 | 23.1 | 37.9 | -39% |
+| MHA (qkv→uv) | 64.4 | ~59 | 73.5 | 68.7 | +7% |
+| O_proj | 17.4 | ~17 | 20.4 | 15.5 | +32% |
+| EP_AR before MOE | 10.5 | ~10 | 32.3 | 17.5 | +85% |
+| MOE (router→finalize) | 234.5 | ~182 | 185.6 | 219.8 | -16% |
+| Residual | 5.7 | ~5 | 0 | 0 | — |
+| **SUM** | **346.1** | **285.9** | **334.9** | **363.8** | **-8%** |
+
+> **EP1 vs EP4 关键差异：**
+> - **MoE GEMM 大幅缩短 (-16%)：** EP1 gate_up 102.1 vs EP4 119.5, down 57.0 vs 58.0。EP1 全部 256 experts 在同一 GPU，CK tune entry (expert=257,topk=9) 匹配，走优化路径
+> - **EP_AR before MHA 大幅缩短 (-39%)：** EP1 reduce_scatter 14.1 vs EP4 33.1。EP1 无 expert 分区通信，仅 TP AllReduce
+> - **EP_AR before MOE 增大 (+85%)：** EP1 32.3 vs EP4 17.5。可能由于 triton_poi tensor reshape 开销增加
+> - **MHA 略增 (+7%)：** 基本一致，与 EP 无关
+> - **O_proj 增大 (+32%)：** EP1 20.4 vs EP4 15.5。FlatMM 时间一致 (11.4 vs 11.3)，差异来自 quant 和 batched_gemm
+>
+> **B200 vs MI355X EP1 差距：**
+> - B200 walltime 285.9 vs MI355X 334.9 → **差距 49μs (17%)**
+> - B200 overlap 贡献 60.1μs (kernel_sum 346.1 → walltime 285.9)
+> - **去除 overlap 后算子效率：** B200 346.1 vs MI355X 334.9 → **MI355X kernel sum 反超 3%**
+> - 即 B200 的 17% 领先完全来自 multi-stream overlap (lamport dual-stream + shared expert parallel)
 
 ### TP=8 C=4 算子级对比
 
