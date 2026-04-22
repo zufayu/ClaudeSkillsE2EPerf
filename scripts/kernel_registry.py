@@ -345,6 +345,89 @@ def classify_category(name):
     return "Other"
 
 
+# =============================================================================
+# Display-format helpers (for extract_cuda_kernels_torch_trace.py output compat)
+# =============================================================================
+# extract_cuda_kernels uses a finer-grained module taxonomy in CSV/log output
+# (qkv_proj / rope_attn / out_proj / pre_attn / post_attn / router / moe / ...)
+# than the canonical OPERATOR_TO_MODULE map (MHA / O_proj / MoE / Comm / ...).
+# This table preserves the legacy display format so migrating extract_cuda_kernels
+# to use kernel_registry doesn't churn downstream CSV consumers.
+
+B200_DISPLAY_PREFIX = {
+    # pre_attn (MoE finalize / residual feeding into next layer's input)
+    "MoE_finalize+residual":   "pre_attn",
+    "residual_add":            "pre_attn",
+    # comm (lamport AR + catch-all)
+    "lamport_AR+RMSNorm":      "comm",
+    "allreduce/other":         "comm",
+    # qkv_proj (Q-down / K-norm / Q-up / K_concat — pre-FMHA path)
+    "qkv_a_proj_GEMM":         "qkv_proj",
+    "qkv_a_splitK_reduce":     "qkv_proj",
+    "q/k_norm_RMSNorm":        "qkv_proj",
+    "q_b_proj_GEMM":           "qkv_proj",
+    "uk_gemm":                 "qkv_proj",
+    "k_concat":                "qkv_proj",
+    # rope_attn (RoPE / KV-write / FMHA)
+    "RoPE+KV_write":           "rope_attn",
+    "Attention_FMHA":          "rope_attn",
+    "set_mla_kv":              "rope_attn",
+    # out_proj (V-up + O-projection + post-attn FP4 GEMM)
+    "uv_gemm":                 "out_proj",
+    "o_proj_splitK_GEMM":      "out_proj",
+    "o_proj_GEMM":             "out_proj",          # 1st occurrence of FP4 GEMM (was "out_proj/shared: FP4_GEMM" in legacy)
+    "shared_GEMM":             "out_proj/shared",   # 2nd occurrence (split for accuracy; was lumped before)
+    # quant (FP4 conversion / blockwise quant + position-dependent variants)
+    "FP4_blockwise_quant":     "quant",
+    "FP4_convert":             "quant",
+    "o_proj_quant":            "quant",
+    "shared_quant":            "quant",
+    # post_attn (TP AR + EP allgather)
+    "TP_AR+RMSNorm":           "post_attn",
+    "EP_allgather":            "post_attn",
+    # router (TopK + router GEMM)
+    "router_GEMM":             "router",
+    "router_splitK_reduce":    "router",
+    "TopK_select":             "router",
+    "expert_sort":             "router",
+    # moe (gate_up + down GEMMs)
+    "gate_up_GEMM":            "moe",
+    "down_GEMM":               "moe",
+    # shared (SiLU activation)
+    "SiLU_mul":                "shared",
+    # mem
+    "memop":                   "mem",
+    "tensor_copy":             "mem",
+    # legacy cuBLAS — typically appears in router or shared paths
+    "cuBLAS_GEMM_legacy":      "router",
+}
+
+
+def display_name(operator, platform="b200"):
+    """Format operator for output: 'display_prefix: operator'.
+
+    Returns the same format as extract_cuda_kernels_torch_trace.py's inline
+    B200_KERNEL_MAP (e.g. 'qkv_proj: qkv_a_proj_GEMM') so analysis output
+    stays compatible across migration.
+
+    For position-dependent kernels (operator=None), returns None — callers
+    must classify_by_position() first then call display_name() with the result.
+
+    For unknown operators (other: ...), returns the operator string unchanged.
+    """
+    if operator is None or operator.startswith("other:"):
+        return operator
+    if platform.lower() in ("b200", "b300", "h20", "h200"):
+        prefix = B200_DISPLAY_PREFIX.get(operator)
+    else:
+        prefix = None  # MI355X uses different display format; fallback to module
+    if prefix is None:
+        # Fallback: lowercase canonical module name
+        mod = get_module(operator)
+        prefix = mod.lower() if mod else "other"
+    return f"{prefix}: {operator}"
+
+
 def get_module(operator):
     """Get the module/PASS for an operator. Returns None if unknown."""
     return OPERATOR_TO_MODULE.get(operator)
