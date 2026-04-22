@@ -116,3 +116,6 @@
 
 ## B300 Environment
 - [B300 env details](reference_b300_env.md) — 8×B300 SXM6 AC 275GB, driver 595, runner `b300-runner`, no dedicated container yet
+
+## Refactor Validation (refactor/workflow-consolidation, 2026-04-22)
+- [End-to-end validation status](project_refactor_validation.md) — 11 bugs found via B300 SGLang FP4 test, 10 fixed (commits f74d62f..4fd116a), 1 deferred to KR-Migration (kernel_registry missing 8 patterns). Last good run #24771031787 within 2% of bench baseline.

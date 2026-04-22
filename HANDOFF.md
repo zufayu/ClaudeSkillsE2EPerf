@@ -6,7 +6,21 @@
 refactor/workflow-consolidation
 ```
 
-Commit: `95eabc8` — "refactor: workflow consolidation + structural error prevention"
+Latest commit: `4fd116a`
+
+**HEAD timeline (validation + fix work, 2026-04-22):**
+- `4fd116a` fix(atom-trace): default PROFILE_NUM_PROMPTS=CONC*2 + dual-signal flush wait
+- `c3ce1ef` fix(workflow): always-run 'Fix file ownership' step in 8 unified workflows
+- `e104665` fix(compare_traces): recognize project's own torch trace analysis CSVs
+- `54d16dc` fix(profiling): fix_torch_trace_pro.py uses argparse
+- `fbfd294` fix(bench): sa_bench_sglang.sh accepts --platform
+- `6d06aea` fix(profiling): collect_sglang_trace.sh accepts --platform
+- `35cf0a2` fix(platform): env vars now overridable + b300 path corrected + min 100 profile steps
+- `f74d62f` fix(profiling): auto-derive PROFILE_STEPS/START_STEP from bench params
+- `334c03c` docs: add HANDOFF.md (original)
+- `95eabc8` refactor: workflow consolidation + structural error prevention (initial)
+
+See `.claude/memory/project_refactor_validation.md` for the bug list and validation evidence.
 
 **不要 push 到 remote** — main 分支有正在跑的任务。等用户确认后再 merge。
 
@@ -121,6 +135,18 @@ scripts/run_b200_sweep.sh     # 被 workflow dispatch 取代
 3. **`workflow_dispatch` 新文件缓存问题** — GitHub 可能不立即识别新 workflow。首次可加临时 `push:` trigger 让 GitHub 注册（见 `feedback_remote_workflow_pitfalls.md` §4）。
 
 4. **sa_bench_trt.sh 的 `--platform` 参数** — 当前 workflow 都传 `b200`。如果要给 H20/H200 用，需要新建 workflow 文件（`h20_trt_bench.yml`）或加 platform input。
+
+---
+
+## Validation status (2026-04-22)
+
+11 bugs found via end-to-end B300 test (run #24771031787, 4 min, all phases ✅).
+**10 fixed in HEAD timeline above. 1 remaining is bug #5 (kernel_registry missing
+patterns) — defer to KR-Migration plan, see project_refactor_validation.md.**
+
+Last good run produced: 286k events, 5125 FMHA samples, per-layer breakdown
+clean (FMHA-to-FMHA median 117μs, 26 kernels/layer). Output 1010 tok/s and
+TPOT 7.39ms within 2% of bench (no profiler regression).
 
 ---
 
