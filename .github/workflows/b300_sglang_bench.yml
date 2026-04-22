@@ -59,7 +59,7 @@ jobs:
       - name: Run benchmark
         run: |
           source scripts/ci_lib.sh && ci_load_platform b300
-          ARGS="--model $MODEL --tp ${{ inputs.tp }} --ep ${{ inputs.ep }} --scenario ${{ inputs.scenario }} --concurrency ${{ inputs.concurrency }} --container-image $IMAGE --result-dir ./$RESULT_DIR"
+          ARGS="--model $MODEL --tp ${{ inputs.tp }} --ep ${{ inputs.ep }} --scenario ${{ inputs.scenario }} --concurrency ${{ inputs.concurrency }} --container-image $IMAGE --platform ${PLATFORM^^} --result-dir ./$RESULT_DIR"
           ci_exec "cd $REPO && bash scripts/sa_bench_sglang.sh $ARGS"
 
       - name: Show results

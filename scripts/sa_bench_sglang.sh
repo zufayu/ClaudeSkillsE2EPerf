@@ -22,6 +22,8 @@ SCENARIO="chat"
 CONCURRENCY=64
 RESULT_DIR="./results_sglang"
 CONTAINER_IMAGE=""
+# Platform tag — used in summary.md header. Default 'B200' for backward compat.
+PLATFORM_TAG="B200"
 
 # SA InferenceX server parameters (from dsr1_fp4_b200.sh)
 MEM_FRACTION_STATIC=0.85
@@ -46,6 +48,7 @@ usage() {
     echo "  --result-dir DIR      Result output directory (default: ./results_sglang)"
     echo "  --container-image IMG Container image name for metadata"
     echo "  --port N              Server port (default: 8888)"
+    echo "  --platform NAME       Platform name for summary header (default: B200)"
     exit 1
 }
 
@@ -59,6 +62,7 @@ while [[ $# -gt 0 ]]; do
         --result-dir)      RESULT_DIR="$2"; shift 2 ;;
         --container-image) CONTAINER_IMAGE="$2"; shift 2 ;;
         --port)            PORT="$2"; shift 2 ;;
+        --platform)        PLATFORM_TAG="$2"; shift 2 ;;
         -h|--help)         usage ;;
         *)                 echo "Unknown option: $1"; usage ;;
     esac
@@ -166,7 +170,7 @@ generate_summary() {
 
     cat > "$summary_file" <<EOF
 # DeepSeek R1 Benchmark Results (SGLang)
-## B200 ${GPU_COUNT}×GPU
+## ${PLATFORM_TAG} ${GPU_COUNT}×GPU
 
 | Config | Quant | Scenario | TP | EP | CONC | Total Tput | Output Tput | Interac. | TPOT (ms) | TTFT (ms) |
 |--------|-------|----------|----|----|------|------------|-------------|----------|-----------|-----------|
