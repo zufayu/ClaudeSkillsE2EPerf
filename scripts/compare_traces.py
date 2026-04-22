@@ -164,6 +164,61 @@ def extract_from_json(json_path):
         return json.load(f)
 
 
+def extract_from_kernel_breakdown_csv(csv_path):
+    """Extract from collect_sglang_trace.sh's kernel_breakdown_*.csv output.
+
+    Columns: rank, operator, avg_us, pct, avg_count, total_us, n_steps_present, kernel_names
+    Operator format is 'module: name' (e.g. 'comm: lamport_AR+RMSNorm') — derive
+    category from the prefix and aggregate.
+
+    Returns (categories_dict, kernels_dict) compatible with compare_categories
+    (scalar ns) / compare_kernels ({total_us, count}).
+    """
+    categories = {}
+    kernels = {}
+    with open(csv_path) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            op = row.get("operator", "").strip()
+            if not op:
+                continue
+            total_us = float(row.get("total_us", 0))
+            count = float(row.get("avg_count", 0))
+            # Derive category: prefix before ':' (e.g. 'comm', 'attn', 'moe', 'other')
+            cat = op.split(":", 1)[0].strip() if ":" in op else "Other"
+            # compare_categories treats values as nanoseconds (divides by 1e6 → ms)
+            categories[cat] = categories.get(cat, 0) + total_us * 1000
+            kernels[op] = {
+                "total_us": total_us,
+                "count": count,
+            }
+    return categories, kernels
+
+
+def extract_from_per_layer_csv(csv_path):
+    """Extract from collect_sglang_trace.sh's per_layer_breakdown_*.csv output.
+
+    Columns: module, operator, avg_us, pct, module_elapsed_us, avg_count,
+             total_us, n_layers, kernel_names
+    Has explicit `module` column — use directly as category.
+    """
+    categories = {}
+    kernels = {}
+    with open(csv_path) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            mod = row.get("module", "").strip() or "Other"
+            op = row.get("operator", "").strip() or row.get("kernel_names", "?")[:60]
+            total_us = float(row.get("total_us", 0))
+            count = float(row.get("avg_count", 0))
+            categories[mod] = categories.get(mod, 0) + total_us * 1000
+            kernels[op] = {
+                "total_us": total_us,
+                "count": count,
+            }
+    return categories, kernels
+
+
 # ---- Comparison logic ----
 def pct_delta(new, old):
     if old == 0:
@@ -295,6 +350,11 @@ def detect_type(path):
                 return "ncu_csv"
             if "bs" in header and "avg_ms" in header:
                 return "decode_csv"
+            # Project's own torch trace analysis outputs:
+            if "module" in header and "operator" in header and "module_elapsed_us" in header:
+                return "per_layer_csv"      # per_layer_breakdown_*.csv
+            if "operator" in header and "avg_us" in header and "pct" in header:
+                return "kernel_breakdown_csv"  # kernel_breakdown_*.csv
     return "unknown"
 
 
@@ -360,9 +420,35 @@ def main():
         output_lines.append("")
         output_lines.append(compare_categories(base_cats, curr_cats, md=args.md))
 
+    elif base_type == "kernel_breakdown_csv" and curr_type == "kernel_breakdown_csv":
+        base_cats, base_kernels = extract_from_kernel_breakdown_csv(args.baseline)
+        curr_cats, curr_kernels = extract_from_kernel_breakdown_csv(args.current)
+
+        output_lines.append("## Category Breakdown (from kernel_breakdown.csv)")
+        output_lines.append("")
+        output_lines.append(compare_categories(base_cats, curr_cats, md=args.md))
+        output_lines.append("")
+        output_lines.append(f"## Top {args.top} Operators")
+        output_lines.append("")
+        output_lines.append(compare_kernels(base_kernels, curr_kernels, top_n=args.top, md=args.md))
+
+    elif base_type == "per_layer_csv" and curr_type == "per_layer_csv":
+        base_cats, base_kernels = extract_from_per_layer_csv(args.baseline)
+        curr_cats, curr_kernels = extract_from_per_layer_csv(args.current)
+
+        output_lines.append("## Module Breakdown (from per_layer_breakdown.csv)")
+        output_lines.append("")
+        output_lines.append(compare_categories(base_cats, curr_cats, md=args.md))
+        output_lines.append("")
+        output_lines.append(f"## Top {args.top} Operators")
+        output_lines.append("")
+        output_lines.append(compare_kernels(base_kernels, curr_kernels, top_n=args.top, md=args.md))
+
     else:
         print(f"ERROR: Cannot compare {base_type} with {curr_type}", file=sys.stderr)
-        print(f"Supported: sqlite+sqlite, ncu_csv+ncu_csv, decode_csv+decode_csv, json+json",
+        print(f"Supported: sqlite+sqlite, ncu_csv+ncu_csv, decode_csv+decode_csv, json+json,",
+              file=sys.stderr)
+        print(f"           kernel_breakdown_csv+kernel_breakdown_csv, per_layer_csv+per_layer_csv",
               file=sys.stderr)
         sys.exit(1)
 
