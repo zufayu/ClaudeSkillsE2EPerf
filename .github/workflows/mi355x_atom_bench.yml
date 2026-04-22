@@ -69,6 +69,12 @@ jobs:
         if: always()
         run: cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo "No summary"
 
+      - name: Fix file ownership (always) — prevents next checkout's clean from failing
+        if: always()
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform mi355x
+          ci_fix_ownership "$RESULT_DIR" || true
+
       - name: Commit results
         if: always()
         run: |
