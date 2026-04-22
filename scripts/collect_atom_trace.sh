@@ -57,7 +57,9 @@ GPU_MEM_UTIL=0.90
 KV_CACHE_DTYPE="fp8"
 MAX_NUM_SEQS=512
 MAX_MODEL_LEN=""
-PROFILE_NUM_PROMPTS=""      # defaults to WARMUP_NUM_PROMPTS if not set
+PROFILE_NUM_PROMPTS=""      # defaults to CONC*2 (matches ATOM CI regression flow + SA InferenceX)
+                            # Old default CONC*10 produced huge traces (~3GB compressed for c=64).
+                            # CONC*2 still yields >100 decode steps for stable operator-time averaging.
 ROCTRACER_MAX_EVENTS=""     # if set, auto-generate libkineto.conf (default 1M, use 10M+ for long traces)
 FLUSH_TIMEOUT=300
 LAYER=40
@@ -157,7 +159,7 @@ esac
 WARMUP_NUM_PROMPTS=$(( CONCURRENCY * 2 ))
 
 # Profile prompts default to benchmark standard: CONC * 10
-[[ -z "$PROFILE_NUM_PROMPTS" ]] && PROFILE_NUM_PROMPTS=$(( CONCURRENCY * 10 ))
+[[ -z "$PROFILE_NUM_PROMPTS" ]] && PROFILE_NUM_PROMPTS=$(( CONCURRENCY * 2 ))
 
 # If MAX_MODEL_LEN not set, let ATOM use its default (no --max-model-len passed)
 
@@ -198,23 +200,41 @@ cleanup_residual() {
 }
 
 # ======================== Wait for Trace Flush ================================
-# Waits for the run trace .json.gz to appear AND the uncompressed .json to
-# vanish. The profiler writes .tmp -> .json -> .json.gz; if we only check
-# for .json.gz we may catch it mid-compression (corrupt file).
+# Two complementary signals (in OR — first to fire wins):
+#  (1) server log "Profiler stopped." count incremented
+#      — most reliable; same pattern as ATOM CI's atom_test.sh
+#  (2) .json.gz appears AND uncompressed .json is gone
+#      — fallback; profiler writes .tmp -> .json -> .json.gz
+#
+# Caller must record PROFILER_STOPPED_COUNT_BEFORE before invoking.
 wait_for_trace_flush() {
+    local server_log="$1"            # path to server log file (optional, omit to skip log signal)
+    local before_count="${2:-0}"     # baseline "Profiler stopped." count (optional)
     log "Waiting for trace flush (timeout ${FLUSH_TIMEOUT}s)..."
     local wait_elapsed=0
 
     while true; do
+        # Signal 1: server log "Profiler stopped." count incremented
+        if [[ -n "$server_log" && -f "$server_log" ]]; then
+            local now_count
+            now_count=$(grep -c "Profiler stopped\." "$server_log" 2>/dev/null || echo 0)
+            if [[ "$now_count" -gt "$before_count" ]]; then
+                log "  Trace flush signal: server log '$now_count > $before_count Profiler stopped.' (after ${wait_elapsed}s)"
+                # Brief settle so .json.gz finishes appearing
+                sleep 2
+                local gz_file
+                gz_file=$(ls "$TRACE_DIR"/rank_0/*.json.gz 2>/dev/null | grep -v capture_graph | head -1) || true
+                [[ -n "$gz_file" ]] && log "  Trace file: $(basename "$gz_file") ($(du -h "$gz_file" | cut -f1))"
+                return 0
+            fi
+        fi
+
+        # Signal 2: file rename (.json -> .json.gz) — fallback if log path unavailable
         local gz_file json_file
         gz_file=$(ls "$TRACE_DIR"/rank_0/*.json.gz 2>/dev/null | grep -v capture_graph | head -1) || true
         json_file=$(ls "$TRACE_DIR"/rank_0/*.json 2>/dev/null | grep -v capture_graph | head -1) || true
-
-        # Done when .json.gz exists AND .json (uncompressed) is gone
-        if [[ -n "$gz_file" ]] && [[ -z "$json_file" ]]; then
-            local size
-            size=$(du -h "$gz_file" | cut -f1)
-            log "  Trace flush complete: $(basename "$gz_file") ($size)"
+        if [[ -n "$gz_file" && -z "$json_file" ]]; then
+            log "  Trace flush complete (file rename): $(basename "$gz_file") ($(du -h "$gz_file" | cut -f1))"
             return 0
         fi
 
@@ -442,6 +462,11 @@ python3 -u -m atom.benchmarks.benchmark_serving \
 log "Warmup benchmark done."
 
 # Step 4: Profile (same config to capture prefill-decode interleaving)
+# Snapshot server log "Profiler stopped." count BEFORE start, so flush wait
+# can detect new completions reliably (per ATOM CI atom_test.sh).
+SERVER_LOG_PATH="$RESULT_DIR/server_${TAG}.log"
+PROFILER_STOPPED_BEFORE=$(grep -c "Profiler stopped\." "$SERVER_LOG_PATH" 2>/dev/null || echo 0)
+log "Profiler stopped count before run: $PROFILER_STOPPED_BEFORE"
 log "Starting profiler..."
 curl -s -X POST "http://0.0.0.0:${SERVER_PORT}/start_profile" || {
     log "ERROR: Failed to start profiler"; exit 1
@@ -482,8 +507,9 @@ log "Profiled benchmark done."
 log "Stopping profiler..."
 curl -s -X POST "http://0.0.0.0:${SERVER_PORT}/stop_profile" || true
 
-# Step 5: Wait for trace flush (must complete before killing server)
-wait_for_trace_flush
+# Step 5: Wait for trace flush (must complete before killing server).
+# Pass server log + baseline count: log signal fires first, file rename is fallback.
+wait_for_trace_flush "$SERVER_LOG_PATH" "$PROFILER_STOPPED_BEFORE"
 
 # Step 6: Stop server
 log "Stopping server..."
