@@ -96,6 +96,9 @@ OPERATOR_TO_MODULE = {
     "shared_GEMM":                      "Shared",
     "shared_quant":                     "Shared",
 
+    # Legacy GEMM (cuBLAS path — typically router or shared expert)
+    "cuBLAS_GEMM_legacy":               "GEMM",
+
     # Quantization
     "FP4_blockwise_quant":              "Quant",
     "FP4_convert":                      "Quant",
@@ -117,6 +120,7 @@ MODULE_TO_CATEGORY = {
     "Comm":     "Communication",
     "MHA":      "Attention",
     "O_proj":   "GEMM/Projection",
+    "GEMM":     "GEMM/Projection",
     "Router":   "MoE/Expert",
     "MoE":      "MoE/Expert",
     "Shared":   "MoE/Expert",
@@ -149,7 +153,7 @@ B200_OPERATOR_MAP = OrderedDict([
     # RoPE + Attention
     (r"RopeQuantizeKernel|applyMLARopeAndAssignQKV", "RoPE+KV_write"),
     (r"set_mla_kv_buffer", "set_mla_kv"),
-    (r"fmhaSm100|fmhaKernel", "Attention_FMHA"),
+    (r"fmhaSm100|fmhaKernel|flashinfer.*fmha", "Attention_FMHA"),
     # Output projection
     (r"_h_bz_TNT(?!.*splitK)|nvjet_tst_TNT", "uv_gemm"),
     (r"_h_bz_splitK_TNT", "o_proj_splitK_GEMM"),
@@ -166,8 +170,12 @@ B200_OPERATOR_MAP = OrderedDict([
     # MoE expert
     (r"bmm_E2m1.*[Ss]wi[Gg]lu|bmm_E2m1.*E2m1E2m1", "gate_up_GEMM"),
     (r"bmm_Bfloat16|bmm_.*E2m1.*Bfloat", "down_GEMM"),
-    # Shared expert
-    (r"act_and_mul_kernel|silu_and_mul_kernel", "SiLU_mul"),
+    # Shared expert (and fused MoE activation variants)
+    (r"act_and_mul_kernel|silu_and_mul_kernel|fused_silu_and_mul.*kernel", "SiLU_mul"),
+    # Legacy cuBLAS GEMMs (e.g. ampere_h884gemm, cublasLt)
+    # Catch-all for non-nvjet/non-cutlass GEMM kernels — typically used in
+    # router or shared-expert paths where TensorCore-centric backend isn't selected.
+    (r"ampere_.*gemm|h884gemm|h1688gemm|cublasLt|cublas_lt", "cuBLAS_GEMM_legacy"),
     # Elementwise
     (r"cvt_fp16_to_fp4|cvt_fp4", "FP4_convert"),
     # Communication (catch-all)
@@ -241,8 +249,11 @@ B200_POSITIONAL_RULES = [
 CATEGORY_KEYWORDS = OrderedDict([
     ("Attention", ["fmha", "flash_fwd", "flash_bwd", "flash_attn", "mha_",
                    "merge_attn", "concat_and_cast_mha", "set_mla_kv", "mla_a8w8"]),
+    # NOTE: 'nvjet_sm100' was previously here but is too broad — nvjet is a generic
+    # NVIDIA GEMM library prefix (sm100/sm90 = arch). MoE-specific kernels are
+    # caught by 'expert', 'routing', 'swiglu', 'topk', etc. below.
     ("MoE/Expert", ["moe", "expert", "routing", "swiglu", "swig",
-                    "nvjet_sm100", "expandInput", "doActivation",
+                    "expandInput", "doActivation",
                     "topk", "buildExpert", "Dispatch", "Combine"]),
     ("Communication", ["allreduce", "reduce_scatter", "all_gather", "allgather",
                        "nccl", "rccl", "ncclkernel", "device_load", "device_store",
