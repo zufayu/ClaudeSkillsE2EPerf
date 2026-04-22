@@ -6,34 +6,15 @@ Moves overlapping kernels on the same (pid, tid) to separate "_overlap" streams
 so they can be visualized without stacking in chrome://tracing.
 
 Usage:
-    python3 fix_torch_trace_pro.py <trace.json.gz>
-    # Outputs: <trace>.fix.json.gz
+    python3 fix_torch_trace_pro.py <trace.json.gz> [--output PATH]
+    # Default output: <trace>.fix.json.gz (alongside input)
 """
 
+import argparse
 import gzip
 import json
-from collections import defaultdict
 import sys
-
-
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: python fix_torch_trace_pro.py <trace.json.gz>")
-        return
-
-    filename = sys.argv[1]
-    filename_out = filename.replace(".json.gz", ".fix.json.gz")
-
-    with gzip.open(filename, 'rt', encoding='utf-8') as f:
-        trace = json.load(f)
-
-    trace["traceEvents"] = process_events(trace.get("traceEvents", []))
-
-    with gzip.open(filename_out, 'wt', encoding='utf-8') as f:
-        json.dump(trace, f)
-
-    print("Done!")
-    print(f"Output: {filename_out}")
+from collections import defaultdict
 
 
 def process_events(events):
@@ -57,6 +38,36 @@ def process_events(events):
     print(f"Total events: {len(events)}")
     print(f"Fixed overlapping events: {modified}")
     return events
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Fix overlapping CUDA kernel events in torch profiler traces."
+    )
+    parser.add_argument(
+        "filepath",
+        help="Path to trace JSON.GZ file from torch profiler",
+    )
+    parser.add_argument(
+        "--output", "-o",
+        default=None,
+        help="Output path (default: replace .json.gz with .fix.json.gz alongside input)",
+    )
+    args = parser.parse_args()
+
+    filename = args.filepath
+    filename_out = args.output or filename.replace(".json.gz", ".fix.json.gz")
+
+    with gzip.open(filename, 'rt', encoding='utf-8') as f:
+        trace = json.load(f)
+
+    trace["traceEvents"] = process_events(trace.get("traceEvents", []))
+
+    with gzip.open(filename_out, 'wt', encoding='utf-8') as f:
+        json.dump(trace, f)
+
+    print("Done!")
+    print(f"Output: {filename_out}")
 
 
 if __name__ == "__main__":
