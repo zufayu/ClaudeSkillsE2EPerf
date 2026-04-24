@@ -400,15 +400,20 @@ def main():
     print("DECODE ANALYSIS (with --target-bs and multi-EP support)")
     print("=" * 60)
 
-    target_decode, actual_bs = select_decode_bs(events, args.target_bs, args.skip_ratio)
-    if target_decode is None:
+    # R8d: select N steady-state decodes (default skip 5, take 20).
+    # Back-compat: pass --max-steps 1 + --skip-ratio for old single-decode behavior.
+    target_decodes, actual_bs = select_decodes_bs(
+        events, args.target_bs,
+        skip_warmup=args.skip_warmup, max_steps=args.max_steps,
+        skip_ratio=args.skip_ratio,
+    )
+    if not target_decodes:
         print("ERROR: no decode events at target bs")
         sys.exit(1)
 
-    dur_ms = target_decode.get("dur", 0) / 1000
-    print(f"Selected: {target_decode.get('name')} (ts={target_decode['ts']:.0f}, dur={dur_ms:.2f}ms)")
+    print(f"Will aggregate {len(target_decodes)} decode steps")
 
-    # --- Multi-EP detection and flattening ---
+    # --- Multi-EP detection and flattening (computed once, reused per step) ---
     cg_event = find_capture_graph_event(capture_events, actual_bs)
     if cg_event is None:
         print("WARNING: No capture_graph event found, proceeding without multi-EP fix")
@@ -430,22 +435,49 @@ def main():
             print("Standard single-graph hierarchy (EP=1 or single CompiledFxGraph)")
             final_capture_events = capture_events
 
-    # Remove all OTHER decode gpu_user_annotation events from the event list
-    # so parse_trace.parse_decode sees only our selected one as "first".
-    filtered_events = [
-        e for e in events
-        if not (
-            e.get("name", "").startswith("decode[")
-            and e.get("ph") == "X"
-            and e.get("cat") == "gpu_user_annotation"
-            and e is not target_decode
-        )
-    ]
-    print(f"Filtered events: {len(events)} -> {len(filtered_events)} (removed {len(events) - len(filtered_events)} other decode events)")
-
-    parse_trace.parse_decode(
-        filtered_events, final_capture_events, f"decode_breakdown{pfx}.xlsx", target_layer=args.layer
-    )
+    # --- Per-decode parse + aggregate (R8d wide-sample) ---
+    # parse_trace.parse_decode wants exactly ONE decode in its event list, so we
+    # run it per-step then merge the N per-step xlsx files via merge_decode_xlsx.
+    final_xlsx = f"decode_breakdown{pfx}.xlsx"
+    if len(target_decodes) == 1:
+        d = target_decodes[0]
+        filtered = [e for e in events
+                    if not (e.get("name", "").startswith("decode[")
+                            and e.get("ph") == "X"
+                            and e.get("cat") == "gpu_user_annotation"
+                            and e is not d)]
+        parse_trace.parse_decode(filtered, final_capture_events, final_xlsx,
+                                  target_layer=args.layer)
+        print(f"Single-decode xlsx: {final_xlsx}")
+    else:
+        per_step_paths = []
+        per_step_dir = f"decode_per_step{pfx}"
+        os.makedirs(per_step_dir, exist_ok=True)
+        for i, d in enumerate(target_decodes):
+            tmp = os.path.join(per_step_dir, f"step_{i:02d}.xlsx")
+            filtered = [e for e in events
+                        if not (e.get("name", "").startswith("decode[")
+                                and e.get("ph") == "X"
+                                and e.get("cat") == "gpu_user_annotation"
+                                and e is not d)]
+            try:
+                import io, contextlib
+                cap = io.StringIO()
+                with contextlib.redirect_stdout(cap):
+                    parse_trace.parse_decode(filtered, final_capture_events, tmp,
+                                              target_layer=args.layer)
+                if os.path.exists(tmp):
+                    per_step_paths.append(tmp)
+                    if i < 3 or i == len(target_decodes) - 1:
+                        print(f"  step {i:02d}: parse_decode OK -> {tmp}")
+                else:
+                    print(f"  step {i:02d}: parse_decode silently skipped (no output)")
+            except SystemExit:
+                print(f"  step {i:02d}: parse_decode SystemExit; skipping")
+            except Exception as e:
+                print(f"  step {i:02d}: parse_decode exception: {e}")
+        print(f"\nMerging {len(per_step_paths)}/{len(target_decodes)} step xlsx files...")
+        merge_decode_xlsx(per_step_paths, final_xlsx)
 
 
 if __name__ == "__main__":
