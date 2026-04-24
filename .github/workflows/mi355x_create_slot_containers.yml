@@ -1,0 +1,97 @@
+name: "MI355X Create Slot Containers (zufa_atom_a + zufa_atom_b for parallel TP=4)"
+# Provisions two podman containers for running TP=4 jobs in parallel on a
+# single 8-GPU MI355X node. Each slot is GPU-isolated via HIP_VISIBLE_DEVICES,
+# and uses its own private network namespace (no --network=host) so both
+# servers can bind port 8000 without conflict.
+#
+# Pair this with two GitHub Actions runners labeled `slot-a` and `slot-b`
+# (see runner registration commands in HANDOFF / memory). Profiling
+# workflows then dispatch with `slot: a` / `slot: b` and select the matching
+# runner via `runs-on: [self-hosted, mi355x, slot-${{ inputs.slot }}]`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        type: string
+        default: docker.io/rocm/atom-dev:latest
+        description: Image to spawn both slot containers from
+      recreate:
+        type: boolean
+        default: false
+        description: Force-remove existing zufa_atom_a/b before creating
+
+jobs:
+  create:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 20
+    env:
+      IMAGE: ${{ inputs.image }}
+
+    steps:
+      - name: Pull image (idempotent)
+        run: podman pull "$IMAGE"
+
+      - name: Create slot a (GPUs 0-3)
+        run: |
+          NAME=zufa_atom_a
+          GPUS=0,1,2,3
+          if [ "${{ inputs.recreate }}" = "true" ]; then
+            podman rm -f $NAME 2>/dev/null || true
+          fi
+          if podman ps -a --format '{{.Names}}' | grep -qx $NAME; then
+            echo "$NAME exists; starting"
+            podman start $NAME
+          else
+            echo "Creating $NAME with HIP_VISIBLE_DEVICES=$GPUS"
+            podman run -d --name $NAME \
+              --device /dev/kfd --device /dev/dri \
+              --group-add keep-groups --ipc host \
+              --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
+              -e HIP_VISIBLE_DEVICES=$GPUS \
+              -v /shared:/shared \
+              "$IMAGE" sleep infinity
+          fi
+
+      - name: Create slot b (GPUs 4-7)
+        run: |
+          NAME=zufa_atom_b
+          GPUS=4,5,6,7
+          if [ "${{ inputs.recreate }}" = "true" ]; then
+            podman rm -f $NAME 2>/dev/null || true
+          fi
+          if podman ps -a --format '{{.Names}}' | grep -qx $NAME; then
+            echo "$NAME exists; starting"
+            podman start $NAME
+          else
+            echo "Creating $NAME with HIP_VISIBLE_DEVICES=$GPUS"
+            podman run -d --name $NAME \
+              --device /dev/kfd --device /dev/dri \
+              --group-add keep-groups --ipc host \
+              --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
+              -e HIP_VISIBLE_DEVICES=$GPUS \
+              -v /shared:/shared \
+              "$IMAGE" sleep infinity
+          fi
+
+      - name: Verify GPU isolation
+        run: |
+          for slot in a b; do
+            NAME=zufa_atom_$slot
+            echo "=== $NAME ==="
+            podman exec $NAME bash -c '
+              echo "HIP_VISIBLE_DEVICES=$HIP_VISIBLE_DEVICES"
+              python3 -c "import torch; print(f\"torch sees {torch.cuda.device_count()} GPU(s)\")" 2>&1 || true
+              python3 -c "import torch; [print(f\"  GPU {i}: {torch.cuda.get_device_name(i)}\") for i in range(torch.cuda.device_count())]" 2>&1 || true
+            '
+            echo ""
+          done
+
+      - name: Summary
+        run: |
+          echo "=== Slot containers ready ==="
+          podman ps --filter name=zufa_atom_ --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
+          echo ""
+          echo "Next step: register a second self-hosted runner labeled 'slot-b'"
+          echo "(existing runner needs label 'slot-a' added). See memory:"
+          echo "project_mi355x_parallel_slots.md"

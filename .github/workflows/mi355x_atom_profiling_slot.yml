@@ -1,0 +1,113 @@
+name: "MI355X ATOM Profiling (slot a/b parallel TP=4)"
+# Per-slot profiling: dispatched twice (once with slot=a, once with slot=b)
+# both jobs run in parallel on the same MI355X node, each pinned to one
+# of the two slot containers (zufa_atom_a / zufa_atom_b) and one of the
+# two slot runners (slot-a / slot-b).
+#
+# Prerequisites (one-time host setup):
+#   1. Run mi355x_create_slot_containers.yml to spawn zufa_atom_a/b.
+#   2. Register a second self-hosted runner on the MI355X node with label
+#      "slot-b"; relabel the existing runner to add "slot-a".
+#      (See memory: project_mi355x_parallel_slots.md for exact commands.)
+#   3. Clone repo twice on /shared:
+#      git clone <repo> /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf-slot-a
+#      git clone <repo> /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf-slot-b
+#
+# After setup: dispatch this workflow twice in quick succession with
+# slot=a then slot=b to get two TP=4 runs in parallel.
+
+on:
+  workflow_dispatch:
+    inputs:
+      slot:
+        type: choice
+        options: [a, b]
+        description: Slot a (GPUs 0-3) or b (GPUs 4-7)
+      scenario:
+        type: choice
+        options: [chat, reasoning, summarize]
+        default: chat
+      concurrency:
+        type: string
+        default: "4"
+      tp:
+        type: string
+        default: "4"
+      ep:
+        type: choice
+        options: [none, ep]
+        default: none
+        description: ep = expert parallelism enabled (--ep flag)
+      model:
+        type: string
+        default: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
+      profile_prompts:
+        type: string
+        default: "40"
+      env_tag:
+        type: string
+        default: rocm711
+        description: Tag identifying ATOM image (rocm711, rocm722, ...) — appears in result dir + provenance
+
+jobs:
+  profile:
+    runs-on: [self-hosted, mi355x, "slot-${{ inputs.slot }}"]
+    timeout-minutes: 120
+    env:
+      SLOT:        ${{ inputs.slot }}
+      CONTAINER:   zufa_atom_${{ inputs.slot }}
+      REPO:        /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf-slot-${{ inputs.slot }}
+      MODEL:       ${{ inputs.model }}
+      RESULT_DIR:  results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_${{ inputs.ep == 'ep' && format('ep{0}', inputs.tp) || 'ep1' }}_tp${{ inputs.tp }}_${{ inputs.env_tag }}_profiling/slot_${{ inputs.slot }}
+      EP_FLAG:     ${{ inputs.ep == 'ep' && '--ep' || '' }}
+
+    steps:
+      - name: Show slot identity
+        run: |
+          echo "Slot:      $SLOT"
+          echo "Container: $CONTAINER"
+          echo "Repo:      $REPO"
+          echo "Result:    $RESULT_DIR"
+          podman ps --filter name=$CONTAINER --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
+          podman exec $CONTAINER bash -c 'echo "HIP_VISIBLE_DEVICES=$HIP_VISIBLE_DEVICES"; python3 -c "import torch; print(f\"slot $SLOT sees {torch.cuda.device_count()} GPUs\")"'
+
+      - name: Sync slot repo (isolated checkout)
+        run: |
+          if [ ! -d "$REPO/.git" ]; then
+            echo "ERROR: $REPO is not a git checkout. One-time setup required:"
+            echo "  git clone <origin> $REPO"
+            exit 1
+          fi
+          cd $REPO && git fetch origin && git reset --hard origin/main
+          git log --oneline -1
+
+      - name: Kill residual GPU processes (scoped to this slot's container)
+        continue-on-error: true
+        run: |
+          podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom.*serve|model_executor" 2>/dev/null; true'
+          sleep 3
+          podman exec $CONTAINER rocm-smi 2>/dev/null | grep -E "GPU|VRAM" | head -8 || true
+
+      - name: Clean old results
+        run: podman exec $CONTAINER bash -c "rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; mkdir -p $REPO/$RESULT_DIR; true"
+
+      - name: Run profiling (TP=${{ inputs.tp }}, slot ${{ inputs.slot }})
+        run: |
+          podman exec $CONTAINER bash -c "cd $REPO && bash scripts/collect_atom_trace.sh \
+            --model $MODEL \
+            --scenario ${{ inputs.scenario }} \
+            --concurrency ${{ inputs.concurrency }} \
+            --tp ${{ inputs.tp }} \
+            $EP_FLAG \
+            --profile-prompts ${{ inputs.profile_prompts }} \
+            --roctracer-max-events 20000000 \
+            --env ${{ inputs.env_tag }} \
+            --result-dir ./$RESULT_DIR"
+
+      - name: Show artifact tree
+        if: always()
+        run: |
+          ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo "no result dir"
+          echo ""
+          echo "=== first 30 lines of server log (provenance header) ==="
+          ls $REPO/$RESULT_DIR/server_*.log 2>/dev/null | head -1 | xargs -r head -30 || true
