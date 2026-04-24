@@ -70,13 +70,19 @@ ranged collection guide, and academic GPU benchmarking literature.
 
 ### Per-platform analyzers
 
-All three apply the same R8d defaults; output schema is aligned:
+Both apply the same R8d defaults; output schema is aligned:
 
-| platform | script | calls | inputs |
-|---|---|---|---|
-| B300 / B200 (sglang) | `scripts/trace_layer_detail.py` | 12 wf refs | torch profiler `.fix.json.gz` |
-| MI355X (ATOM, primary) | `scripts/run_parse_trace.py` | 5 wf refs | torch profiler `.json.gz` (uses ATOM `parse_trace.py`) |
-| MI355X (ATOM, secondary) | `scripts/decode_kernel_breakdown.py` | 0 wf refs (unused) | torch profiler `.json.gz` |
+| platform | script | inputs |
+|---|---|---|
+| B300 / B200 (sglang) | `scripts/trace_layer_detail.py` | torch profiler `.fix.json.gz` |
+| MI355X (ATOM) | `scripts/decode_kernel_breakdown.py` | torch profiler `.json.gz` |
+
+(Earlier `scripts/run_parse_trace.py` was the MI355X analyzer wrapping
+ATOM's `parse_trace.parse_decode`, but `parse_decode` silently returns on
+ROCm 7.2.2+ traces because ATOM stopped emitting norm-module annotations
+in `capture_graph`. `decode_kernel_breakdown.py` uses a structural per-
+layer anchor — name-agnostic, model-agnostic — so it works on any model
+and any backend. `run_parse_trace.py` was deleted in commit `096a35a`.)
 
 Common args: `--skip-warmup 5 --max-steps 20 --layer-range 10-40` (B300)
 or `--skip-warmup 5 --max-steps 20 --layers 10-40 --target-bs N` (MI355X).
@@ -148,8 +154,8 @@ This serves as a regression sanity check against future analyzer changes.
   rationale, validation numbers
 - Memory: `project_mi355x_parallel_slots.md` — slot-a / slot-b architecture
   for parallel TP=4 runs on a single 8-GPU MI355X node
-- Code: `scripts/trace_layer_detail.py`, `scripts/run_parse_trace.py`,
-  `scripts/decode_kernel_breakdown.py` — analyzer implementations
+- Code: `scripts/trace_layer_detail.py` (B300/B200),
+  `scripts/decode_kernel_breakdown.py` (MI355X) — analyzer implementations
 - Code: `scripts/compare_b300_mi355x.py` — cross-platform comparator
 - Workflow: `.github/workflows/b300_methodology_validation.yml` — pilot /
   regression self-check
