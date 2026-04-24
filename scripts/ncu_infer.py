@@ -57,6 +57,8 @@ def main():
     parser.add_argument("--kv-cache-dtype", default="fp8_e4m3")
     parser.add_argument("--cuda-graph-max-bs", type=int, default=256)
     parser.add_argument("--max-running-requests", type=int, default=256)
+    parser.add_argument("--disable-cuda-graph", action="store_true")
+    parser.add_argument("--disable-flashinfer-autotune", action="store_true")
     args = parser.parse_args()
 
     if args.mode == "offline":
@@ -196,7 +198,6 @@ def _launch_server(args):
             "--trust-remote-code",
             "--tensor-parallel-size", str(args.tp),
             "--data-parallel-size", "1",
-            "--cuda-graph-max-bs", str(args.cuda_graph_max_bs),
             "--max-running-requests", str(args.max_running_requests),
             "--mem-fraction-static", str(args.mem_fraction_static),
             "--kv-cache-dtype", args.kv_cache_dtype,
@@ -211,6 +212,12 @@ def _launch_server(args):
         ]
         if args.quantization:
             cmd += ["--quantization", args.quantization]
+        if args.disable_cuda_graph:
+            cmd += ["--disable-cuda-graph"]
+        else:
+            cmd += ["--cuda-graph-max-bs", str(args.cuda_graph_max_bs)]
+        if args.disable_flashinfer_autotune:
+            cmd += ["--disable-flashinfer-autotune"]
     elif args.backend == "trtllm":
         cmd = [
             "trtllm-serve", args.model,

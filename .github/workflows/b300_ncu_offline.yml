@@ -1,15 +1,11 @@
-name: "B300 NCU Offline bs64"
+name: "B300 NCU Trace (attach mode)"
 on:
   workflow_dispatch:
     inputs:
-      kernel_filter:
-        description: "Kernel name filter"
-        type: string
-        default: "fmhaSm100f"
       launch_count:
         description: "Kernel launches to capture"
         type: string
-        default: "10"
+        default: "100"
       ncu_set:
         description: "NCU section set"
         type: choice
@@ -18,87 +14,70 @@ on:
           - basic
           - full
         default: pmsampling
-      launch_skip:
-        description: "Kernel launches to skip (warmup)"
-        type: string
-        default: "300000"
-      bs:
-        description: "Batch size"
+      concurrency:
+        description: "Concurrency"
         type: string
         default: "64"
 
 jobs:
-  ncu-offline:
+  ncu-trace:
     runs-on: [self-hosted, b300]
     timeout-minutes: 120
     env:
       CONTAINER: zufa_sglang
       MODEL: /models/DeepSeek-R1-0528-NVFP4-v2
-      NCU: /opt/nvidia/nsight-compute/2025.4.1/ncu
       REPO: /home/zufa/ClaudeSkillsE2EPerf
-      RESULT_DIR: results/b300_dsr_fp4/b300_ncu_offline
+      RESULT_DIR: results/b300_dsr_fp4/b300_ncu_test
     steps:
-      - name: Sync repo
+      - name: Sync repo (host)
         run: cd $REPO && git fetch origin && git reset --hard origin/main
 
-      - name: Cleanup
+      - name: Cleanup GPU
         continue-on-error: true
         run: |
-          docker exec $CONTAINER bash -c 'pkill -9 -f sglang 2>/dev/null; pkill -9 -f ncu 2>/dev/null; true'
-          sleep 3
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done
+          docker exec $CONTAINER bash -c 'fuser -k -9 8888/tcp 2>/dev/null; true'
+          sleep 5
 
-      - name: "NCU offline bs=${{ inputs.bs }} (foreground, ~30 min)"
+      - name: "NCU attach (c=${{ inputs.concurrency }})"
         timeout-minutes: 90
         run: |
-          cat > /tmp/ncu_run.sh << 'SCRIPT'
-          #!/bin/bash
-          set -e
-          cd $1
-          mkdir -p $2
-          $3 --mode launch-and-attach \
-            --target-processes all \
-            $([ -n "$4" ] && echo "-k \"$4\"") \
-            --launch-skip $5 \
-            --launch-count $6 \
-            --set $7 \
-            -f -o $2/ncu_decode_bs$8 \
-            python3 scripts/ncu_offline_bs64.py \
-              --model $9 \
-              --tp 8 \
-              --bs $8 \
-              --input-len 1024 \
-              --output-len 128 \
-              --warmup 3 \
-            2>&1 | tee $2/ncu_run.log
-          SCRIPT
-          chmod +x /tmp/ncu_run.sh
-          docker cp /tmp/ncu_run.sh $CONTAINER:/tmp/ncu_run.sh
-          docker exec $CONTAINER bash /tmp/ncu_run.sh \
-            "$REPO" "$RESULT_DIR" "$NCU" \
-            "${{ inputs.kernel_filter }}" \
-            "${{ inputs.launch_skip }}" "${{ inputs.launch_count }}" \
-            "${{ inputs.ncu_set }}" "${{ inputs.bs }}" "$MODEL"
+          docker exec $CONTAINER bash -c "cd $REPO && \
+            NCU_ATTACH_TIMEOUT=1800 \
+            bash scripts/collect_ncu_trace.sh \
+              --model $MODEL \
+              --backend sglang \
+              --mode serve \
+              --tp 8 --ep 1 \
+              --quantization modelopt_fp4 \
+              --scenario chat \
+              --concurrency ${{ inputs.concurrency }} \
+              --ncu-set ${{ inputs.ncu_set }} \
+              --ncu-mode attach \
+              --launch-count ${{ inputs.launch_count }} \
+              --result-dir ./$RESULT_DIR"
 
       - name: Check results
         if: always()
         run: |
           echo "=== .ncu-rep files ==="
-          docker exec $CONTAINER ls -lh $REPO/$RESULT_DIR/*.ncu-rep 2>/dev/null || echo "No .ncu-rep"
-          echo "=== Run log (last 20) ==="
-          docker exec $CONTAINER tail -20 $REPO/$RESULT_DIR/ncu_run.log 2>/dev/null || true
+          docker exec $CONTAINER ls -lh $REPO/$RESULT_DIR/ncu/*.ncu-rep 2>/dev/null || echo "No .ncu-rep"
+          echo "=== NCU log ==="
+          docker exec $CONTAINER tail -20 $REPO/$RESULT_DIR/ncu/*.log 2>/dev/null || echo "No log"
 
       - name: Cleanup
         if: always()
         continue-on-error: true
-        run: docker exec $CONTAINER bash -c 'pkill -9 -f sglang 2>/dev/null; true'
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done
 
       - name: Commit results
         if: always()
         run: |
           cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B300 CI'
-          git add -f $RESULT_DIR/*.ncu-rep $RESULT_DIR/*.log 2>/dev/null; true
+          git add -f $RESULT_DIR/ncu/*.ncu-rep $RESULT_DIR/ncu/*.log $RESULT_DIR/*.log 2>/dev/null; true
           if ! git diff --cached --quiet; then
-            git commit -m "data: B300 NCU offline bs=${{ inputs.bs }} (${{ inputs.kernel_filter }}, ${{ inputs.ncu_set }})"
+            git commit -m "data: B300 NCU trace (chat c=${{ inputs.concurrency }}, ${{ inputs.ncu_set }})"
             git pull --rebase origin main && git push
           else
             echo "Nothing to commit"

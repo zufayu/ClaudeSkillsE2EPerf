@@ -1,0 +1,72 @@
+name: "B300 NCU via /start_profile"
+on:
+  workflow_dispatch:
+    inputs:
+      launch_count:
+        description: "Kernel launches to capture per process"
+        type: string
+        default: "5"
+      ncu_set:
+        description: "NCU section set"
+        type: choice
+        options:
+          - pmsampling
+          - basic
+          - full
+        default: pmsampling
+      concurrency:
+        description: "Benchmark concurrency"
+        type: string
+        default: "64"
+      wait_after_stop:
+        description: "Seconds to wait after /stop_profile"
+        type: string
+        default: "120"
+
+jobs:
+  ncu-trace:
+    runs-on: [self-hosted, b300]
+    timeout-minutes: 120
+    env:
+      CONTAINER: zufa_sglang
+      MODEL: /models/DeepSeek-R1-0528-NVFP4-v2
+      REPO: /home/zufa/ClaudeSkillsE2EPerf
+      RESULT_DIR: results/b300_dsr_fp4/b300_ncu_startprofile
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Cleanup
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done
+          docker exec $CONTAINER bash -c 'pkill -9 -f sglang 2>/dev/null; pkill -9 -f ncu 2>/dev/null; fuser -k -9 8888/tcp 2>/dev/null; true'
+          sleep 5
+
+      - name: "NCU /start_profile (c=${{ inputs.concurrency }}, ${{ inputs.ncu_set }})"
+        timeout-minutes: 90
+        run: |
+          docker exec $CONTAINER bash -c "cd $REPO && bash scripts/ncu_startprofile.sh --model $MODEL --tp 8 --concurrency ${{ inputs.concurrency }} --scenario chat --ncu-set ${{ inputs.ncu_set }} --launch-count ${{ inputs.launch_count }} --wait-after-stop ${{ inputs.wait_after_stop }} --output-dir /tmp --report-name ncu_decode"
+
+      - name: Check results
+        if: always()
+        run: |
+          echo "=== .ncu-rep files ==="
+          docker exec $CONTAINER find /tmp -name "*.ncu-rep" -ls 2>/dev/null || echo "None"
+          echo ""
+          echo "=== NCU server log (last 40 lines) ==="
+          docker exec $CONTAINER tail -40 /tmp/ncu_server.log 2>/dev/null || echo "No log"
+
+      - name: Copy results
+        if: always()
+        run: |
+          mkdir -p $REPO/$RESULT_DIR/ncu
+          docker exec $CONTAINER bash -c "cp /tmp/ncu_decode*.ncu-rep $REPO/$RESULT_DIR/ncu/ 2>/dev/null; cp /tmp/ncu_server.log $REPO/$RESULT_DIR/ncu/ 2>/dev/null; true"
+          echo "Files:"
+          ls -lh $REPO/$RESULT_DIR/ncu/ 2>/dev/null || echo "empty"
+
+      - name: Cleanup
+        if: always()
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done

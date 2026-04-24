@@ -18,8 +18,8 @@ def main():
     parser.add_argument("--tp", type=int, default=8)
     parser.add_argument("--bs", type=int, default=64)
     parser.add_argument("--input-len", type=int, default=1024)
-    parser.add_argument("--output-len", type=int, default=128)
-    parser.add_argument("--warmup", type=int, default=3, help="warmup rounds")
+    parser.add_argument("--output-len", type=int, default=16)
+    parser.add_argument("--warmup", type=int, default=1, help="warmup rounds")
     args = parser.parse_args()
 
     import sglang as sgl

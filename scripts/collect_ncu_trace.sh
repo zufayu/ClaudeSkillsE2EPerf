@@ -198,7 +198,13 @@ build_infer_cmd() {
     fi
     if [[ -n "${QUANTIZATION:-}" ]]; then CMD="$CMD --quantization $QUANTIZATION"; fi
     if [[ "$BACKEND" == "sglang" ]]; then
-        CMD="$CMD --mem-fraction-static $MEM_FRACTION --chunked-prefill-size $CHUNKED_PREFILL --kv-cache-dtype $KV_CACHE_DTYPE --cuda-graph-max-bs $CUDA_GRAPH_MAX_BS --max-running-requests $MAX_RUNNING_REQUESTS"
+        CMD="$CMD --mem-fraction-static $MEM_FRACTION --chunked-prefill-size $CHUNKED_PREFILL --kv-cache-dtype $KV_CACHE_DTYPE --max-running-requests $MAX_RUNNING_REQUESTS"
+        if [[ "$NCU_MODE" == "attach" ]]; then
+            CMD="$CMD --disable-cuda-graph --disable-flashinfer-autotune"
+            echo "  NCU attach mode: disabled cuda graph and flashinfer autotune for faster init" >&2
+        else
+            CMD="$CMD --cuda-graph-max-bs $CUDA_GRAPH_MAX_BS"
+        fi
     fi
     echo "$CMD"
 }

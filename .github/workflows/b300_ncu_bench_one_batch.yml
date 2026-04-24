@@ -1,0 +1,144 @@
+name: "B300 NCU bench_one_batch"
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: "Batch size"
+        type: string
+        default: "64"
+      input_len:
+        description: "Input length"
+        type: string
+        default: "1024"
+      output_len:
+        description: "Output length (decode steps)"
+        type: string
+        default: "32"
+      launch_count:
+        description: "NCU kernel launches to capture"
+        type: string
+        default: "10"
+      ncu_set:
+        description: "NCU section set"
+        type: choice
+        options:
+          - pmsampling
+          - basic
+          - full
+        default: pmsampling
+      backend:
+        description: "Backend (sglang or trtllm)"
+        type: choice
+        options:
+          - sglang
+          - trtllm
+        default: sglang
+
+jobs:
+  ncu:
+    runs-on: [self-hosted, b300]
+    timeout-minutes: 120
+    env:
+      CONTAINER: zufa_sglang
+      MODEL: /models/DeepSeek-R1-0528-NVFP4-v2
+    steps:
+      - name: Cleanup
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done
+          sleep 3
+
+      - name: "NCU bench_one_batch (${{ inputs.backend }} bs=${{ inputs.batch_size }})"
+        timeout-minutes: 90
+        run: |
+          BACKEND="${{ inputs.backend }}"
+          BS=${{ inputs.batch_size }}
+          ISL=${{ inputs.input_len }}
+          OSL=${{ inputs.output_len }}
+          LC=${{ inputs.launch_count }}
+          NCU_SET=${{ inputs.ncu_set }}
+
+          if [ "$BACKEND" = "sglang" ]; then
+            # SGLang bench_one_batch — bypasses server, directly runs ModelRunner
+            NCU_OPTS="--profile-from-start off --target-processes all --launch-count $LC -f -o /tmp/ncu_bench_one_batch"
+            if [ "$NCU_SET" = "pmsampling" ]; then
+              NCU_OPTS="$NCU_OPTS --section PmSampling --section PmSampling_WarpStates"
+            else
+              NCU_OPTS="$NCU_OPTS --set $NCU_SET"
+            fi
+
+            echo "=== SGLang bench_one_batch + NCU ==="
+            echo "NCU opts: $NCU_OPTS"
+            echo "Batch=$BS ISL=$ISL OSL=$OSL"
+
+            docker exec $CONTAINER bash -c "ncu $NCU_OPTS \
+              python3 -m sglang.bench_one_batch \
+              --model-path $MODEL \
+              --batch-size $BS --input-len $ISL --output-len $OSL \
+              --tp 8 --trust-remote-code \
+              --disable-cuda-graph \
+              --mem-fraction-static 0.80 \
+              --profile --profile-activities CUDA_PROFILER \
+              2>&1" | tail -80
+
+          elif [ "$BACKEND" = "trtllm" ]; then
+            # TRT-LLM trtllm-bench — single process offline benchmark
+            # Need TRT-LLM container
+            TRTLLM_CONTAINER=zufa_trtllm_ncu
+            docker rm -f $TRTLLM_CONTAINER 2>/dev/null || true
+
+            # Check if rc10 image exists, fall back to rc7
+            TRTLLM_IMAGE=""
+            if docker image inspect nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc10 >/dev/null 2>&1; then
+              TRTLLM_IMAGE=nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc10
+            elif docker image inspect nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc7 >/dev/null 2>&1; then
+              TRTLLM_IMAGE=nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc7
+            else
+              echo "No TRT-LLM image found"
+              exit 1
+            fi
+            echo "Using TRT-LLM image: $TRTLLM_IMAGE"
+
+            docker run -d --name $TRTLLM_CONTAINER \
+              --privileged --gpus all --ipc=host --net=host \
+              --entrypoint "" \
+              -v /models:/models \
+              -v /home:/home \
+              $TRTLLM_IMAGE sleep infinity
+
+            echo "=== TRT-LLM trtllm-bench + NCU ==="
+            # trtllm-bench uses MPI internally for TP, NCU can wrap it
+            docker exec $TRTLLM_CONTAINER bash -c "
+              ncu --profile-from-start off --target-processes all \
+                --launch-count $LC -f -o /tmp/ncu_trtllm_bench \
+                --set $NCU_SET \
+                trtllm-bench \
+                --model $MODEL \
+                --tp_size 8 \
+                --backend pytorch \
+                --dataset_type token_ids \
+                --isl $ISL --osl $OSL \
+                --num_requests $BS \
+                --max_batch_size $BS \
+                --warm_up_iteration 1 \
+                --trust_remote_code \
+                2>&1" | tail -50
+
+            echo "=== Check results ==="
+            docker exec $TRTLLM_CONTAINER ls -lh /tmp/ncu_trtllm_bench*.ncu-rep 2>/dev/null || echo "No .ncu-rep"
+            docker exec $TRTLLM_CONTAINER find /tmp -name "*.ncu-rep" -ls 2>/dev/null
+            docker rm -f $TRTLLM_CONTAINER 2>/dev/null || true
+          fi
+
+      - name: Check results
+        if: always()
+        run: |
+          echo "=== .ncu-rep files ==="
+          docker exec $CONTAINER find /tmp -name "*.ncu-rep" -newer /tmp -ls 2>/dev/null || echo "checking all..."
+          docker exec $CONTAINER find /tmp -name "*.ncu-rep" -ls 2>/dev/null || echo "None"
+
+      - name: Cleanup
+        if: always()
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done

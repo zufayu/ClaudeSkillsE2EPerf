@@ -1,0 +1,57 @@
+name: "B200 Direct Setup"
+on:
+  workflow_dispatch:
+jobs:
+  setup:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 30
+    steps:
+      - name: Check machine
+        run: |
+          echo "Hostname: $(hostname)"
+          echo "GPUs: $(nvidia-smi -L 2>/dev/null | wc -l)"
+          nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv,noheader | head -2
+          echo "VRAM usage:"
+          nvidia-smi --query-gpu=index,memory.used --format=csv,noheader | head -8
+          echo "Containers:"
+          docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" | head -10
+
+      - name: Check model
+        run: |
+          ls -ld /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2 2>/dev/null && echo "Model: OK" || echo "Model: NOT FOUND"
+          echo "NCU:"
+          which ncu 2>/dev/null && ncu --version | head -1 || echo "NCU not in PATH"
+          find /opt/nvidia/nsight-compute -name ncu -type f 2>/dev/null | head -1 || echo "NCU not in /opt"
+
+      - name: Create privileged container
+        run: |
+          docker rm -f zufa_sglang 2>/dev/null || true
+          docker pull lmsysorg/sglang:v0.5.9-cu130
+          docker run -d --name zufa_sglang \
+            --privileged --gpus all --ipc=host --net=host \
+            -v /home:/home \
+            -v /SFS-aGqda6ct:/SFS-aGqda6ct \
+            -v /opt/nvidia/nsight-compute:/opt/nvidia/nsight-compute \
+            -w /home/ubuntu/zufa \
+            lmsysorg/sglang:v0.5.9-cu130 \
+            sleep infinity
+          echo "Container created"
+
+      - name: Install gdb + verify
+        run: |
+          docker exec zufa_sglang bash -c 'apt-get update -qq > /dev/null 2>&1 && apt-get install -y -qq gdb > /dev/null 2>&1'
+          docker exec zufa_sglang bash -c '
+            echo "Python: $(python3 --version)"
+            python3 -c "import sglang; print(f\"SGLang: {sglang.__version__}\")"
+            python3 -c "import torch; print(f\"PyTorch: {torch.__version__}, GPUs: {torch.cuda.device_count()}\")"
+            echo "NCU:"; /opt/nvidia/nsight-compute/*/ncu --version 2>/dev/null | head -1 || echo "  not found"
+            echo "gdb:"; which gdb && echo "  OK"
+            echo "Model:"; ls -ld /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2/config.json 2>/dev/null && echo "  OK" || echo "  NOT FOUND"
+          '
+
+      - name: Test NCU permission
+        run: |
+          docker exec zufa_sglang bash -c '
+            NCU=$(/usr/bin/find /opt/nvidia/nsight-compute -name ncu -type f | head -1)
+            $NCU --devices 0 --query-metrics 2>&1 | head -2
+          '
