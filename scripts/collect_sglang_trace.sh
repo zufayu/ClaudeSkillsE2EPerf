@@ -59,6 +59,7 @@ PLATFORM_TAG="b200"
 
 # SA InferenceX server parameters (from dsr1_fp4_b200.sh)
 MEM_FRACTION_STATIC=0.85
+LOCK_CLOCKS=""    # opt-in: nvidia-smi -lgc <freq> ; empty = no clock lock (production-mode default)
 CHUNKED_PREFILL_SIZE=16384
 CUDA_GRAPH_MAX_BS=256
 MAX_RUNNING_REQUESTS=256
@@ -92,6 +93,12 @@ Options:
   --container-image IMG Container image name for metadata
   --platform NAME       Platform tag for output filename + analysis (default: b200;
                         valid: b200|b300|h20|mi355x). Affects kernel_registry mapping.
+  --lock-clocks FREQ    Lock GPU SM clock to FREQ MHz before run, restore after.
+                        Off by default (production-mode: DVFS on). Use only for
+                        cross-run regression isolation where DVFS variance would
+                        confound results. Run-to-run benchmarking only — not for
+                        'real production decode average' data per
+                        PROFILING_METHODOLOGY.md. Requires nvidia-smi (NV only).
   -h, --help            Show this help
 
 Profiling methodology:
@@ -124,6 +131,7 @@ while [[ $# -gt 0 ]]; do
         --quant)           QUANT="$2"; shift 2 ;;
         --env)             ENV="$2"; shift 2 ;;
         --platform)        PLATFORM_TAG="$2"; shift 2 ;;
+        --lock-clocks)     LOCK_CLOCKS="$2"; shift 2 ;;
         -h|--help)         usage ;;
         *)                 echo "Unknown option: $1"; usage ;;
     esac
@@ -232,12 +240,27 @@ trap_cleanup() {
         wait "$SERVER_PID" 2>/dev/null || true
     fi
     safe_kill "sglang.launch_server"
+    # Restore default DVFS if we locked clocks (idempotent: -rgc is safe to re-run)
+    if [[ -n "$LOCK_CLOCKS" ]]; then
+        log "Restoring GPU DVFS (nvidia-smi -rgc)"
+        nvidia-smi -rgc 2>/dev/null || true
+    fi
 }
 trap trap_cleanup EXIT INT TERM
 
 # ======================== Step 1: Cleanup =====================================
 
 cleanup
+
+# Optional GPU clock lock (off by default — production-mode methodology
+# wants DVFS variance included; lock only for cross-run regression isolation
+# per PROFILING_METHODOLOGY.md).
+if [[ -n "$LOCK_CLOCKS" ]]; then
+    log "Locking GPU SM clock to ${LOCK_CLOCKS} MHz (nvidia-smi -lgc ${LOCK_CLOCKS})"
+    log "  WARN: clock-locked runs are NOT comparable to production-mode runs."
+    nvidia-smi -lgc "$LOCK_CLOCKS" 2>&1 | head -5 || \
+        log "WARN: nvidia-smi -lgc failed (need sudo? non-NV GPU?); continuing without lock"
+fi
 
 # ======================== Step 2: Start Server ================================
 
