@@ -1,94 +1,96 @@
-name: "MI355X Create zufa_atom_dev (snapshot + latest ATOM main + grep moe.py)"
+name: "MI355X Create zufa_atom_dev (fresh atom-dev:latest image + grep moe.py)"
 on:
   workflow_dispatch:
 jobs:
   create:
     runs-on: [self-hosted, mi355x]
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       WORKING: zufa_atom
       DEV: zufa_atom_dev
-      SNAPSHOT: localhost/zufa-atom-snapshot:r1
+      IMAGE: docker.io/rocm/atom-dev:latest
     steps:
-      - name: Ensure snapshot exists (commit zufa_atom if needed)
+      - name: Pull latest atom-dev image
         shell: bash {0}
         run: |
-          if podman image inspect $SNAPSHOT >/dev/null 2>&1; then
-            echo "Snapshot $SNAPSHOT already exists"
-            podman images $SNAPSHOT
-          else
-            echo "Committing $WORKING -> $SNAPSHOT (may take a few minutes for ~6GB)"
-            podman commit $WORKING $SNAPSHOT
-            podman images $SNAPSHOT
-          fi
+          echo "=== before pull (current image digest) ==="
+          podman images --digests $IMAGE 2>&1 | head -5
+          echo "=== pulling $IMAGE ==="
+          podman pull $IMAGE 2>&1 | tail -10
+          echo "=== after pull ==="
+          podman images --digests $IMAGE 2>&1 | head -5
 
-      - name: Remove old zufa_atom_dev and recreate from snapshot
+      - name: Remove old zufa_atom_dev and recreate from fresh latest image
         shell: bash {0}
         run: |
           podman rm -f $DEV 2>&1 || true
-          # Same proven flags as zufa_atom_ex (which got model + filesystem working)
+          # Same proven flags as zufa_atom (keep-groups for /shared NFS access)
           podman run -d --name $DEV \
             --security-opt seccomp=unconfined \
             --ipc=host --network=host \
             --group-add keep-groups \
             -v /shared:/shared \
-            $SNAPSHOT sleep infinity
+            $IMAGE sleep infinity
           sleep 3
-          echo "=== id ==="
+          echo "=== id (should show groups=0(root),65534(nogroup)) ==="
           podman exec $DEV id
 
-      - name: Update ATOM to latest main
+      - name: Show ATOM commit in fresh image
         shell: bash {0}
         run: |
-          echo "=== current commit ==="
-          podman exec $DEV bash -c 'cd /app/ATOM && git rev-parse HEAD && git log -1 --pretty=oneline'
-          echo "=== git fetch + checkout main ==="
-          podman exec $DEV bash -c 'cd /app/ATOM && git fetch origin main && git checkout origin/main' 2>&1 | tail -10
-          echo "=== new commit ==="
-          podman exec $DEV bash -c 'cd /app/ATOM && git rev-parse HEAD && git log -1 --pretty=oneline'
+          echo "=== zufa_atom_dev ATOM (fresh from latest image) ==="
+          podman exec $DEV bash -c 'cd /app/ATOM && git rev-parse HEAD && git log -1 --pretty=fuller'
+          echo
+          echo "=== zufa_atom ATOM (current pinned/in-use) ==="
+          podman exec $WORKING bash -c 'cd /app/ATOM && git rev-parse HEAD && git log -1 --pretty=fuller'
+          echo
+          echo "=== aiter commit in fresh image ==="
+          podman exec $DEV bash -c 'cd /app/aiter-test && git rev-parse HEAD && git log -1 --pretty=oneline'
 
-      - name: "GREP moe.py — does mutates_args=['hidden_states'] still exist?"
+      - name: "GREP moe.py — does mutates_args=['hidden_states'] still exist in latest atom-dev image?"
         shell: bash {0}
         run: |
-          echo "=== mutates_args=['hidden_states'] in latest ATOM main ==="
+          echo "=== mutates_args=['hidden_states'] in latest atom-dev image ==="
           MA_COUNT=$(podman exec $DEV grep -c 'mutates_args.*hidden_states' /app/ATOM/atom/model_ops/moe.py 2>/dev/null || echo 0)
           podman exec $DEV grep -n 'mutates_args.*hidden_states' /app/ATOM/atom/model_ops/moe.py 2>&1 || true
           echo
-          echo "=== needs_fixed_stride_order ==="
+          echo "=== needs_fixed_stride_order tag ==="
           TAG_COUNT=$(podman exec $DEV grep -c 'needs_fixed_stride_order' /app/ATOM/atom/model_ops/moe.py 2>/dev/null || echo 0)
           podman exec $DEV grep -n 'needs_fixed_stride_order' /app/ATOM/atom/model_ops/moe.py 2>&1 || true
           echo
-          echo "=== context lines around 1860-1900 (or wherever mutates_args is now) ==="
+          echo "=== context around mutates_args (or whole moe_forward custom_op block) ==="
           podman exec $DEV bash -c '
-            LINE=$(grep -n "mutates_args" /app/ATOM/atom/model_ops/moe.py | head -1 | cut -d: -f1)
+            LINE=$(grep -n "atom::moe_forward\|moe_forward.*custom_op\|@torch.library.custom_op" /app/ATOM/atom/model_ops/moe.py | head -1 | cut -d: -f1)
+            [ -z "$LINE" ] && LINE=$(grep -n "mutates_args" /app/ATOM/atom/model_ops/moe.py | head -1 | cut -d: -f1)
             [ -z "$LINE" ] && LINE=1880
-            START=$((LINE - 8)); END=$((LINE + 8))
+            START=$((LINE - 3)); END=$((LINE + 15))
+            echo "showing lines ${START}-${END}:"
             sed -n "${START},${END}p" /app/ATOM/atom/model_ops/moe.py
           '
           echo
           echo "============================================================"
           if [ "$MA_COUNT" -gt 0 ]; then
-            echo "VERDICT: mutates_args=[\"hidden_states\"] STILL PRESENT in latest ATOM main"
-            echo "         => triton_poi_fused issue NOT fixed upstream"
+            echo "VERDICT: mutates_args=[\"hidden_states\"] STILL PRESENT (count=$MA_COUNT)"
+            echo "         => triton_poi_fused issue NOT fixed in latest atom-dev image"
           else
-            echo "VERDICT: mutates_args=[\"hidden_states\"] REMOVED in latest ATOM main"
-            echo "         => triton_poi_fused issue FIXED upstream"
+            echo "VERDICT: mutates_args=[\"hidden_states\"] REMOVED"
+            echo "         => triton_poi_fused issue may be FIXED in latest atom-dev image"
           fi
+          echo "Tag count: $TAG_COUNT"
           echo "============================================================"
 
-      - name: Compare with zufa_atom (current pinned commit)
+      - name: Show diff in moe.py between two versions
         shell: bash {0}
+        continue-on-error: true
         run: |
-          echo "=== zufa_atom ATOM commit ==="
-          podman exec $WORKING bash -c 'cd /app/ATOM && git rev-parse HEAD && git log -1 --pretty=oneline'
-          echo "=== zufa_atom_dev ATOM commit (latest main) ==="
-          podman exec $DEV bash -c 'cd /app/ATOM && git rev-parse HEAD && git log -1 --pretty=oneline'
-          echo "=== diff between commits in moe.py ==="
-          OLD=$(podman exec $WORKING bash -c 'cd /app/ATOM && git rev-parse HEAD')
-          NEW=$(podman exec $DEV bash -c 'cd /app/ATOM && git rev-parse HEAD')
-          podman exec $DEV bash -c "cd /app/ATOM && git log --oneline $OLD..$NEW -- atom/model_ops/moe.py 2>&1 | head -20"
-          echo "=== files changed since pinned commit ==="
-          podman exec $DEV bash -c "cd /app/ATOM && git log --oneline $OLD..$NEW 2>&1 | head -10"
+          echo "=== diff /app/ATOM/atom/model_ops/moe.py (zufa_atom -> zufa_atom_dev) ==="
+          podman exec $WORKING cat /app/ATOM/atom/model_ops/moe.py > /tmp/moe_old.py
+          podman exec $DEV cat /app/ATOM/atom/model_ops/moe.py > /tmp/moe_new.py
+          diff /tmp/moe_old.py /tmp/moe_new.py | head -60
+          echo
+          echo "=== file size compare ==="
+          echo "zufa_atom: $(wc -l < /tmp/moe_old.py) lines"
+          echo "zufa_atom_dev: $(wc -l < /tmp/moe_new.py) lines"
 
       - name: Sanity - basic env in zufa_atom_dev
         shell: bash {0}
@@ -98,5 +100,3 @@ jobs:
           podman exec $DEV ls /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4/config.json 2>&1 | head -3
           echo "=== rocm-smi ==="
           podman exec $DEV rocm-smi 2>&1 | head -5
-          echo "=== ATOM import (may fail due to runtime — informational) ==="
-          podman exec $DEV python3 -c "import atom; print('ATOM import OK')" 2>&1 | tail -3
