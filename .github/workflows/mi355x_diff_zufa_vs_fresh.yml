@@ -1,0 +1,95 @@
+name: "MI355X Diff zufa_atom vs fresh 4-20 (git status, modified files, pip list)"
+on:
+  workflow_dispatch:
+jobs:
+  diff:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 10
+    env:
+      OLD: zufa_atom
+      NEW: zufa_atom_dev
+    steps:
+      - name: Verify both containers exist
+        shell: bash {0}
+        run: |
+          podman ps -a --filter name=^${OLD}$ --format '{{.Names}} {{.Status}} {{.Image}}'
+          podman ps -a --filter name=^${NEW}$ --format '{{.Names}} {{.Status}} {{.Image}}'
+
+      - name: ATOM repo state diff
+        shell: bash {0}
+        run: |
+          for C in $OLD $NEW; do
+            echo "===== $C — /app/ATOM ====="
+            podman exec $C bash -c '
+              cd /app/ATOM
+              echo "commit: $(git rev-parse HEAD)"
+              echo "branch: $(git rev-parse --abbrev-ref HEAD)"
+              echo "--- git status (modifications) ---"
+              git status --short 2>&1 | head -30
+              echo "--- git diff --stat (line count of modifications) ---"
+              git diff --stat 2>&1 | tail -10
+            '
+            echo
+          done
+
+      - name: aiter repo state diff
+        shell: bash {0}
+        run: |
+          for C in $OLD $NEW; do
+            echo "===== $C — /app/aiter-test ====="
+            podman exec $C bash -c '
+              cd /app/aiter-test
+              echo "commit: $(git rev-parse HEAD)"
+              echo "branch: $(git rev-parse --abbrev-ref HEAD)"
+              echo "--- git status ---"
+              git status --short 2>&1 | head -50
+              echo "--- git diff --stat ---"
+              git diff --stat 2>&1 | tail -20
+            '
+            echo
+          done
+
+      - name: pip list diff
+        shell: bash {0}
+        run: |
+          podman exec $OLD pip list 2>/dev/null | sort > /tmp/pip_$OLD.txt
+          podman exec $NEW pip list 2>/dev/null | sort > /tmp/pip_$NEW.txt
+          echo "=== diff (lines only in $OLD < or in $NEW >) ==="
+          diff /tmp/pip_$OLD.txt /tmp/pip_$NEW.txt | head -50
+          echo
+          echo "=== package counts ==="
+          wc -l /tmp/pip_$OLD.txt /tmp/pip_$NEW.txt
+
+      - name: Extra installed editable packages
+        shell: bash {0}
+        run: |
+          for C in $OLD $NEW; do
+            echo "===== $C — pip list -e (editable installs) ====="
+            podman exec $C pip list -e 2>/dev/null | head -10
+          done
+
+      - name: Extra cached files in /app and /root that may differ
+        shell: bash {0}
+        continue-on-error: true
+        run: |
+          for C in $OLD $NEW; do
+            echo "===== $C ====="
+            podman exec $C bash -c '
+              echo "--- aiter .so files (top 10 by mtime) ---"
+              find /app/aiter-test/aiter -name "*.so" -printf "%T@ %s %p\n" 2>/dev/null | sort -rn | head -10
+              echo "--- ~/.cache/atom contents ---"
+              du -sh ~/.cache/atom/* 2>/dev/null | head -10
+              echo "--- ~/.cache/comgr contents ---"
+              du -sh ~/.cache/comgr/* 2>/dev/null | head -5
+              echo "--- aiter __init__.py first 30 lines (to see export-time logic) ---"
+              head -30 /app/aiter-test/aiter/__init__.py
+            '
+            echo
+          done
+
+      - name: Compare moe.py sha256 (already known same, but confirm)
+        shell: bash {0}
+        run: |
+          for C in $OLD $NEW; do
+            podman exec $C sha256sum /app/ATOM/atom/model_ops/moe.py
+          done
