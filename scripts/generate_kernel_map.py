@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Generate B200 vs MI355X kernel map CSV from:
-  - B200 layer_kernel_avg.csv (from trace_layer_detail.py)
+Generate B200 vs MI355X kernel map XLSX from:
+  - B200 decode_breakdown.csv (from trace_layer_detail.py)
   - MI355X decode_breakdown.xlsx (from run_parse_trace.py)
 
-Output: kernel_map CSV with strict timeline alignment, overlap, and PASS grouping.
+Output: kernel_map XLSX with strict timeline alignment, overlap, PASS grouping,
+        and Stream Overlap Analysis section.
 
 Rules:
   1. No missing operators — every B200 and MI355X kernel appears
@@ -14,9 +15,9 @@ Rules:
 
 Usage:
     python3 generate_kernel_map.py \\
-        --b200-csv layer_kernel_avg.csv \\
+        --b200-csv decode_breakdown.csv \\
         --mi355x-xlsx decode_breakdown.xlsx \\
-        --output b200_vs_mi355x_kernel_map.csv
+        --output kernel_map_b200_vs_mi355x.xlsx
 """
 
 import argparse
@@ -137,7 +138,7 @@ def get_mi355x_pass(module, b200_pass):
 
 
 def parse_b200_csv(path):
-    """Parse B200 layer_kernel_avg.csv. Returns list of dicts."""
+    """Parse B200 decode_breakdown.csv. Returns list of dicts."""
     rows = []
     totals = {}
     with open(path, "r") as f:
@@ -768,7 +769,7 @@ def generate_map(b200_rows, b200_totals, mi355x_rows, mi355x_total, b200_csv_pat
 
 def main():
     parser = argparse.ArgumentParser(description="Generate B200 vs MI355X kernel map")
-    parser.add_argument("--b200-csv", required=True, help="B200 layer_kernel_avg.csv")
+    parser.add_argument("--b200-csv", required=True, help="B200 decode_breakdown.csv (from trace_layer_detail.py)")
     parser.add_argument("--mi355x-xlsx", required=True, help="MI355X decode_breakdown.xlsx")
     parser.add_argument("--output", default="kernel_map_b200_vs_mi355x.xlsx",
                         help="Output XLSX path (default: kernel_map_b200_vs_mi355x.xlsx)")

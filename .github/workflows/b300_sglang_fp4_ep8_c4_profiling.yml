@@ -57,7 +57,7 @@ jobs:
       - name: Show CSV
         if: always()
         run: |
-          cat $REPO/$RESULT_DIR/layer_kernel_avg.csv 2>/dev/null || echo 'No CSV'
+          cat $REPO/$RESULT_DIR/decode_breakdown.csv 2>/dev/null || echo 'No CSV'
           cat $REPO/$RESULT_DIR/allreduce_fusion_dist.csv 2>/dev/null | head -20 || echo 'No allreduce CSV'
 
       - name: Git commit and push results

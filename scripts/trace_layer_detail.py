@@ -540,10 +540,10 @@ def main():
         print(f"    {'Dual-stream':<25} {avg_dual:>6.1f}μs")
         print(f"    {'TOTAL':<25} {avg_pdl + avg_dual:>6.1f}μs  (ksum-wall: {avg_overlap:.1f}μs)")
 
-        # Write CSV output — kernel map format with overlap and MI355X placeholder columns
+        # Write CSV output — per-operator decode breakdown (paired with MI355X's decode_breakdown.xlsx)
         if args.output_dir:
             os.makedirs(args.output_dir, exist_ok=True)
-            csv_path = os.path.join(args.output_dir, "layer_kernel_avg.csv")
+            csv_path = os.path.join(args.output_dir, "decode_breakdown.csv")
 
             # Pass-level grouping: map each operator to a pass
             PASS_MAP = {
