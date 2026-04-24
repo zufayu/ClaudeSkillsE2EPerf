@@ -1,0 +1,59 @@
+name: "MI355X Recreate zufa_atom_ex from podman commit of zufa_atom"
+on:
+  workflow_dispatch:
+jobs:
+  rebuild:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 30
+    env:
+      WORKING: zufa_atom
+      NEW: zufa_atom_ex
+      SNAPSHOT: localhost/zufa-atom-snapshot:r1
+    steps:
+      - name: Commit zufa_atom to a snapshot image
+        shell: bash {0}
+        run: |
+          echo "=== inspect working before commit ==="
+          podman inspect $WORKING --format 'IMAGE: {{.ImageName}}{{println}}State: {{.State.Status}}'
+          echo "=== podman commit ==="
+          podman commit $WORKING $SNAPSHOT
+          podman images $SNAPSHOT
+
+      - name: Remove old zufa_atom_ex and recreate from snapshot
+        shell: bash {0}
+        run: |
+          podman rm -f $NEW 2>&1 || true
+          # Use exact same flags as before — keep-groups is the critical one
+          podman run -d --name $NEW \
+            --security-opt seccomp=unconfined \
+            --ipc=host --network=host \
+            --group-add keep-groups \
+            -v /shared:/shared \
+            $SNAPSHOT sleep infinity
+          sleep 3
+          echo "=== id ==="
+          podman exec $NEW id
+
+      - name: Verify exact match with zufa_atom
+        shell: bash {0}
+        run: |
+          for C in $WORKING $NEW; do
+            echo "===== $C ====="
+            podman exec $C bash -c '
+              echo "ATOM commit: $(cd /app/ATOM && git rev-parse HEAD)"
+              echo "aiter commit: $(cd /app/aiter-test && git rev-parse HEAD)"
+              echo "QuantType: $(grep -c QuantType /app/aiter-test/aiter/__init__.py)"
+              python3 -c "from aiter import QuantType; print(\"aiter QuantType OK\")" 2>&1 | tail -1
+              python3 -c "import atom; import atom.entrypoints.openai_server; print(\"ATOM import OK\")" 2>&1 | tail -1
+              ls /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4/config.json >/dev/null 2>&1 && echo "model accessible OK" || echo "MODEL FAIL"
+            '
+            echo
+          done
+
+      - name: Show moe.py:1878 patch site (must exist)
+        shell: bash {0}
+        run: |
+          echo "=== mutates_args=['hidden_states'] in zufa_atom_ex ==="
+          podman exec $NEW grep -n 'mutates_args.*hidden_states' /app/ATOM/atom/model_ops/moe.py
+          echo "=== needs_fixed_stride_order ==="
+          podman exec $NEW grep -n 'needs_fixed_stride_order' /app/ATOM/atom/model_ops/moe.py
