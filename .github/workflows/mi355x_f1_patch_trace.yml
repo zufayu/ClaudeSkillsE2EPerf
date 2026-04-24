@@ -52,7 +52,7 @@ jobs:
           echo "=== sha256 after patch ==="
           podman exec $C sha256sum $BAK $SRC
 
-      - name: Start ATOM server (baseline A config: TP=4 EP=1 fp8 kv)
+      - name: "Start ATOM server (baseline A config: TP=4 EP=1 fp8 kv)"
         run: |
           podman exec -d $C bash -c "cd $REPO && PYTORCH_PROFILER_WITH_STACK=0 python3 -m atom.entrypoints.openai_server --model $MODEL --server-port 8000 --tensor-parallel-size 4 --max-num-seqs 512 --gpu-memory-utilization 0.90 --kv_cache_dtype fp8 --torch-profiler-dir $TRACE_DIR > /tmp/server_f1.log 2>&1"
           echo "Server starting (F1)..."
