@@ -55,7 +55,8 @@ See `.claude/memory/project_refactor_validation.md` for the bug list and validat
    - **注意**：只对新代码有效。现有 3 个分析脚本（parse_torch_trace, extract_cuda_kernels, compare_traces）保留内联 map，因为 display names 格式不同。自检时发现强制替换会改变输出格式，已还原。
 
 5. **`scripts/trace_utils.py`** — 共享 trace 工具  
-   - 3 个分析脚本已改为 import（trace_layer_detail, analyze_layer_from_trace, decode_kernel_breakdown）
+   - 2 个分析脚本 import（trace_layer_detail, decode_kernel_breakdown）；
+     `analyze_layer_from_trace.py` 已删除（dead code, 0 引用; 功能已被 trace_layer_detail.py 吸收）
 
 6. **`scripts/sa_bench_trt.sh`** — 合并 b200/h20/h200  
    - 平台差异提取到 `configs/adaptive/*.sh`（compute_adaptive_params 函数）  
