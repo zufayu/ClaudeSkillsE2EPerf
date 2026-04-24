@@ -12,6 +12,8 @@ on:
           - recreate_userns_keepid
           - recreate_match_uid
           - recreate_clone_zufa_atom_config
+          - recreate_rootful_sudo
+          - check_zufa_atom_ownership
 jobs:
   fix:
     runs-on: [self-hosted, mi355x]
@@ -125,17 +127,69 @@ jobs:
           podman exec $BROKEN id
           podman exec $BROKEN ls -ln $MODEL_PROBE && echo "SUCCESS: model accessible" || echo "STILL BROKEN"
 
-      - name: Final verification
-        if: inputs.strategy != 'diagnose_only'
+      - name: Check who owns zufa_atom (rootful vs rootless)
+        if: inputs.strategy == 'check_zufa_atom_ownership'
         run: |
+          echo "=== Runner user ==="
+          id
+          echo
+          echo "=== Rootless podman (as $USER): list containers ==="
+          podman ps -a 2>&1 | head -10
+          echo
+          echo "=== Rootful podman (sudo): list containers ==="
+          sudo -n podman ps -a 2>&1 | head -10 || echo "sudo unavailable"
+          echo
+          echo "=== Where does zufa_atom live? ==="
+          if podman ps -a --format '{{.Names}}' 2>/dev/null | grep -qx zufa_atom; then
+            echo "zufa_atom found in ROOTLESS storage"
+            podman inspect zufa_atom --format 'Storage: {{.GraphDriver.Name}} | Root: {{.GraphDriver.Data.WorkDir}}'
+          fi
+          if sudo -n podman ps -a --format '{{.Names}}' 2>/dev/null | grep -qx zufa_atom; then
+            echo "zufa_atom found in ROOTFUL storage"
+            sudo -n podman inspect zufa_atom --format 'Storage: {{.GraphDriver.Name}} | Root: {{.GraphDriver.Data.WorkDir}}'
+          fi
+          echo
+          echo "=== Try reading model as host user (no container) ==="
+          ls -ln $MODEL_PROBE 2>&1 || echo "host user cannot read"
+          cat $MODEL_PROBE 2>&1 | head -3 || echo "host user cannot cat"
+          echo
+          echo "=== Try reading model as sudo (no container) ==="
+          sudo -n cat $MODEL_PROBE 2>&1 | head -3 || echo "sudo cannot cat"
+
+      - name: Apply fix - rootful podman via sudo
+        if: inputs.strategy == 'recreate_rootful_sudo'
+        run: |
+          IMAGE=$(podman inspect $WORKING --format '{{.ImageName}}' 2>/dev/null) \
+            || IMAGE=$(sudo -n podman inspect $WORKING --format '{{.ImageName}}' 2>/dev/null) \
+            || IMAGE="docker.io/rocm/atom-dev:latest"
+          echo "Using image: $IMAGE"
+          echo "=== Remove rootless and rootful copies ==="
+          podman rm -f $BROKEN 2>&1 || true
+          sudo -n podman rm -f $BROKEN 2>&1 || true
+          echo "=== Create with sudo (rootful) ==="
+          sudo -n podman run -d --name $BROKEN \
+            --security-opt seccomp=unconfined \
+            --ipc=host --network=host \
+            -v /shared:/shared \
+            $IMAGE sleep infinity
+          sleep 3
+          echo "--- Test ---"
+          sudo -n podman exec $BROKEN id
+          sudo -n podman exec $BROKEN ls -ln $MODEL_PROBE && echo "SUCCESS: model accessible (rootful)" || echo "STILL BROKEN"
+
+      - name: Final verification
+        if: inputs.strategy != 'diagnose_only' && inputs.strategy != 'check_zufa_atom_ownership'
+        run: |
+          # Use sudo prefix for rootful strategy
+          PFX=""; [ "${{ inputs.strategy }}" = "recreate_rootful_sudo" ] && PFX="sudo -n"
           echo "=== Final state ==="
-          podman exec $BROKEN id
+          $PFX podman exec $BROKEN id
           echo
           echo "Model config readable?"
-          podman exec $BROKEN python3 -c "import json; print(list(json.load(open('$MODEL_PROBE')).keys())[:5])" 2>&1 || echo "FAIL"
+          $PFX podman exec $BROKEN python3 -c "import json; print(list(json.load(open('$MODEL_PROBE')).keys())[:5])" 2>&1 || echo "FAIL"
           echo
           echo "GPU visible?"
-          podman exec $BROKEN rocm-smi --showid 2>&1 | head -10 || echo "GPU not visible"
+          $PFX podman exec $BROKEN rocm-smi --showid 2>&1 | head -10 || echo "GPU not visible"
           echo
           echo "ATOM source present?"
-          podman exec $BROKEN ls -d /app/ATOM 2>&1 || echo "/app/ATOM missing — needs git clone"
+          $PFX podman exec $BROKEN ls -d /app/ATOM 2>&1 || echo "/app/ATOM missing — needs git clone"
