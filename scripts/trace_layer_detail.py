@@ -159,6 +159,12 @@ def main():
                         help="FMHA events per decode step (DSR1 = 61). Used for layer-anchored "
                              "step detection. Gap-based detection (old default) fails for "
                              "steady-state continuous batching where inter-step gaps disappear.")
+    parser.add_argument("--enforce-min-samples", type=int, default=0,
+                        help="Fail with non-zero exit if final per-operator sample count "
+                             "(used_steps × layers_in_range) drops below this threshold. "
+                             "Use to prevent silent under-sampling regressions in CI; e.g., "
+                             "set to 300 to catch the 'trace only had 1 valid decode step' bug. "
+                             "Default 0 = no enforcement (keep loose default for ad-hoc runs).")
     parser.add_argument("--legacy-best-aligned", action="store_true",
                         help="DEPRECATED: cherry-picks 10 most-stable consecutive layers from one "
                              "step. Biased low (survivorship). Kept for back-compat only.")
@@ -285,7 +291,13 @@ def main():
         print(f"\nAccumulating {len(used_steps)} steps × {layer_hi - layer_lo} layers = {len(selected_intervals)} (step,layer) samples")
         if not selected_intervals:
             print("ERROR: no (step, layer) samples found — check --layer-range and trace coverage")
-            return
+            sys.exit(1)
+        if args.enforce_min_samples > 0 and len(selected_intervals) < args.enforce_min_samples:
+            print(f"ERROR: --enforce-min-samples={args.enforce_min_samples} not met "
+                  f"(got {len(selected_intervals)} samples). "
+                  f"Likely cause: trace has too few clean decode steps "
+                  f"({len(used_steps)} used after warmup/prefill filter).")
+            sys.exit(2)
 
     # For each selected layer, extract kernels between allreduce_fusion and vectorized_elementwise
     RE_LAYER_START = re.compile(r"allreduce_fusion_kernel", re.IGNORECASE)
