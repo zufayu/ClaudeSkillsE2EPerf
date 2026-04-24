@@ -137,7 +137,7 @@ methodology automatically — no per-workflow opt-in needed. Workflows
 that pass explicit `--max-steps` or `--legacy-best-aligned` are using
 non-standard methodology and their data is not directly comparable.
 
-The pilot workflow `b300_test_profiling.yml` runs both STEADY (the
+The pilot workflow `b300_methodology_validation.yml` runs both STEADY (the
 methodology) and WARMUP (skip 0, take 5) so its own Phase 4 self-check
 documents that warmup exclusion and methodology stability are working.
 This serves as a regression sanity check against future analyzer changes.
@@ -151,5 +151,5 @@ This serves as a regression sanity check against future analyzer changes.
 - Code: `scripts/trace_layer_detail.py`, `scripts/run_parse_trace.py`,
   `scripts/decode_kernel_breakdown.py` — analyzer implementations
 - Code: `scripts/compare_b300_mi355x.py` — cross-platform comparator
-- Workflow: `.github/workflows/b300_test_profiling.yml` — pilot /
+- Workflow: `.github/workflows/b300_methodology_validation.yml` — pilot /
   regression self-check

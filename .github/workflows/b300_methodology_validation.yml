@@ -1,14 +1,20 @@
-name: "B300 Test Profiling (R8c — NEW vs LEGACY comparison)"
+name: "B300 Methodology Validation (R8d STEADY vs WARMUP self-check)"
+# Regression sanity check for the R8d wide-sample profiling methodology.
 # Runs trace_layer_detail.py twice on the same trace:
-#   - NEW algorithm:    layer 10-40 × 100 steps = 3000 samples/op (default)
-#   - LEGACY algorithm: 10 best-aligned consecutive layers from 1 step (--legacy-best-aligned)
-# Goal: validate new algorithm doesn't shift means, lowers CV (coefficient of variation).
+#   - STEADY: skip 5 warmup decodes, take 20 steady-state (~600 samples/op)
+#             — this is the production methodology per PROFILING_METHODOLOGY.md
+#   - WARMUP: skip 0, take first 5 — to verify the warmup-exclusion convention
+#             actually matters (or doesn't, given collect-side warmup buffer)
+# Phase 4 prints both side by side; STEADY is the canonical artifact.
 #
-# No "Commit results" step — test-only, no main pollution.
+# Earlier name: b300_test_profiling.yml (renamed in R8d cleanup; original
+# pilot for R8c NEW vs LEGACY comparison — LEGACY now deprecated).
+#
+# No "Commit results" step — validation-only, no main pollution.
 on:
   push:
     branches: [test/b300-validation]
-    paths: ['.github/workflows/b300_test_profiling.yml']
+    paths: ['.github/workflows/b300_methodology_validation.yml']
   workflow_dispatch:
     inputs:
       configs:
