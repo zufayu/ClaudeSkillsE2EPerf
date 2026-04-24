@@ -89,14 +89,22 @@ def select_decodes(evts, target_bs, skip_warmup=5, max_steps=20):
     Convention matches B300/B200 trace_layer_detail.py for cross-platform
     apples-to-apples comparison.
     """
-    decodes = [
-        e for e in evts
-        if e.get("name", "").startswith("decode[")
-        and e.get("ph") == "X"
-        and f"bs={target_bs}" in e.get("name", "")
-    ]
+    # cat='gpu_user_annotation' filter is critical: without it we also catch
+    # capture-graph replay events that look like decode[bs=N] but are sub-ms
+    # (graph capture / MTP draft). With it, we only get the real decode
+    # iterations (typically 10-30ms each on MI355X).
+    decodes = sorted(
+        [
+            e for e in evts
+            if e.get("name", "").startswith("decode[")
+            and e.get("ph") == "X"
+            and e.get("cat") == "gpu_user_annotation"
+            and f"bs={target_bs}" in e.get("name", "")
+        ],
+        key=lambda x: x["ts"],
+    )
     if not decodes:
-        print(f"ERROR: no decode events with bs={target_bs}")
+        print(f"ERROR: no decode events with bs={target_bs} (cat=gpu_user_annotation)")
         return []
     if len(decodes) <= skip_warmup:
         print(f"WARN: only {len(decodes)} decodes — can't skip {skip_warmup} warmup; using all")
