@@ -1,0 +1,143 @@
+name: "MI355X F1: patch moe.py mutates_args=[] + trace + restore"
+on:
+  workflow_dispatch:
+jobs:
+  f1:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 60
+    env:
+      C: zufa_atom
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
+      SRC: /app/ATOM/atom/model_ops/moe.py
+      BAK: /app/ATOM/atom/model_ops/moe.py.f1.bak
+      TRACE_DIR: /tmp/trace_f1
+      SAVE_DIR: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf/results/mi355x_dsr_mxfp4/triton_poi_f1
+    steps:
+      - name: Kill residual GPU processes
+        continue-on-error: true
+        run: podman exec $C bash -c 'pkill -9 -f "python|vllm|atom" 2>/dev/null; sleep 5; rm -f /dev/shm/aiter_*; rm -rf /tmp/trace_f1; true'
+
+      - name: Sync repo
+        run: podman exec $C bash -c "cd $REPO && git fetch origin && git reset --hard origin/main"
+
+      - name: Pre-flight - confirm patch site + backup with sha256
+        shell: bash {0}
+        run: |
+          set -e
+          echo "=== Confirm exact patch site ==="
+          podman exec $C grep -n 'mutates_args.*hidden_states' $SRC || { echo "FATAL: patch site not found"; exit 1; }
+          podman exec $C grep -n 'needs_fixed_stride_order' $SRC || { echo "WARN: tag site not found (F1 doesn't touch it)"; }
+          echo "=== Backup ==="
+          podman exec $C bash -c "cp -f $SRC $BAK && sha256sum $BAK $SRC"
+
+      - name: Apply F1 patch (mutates_args=['hidden_states'] -> mutates_args=[])
+        shell: bash {0}
+        run: |
+          set -e
+          podman exec $C python3 -c "
+          import re, sys
+          path = '$SRC'
+          src = open(path).read()
+          target = 'mutates_args=[\"hidden_states\"]'
+          replacement = 'mutates_args=[]'
+          n = src.count(target)
+          assert n == 1, f'Expected 1 occurrence, found {n}'
+          new = src.replace(target, replacement)
+          open(path, 'w').write(new)
+          print(f'F1 patch applied: 1 substitution')"
+          echo "=== Diff vs backup ==="
+          podman exec $C diff $BAK $SRC || true
+          echo "=== sha256 after patch ==="
+          podman exec $C sha256sum $BAK $SRC
+
+      - name: Start ATOM server (baseline A config: TP=4 EP=1 fp8 kv)
+        run: |
+          podman exec -d $C bash -c "cd $REPO && PYTORCH_PROFILER_WITH_STACK=0 python3 -m atom.entrypoints.openai_server --model $MODEL --server-port 8000 --tensor-parallel-size 4 --max-num-seqs 512 --gpu-memory-utilization 0.90 --kv_cache_dtype fp8 --torch-profiler-dir $TRACE_DIR > /tmp/server_f1.log 2>&1"
+          echo "Server starting (F1)..."
+
+      - name: Wait for server ready
+        run: |
+          for i in $(seq 1 120); do if podman exec $C curl -s http://0.0.0.0:8000/health > /dev/null 2>&1; then echo "Server ready after $((i*5))s"; break; fi; sleep 5; done
+          podman exec $C curl -s http://0.0.0.0:8000/health || { echo "Server not ready"; podman exec $C tail -50 /tmp/server_f1.log; exit 1; }
+
+      - name: Get served model name
+        run: |
+          SERVED=$(podman exec $C curl -s http://0.0.0.0:8000/v1/models | python3 -c "import json,sys; print(json.load(sys.stdin)['data'][0]['id'])")
+          echo "SERVED=$SERVED" >> $GITHUB_ENV
+
+      - name: Warmup (128 prompts, c=64)
+        run: podman exec $C python3 -u -m atom.benchmarks.benchmark_serving --model "${{ env.SERVED }}" --backend vllm --base-url http://0.0.0.0:8000 --dataset-name random --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 --num-prompts 128 --max-concurrency 64 --request-rate inf --ignore-eos
+
+      - name: Profile (64 prompts, c=64)
+        run: |
+          podman exec $C curl -s -X POST http://0.0.0.0:8000/start_profile
+          podman exec $C python3 -u -m atom.benchmarks.benchmark_serving --model "${{ env.SERVED }}" --backend vllm --base-url http://0.0.0.0:8000 --dataset-name random --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 --num-prompts 64 --max-concurrency 64 --request-rate inf --ignore-eos
+          podman exec $C curl -s -X POST http://0.0.0.0:8000/stop_profile
+
+      - name: Wait for trace flush
+        run: |
+          for i in $(seq 1 60); do
+            GZ=$(podman exec $C bash -c "ls $TRACE_DIR/rank_0/*.json.gz 2>/dev/null | grep -v capture_graph | head -1")
+            JSON=$(podman exec $C bash -c "ls $TRACE_DIR/rank_0/*.json 2>/dev/null | grep -v capture_graph | head -1")
+            if [ -n "$GZ" ] && [ -z "$JSON" ]; then echo "Trace ready: $GZ ($(podman exec $C du -h $GZ | cut -f1))"; break; fi
+            echo "Waiting... ($((i*5))s)"; sleep 5
+          done
+
+      - name: Save trace to persistent dir
+        if: always()
+        continue-on-error: true
+        run: |
+          podman exec $C bash -c "mkdir -p $SAVE_DIR && cp $TRACE_DIR/rank_0/*.json.gz $SAVE_DIR/ 2>/dev/null && ls -lh $SAVE_DIR/*.json.gz"
+
+      - name: Count triton_poi_fused (verdict)
+        if: always()
+        continue-on-error: true
+        run: |
+          podman exec $C python3 -c "
+          import gzip, json, glob
+          traces = [f for f in glob.glob('$TRACE_DIR/rank_0/*.json.gz') if 'capture_graph' not in f]
+          if not traces:
+              print('ERROR: No trace file'); exit(1)
+          trace = traces[0]
+          print(f'Trace: {trace}')
+          with gzip.open(trace, 'rt') as f:
+              data = json.load(f)
+          events = data.get('traceEvents', [])
+          kernels = [e for e in events if e.get('cat') == 'kernel']
+          triton = [e for e in kernels if 'triton_poi_fused' in e.get('name', '')]
+          print(f'Total events: {len(events)}')
+          print(f'GPU kernels: {len(kernels)}')
+          print(f'triton_poi_fused kernels: {len(triton)}')
+          if triton:
+              names = {}
+              for e in triton:
+                  n = e['name']
+                  names[n] = names.get(n, 0) + 1
+              for n in sorted(names): print(f'  {n}: {names[n]}')
+              print()
+              print('VERDICT: F1 patch DID NOT eliminate triton_poi_fused')
+              print('=> mutates_args removal alone is insufficient; tag (needs_fixed_stride_order) likely also required')
+          else:
+              print('VERDICT: F1 patch ELIMINATED triton_poi_fused')
+              print('=> mutates_args=[\"hidden_states\"] is the necessary cause (per causal inference)')
+          "
+
+      - name: Kill server
+        if: always()
+        continue-on-error: true
+        run: podman exec $C bash -c 'pkill -9 -f "python|atom" 2>/dev/null; sleep 3; true'
+
+      - name: RESTORE moe.py (CRITICAL — always run)
+        if: always()
+        shell: bash {0}
+        run: |
+          set -e
+          echo "=== sha256 before restore ==="
+          podman exec $C sha256sum $BAK $SRC || true
+          podman exec $C cp -f $BAK $SRC
+          echo "=== sha256 after restore ==="
+          podman exec $C sha256sum $BAK $SRC
+          echo "=== Verify restore (mutates_args back) ==="
+          podman exec $C grep -n 'mutates_args.*hidden_states' $SRC || { echo "RESTORE FAILED — mutates_args missing"; exit 1; }
+          echo "Restore verified OK"
