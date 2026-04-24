@@ -11,6 +11,10 @@ on:
           - ep8-tp8
           - both
         default: ep1-tp4
+      commit_results:
+        description: 'Commit + push profiling outputs (csv/xlsx/log) to main'
+        type: boolean
+        default: false
 jobs:
   mxfp4-ep1-tp4-profiling:
     if: inputs.config == 'ep1-tp4'
@@ -43,7 +47,7 @@ jobs:
         run: |
           podman exec $CONTAINER bash -c "cd $REPO/$RESULT_DIR && TRACE=\$(ls trace_torch_*_c*_full.json.gz 2>/dev/null | head -1) && CAPTURE=\$(ls capture_graph_trace_*_c*_full.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE\" ]; then echo \"Trace: \$TRACE\"; python3 $REPO/scripts/run_parse_trace.py \$TRACE --target-bs 64 --layer 40 \$([ -n \"\$CAPTURE\" ] && echo \"--capture-trace \$CAPTURE\") && ls -lh *breakdown*.xlsx 2>/dev/null; else echo 'No trace file'; fi"
       - name: Git commit results
-        if: always()
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
         run: |
           cd $REPO && git config user.email "ci@github.com" && git config user.name "MI355X CI"
           git pull --rebase origin main || true
@@ -94,7 +98,7 @@ jobs:
           podman exec $CONTAINER bash -c "cd $REPO/$RESULT_DIR && TRACE=\$(ls trace_torch_*_c*_full.json.gz 2>/dev/null | head -1) && CAPTURE=\$(ls capture_graph_trace_*_c*_full.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE\" ]; then echo \"Trace: \$TRACE\"; echo \"Capture: \$CAPTURE\"; python3 $REPO/scripts/run_parse_trace.py \$TRACE --target-bs 64 --layer 40 \$([ -n \"\$CAPTURE\" ] && echo \"--capture-trace \$CAPTURE\") && echo 'Breakdown files:' && ls -lh *breakdown*.xlsx 2>/dev/null; else echo 'No trace file found'; fi"
 
       - name: Git commit and push results (exclude large .json.gz traces)
-        if: always()
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
         run: |
           cd $REPO
           git config user.email "ci@github.com"
@@ -145,7 +149,7 @@ jobs:
           cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'
 
       - name: Git commit and push results (exclude large .json.gz traces)
-        if: always()
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
         run: |
           cd $REPO
           git config user.email "ci@github.com"

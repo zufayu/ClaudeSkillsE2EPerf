@@ -2,6 +2,10 @@ name: B200 SGLang FP4 Profiling
 on:
   workflow_dispatch:
     inputs:
+      commit_results:
+        description: 'Commit + push profiling outputs (csv/xlsx/log) to main'
+        type: boolean
+        default: false
       tp:
         description: "Tensor parallel size"
         type: string
@@ -93,7 +97,7 @@ jobs:
 
       # ===== Commit Results (torch analysis only, no large trace files) =====
       - name: Git commit and push results
-        if: always()
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
         run: |
           bash -c "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
           bash -c "cd $REPO && git reset HEAD 2>/dev/null; git add -u $RESULT_DIR/ 2>/dev/null; for ext in log yml jsonl json md csv; do git add -f $RESULT_DIR/*.\$ext 2>/dev/null; done; git diff --cached --name-only"

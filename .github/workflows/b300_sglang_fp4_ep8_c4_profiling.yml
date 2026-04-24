@@ -1,6 +1,11 @@
 name: "B300 SGLang FP4 EP8 TP8 c=4 Profiling"
 on:
   workflow_dispatch:
+    inputs:
+      commit_results:
+        description: 'Commit + push profiling outputs (csv/xlsx/log) to main'
+        type: boolean
+        default: false
 jobs:
   sglang-fp4-tp8-ep8-c4-profiling:
     runs-on: [self-hosted, b300]
@@ -61,7 +66,7 @@ jobs:
           cat $REPO/$RESULT_DIR/allreduce_fusion_dist.csv 2>/dev/null | head -20 || echo 'No allreduce CSV'
 
       - name: Git commit and push results
-        if: always()
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
         run: |
           docker exec -e REPO=$REPO $CONTAINER bash -c 'chown -R $(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'
           cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B300 CI'
