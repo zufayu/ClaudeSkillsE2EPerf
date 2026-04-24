@@ -80,7 +80,15 @@ def load_trace(path):
     return load_trace_events(path)
 
 
-def select_decode(evts, target_bs, skip_ratio=0.5):
+def select_decodes(evts, target_bs, skip_warmup=5, max_steps=20):
+    """Return a list of decode events to aggregate over.
+
+    Skips the first `skip_warmup` decodes (cold caches / JIT) and caps at
+    `max_steps`. Replaces the old `select_decode` (single-decode picker) so
+    we can aggregate ~600 (step,layer) samples per operator instead of ~30.
+    Convention matches B300/B200 trace_layer_detail.py for cross-platform
+    apples-to-apples comparison.
+    """
     decodes = [
         e for e in evts
         if e.get("name", "").startswith("decode[")
@@ -89,15 +97,16 @@ def select_decode(evts, target_bs, skip_ratio=0.5):
     ]
     if not decodes:
         print(f"ERROR: no decode events with bs={target_bs}")
-        return None
-    idx = int(len(decodes) * skip_ratio)
-    idx = min(idx, len(decodes) - 1)
-    d = decodes[idx]
-    dur_ms = d.get("dur", 0) / 1000
-    print(f"  decode events (bs={target_bs}): {len(decodes)}")
-    print(f"  Selected #{idx}/{len(decodes)} (skip_ratio={skip_ratio})")
-    print(f"  {d['name']} ts={d['ts']:.0f} dur={dur_ms:.2f}ms")
-    return d
+        return []
+    if len(decodes) <= skip_warmup:
+        print(f"WARN: only {len(decodes)} decodes — can't skip {skip_warmup} warmup; using all")
+        return decodes
+    selected = decodes[skip_warmup : skip_warmup + max_steps] if max_steps > 0 \
+        else decodes[skip_warmup:]
+    print(f"  decode events (bs={target_bs}): {len(decodes)} total")
+    print(f"  Selected {len(selected)} steady-state decodes "
+          f"(skipped first {skip_warmup} warmup, cap {max_steps})")
+    return selected
 
 
 def extract_kernels_in_window(evts, ts_start, ts_end):
@@ -177,7 +186,15 @@ def main():
     parser = argparse.ArgumentParser(description="Decode kernel breakdown from ATOM trace")
     parser.add_argument("trace", help="Path to trace JSON or JSON.GZ")
     parser.add_argument("--target-bs", type=int, default=64)
-    parser.add_argument("--skip-ratio", type=float, default=0.5)
+    parser.add_argument("--skip-warmup", type=int, default=5,
+                        help="Drop first N decode steps (cold caches / JIT). "
+                             "Matches B300 trace_layer_detail convention.")
+    parser.add_argument("--max-steps", type=int, default=20,
+                        help="Aggregate over N steady-state decodes (default 20 → "
+                             "~20 × 30 layers = 600 samples per operator). 0 = all available.")
+    parser.add_argument("--skip-ratio", type=float, default=None,
+                        help="DEPRECATED. Old single-decode picker. Ignored when "
+                             "--skip-warmup / --max-steps are used.")
     parser.add_argument("--layers", type=str, default="10-40")
     parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()
@@ -190,66 +207,73 @@ def main():
     layer_start, layer_end = map(int, args.layers.split("-"))
     evts = load_trace(args.trace)
 
-    decode = select_decode(evts, args.target_bs, args.skip_ratio)
-    if decode is None:
+    decodes = select_decodes(evts, args.target_bs, args.skip_warmup, args.max_steps)
+    if not decodes:
         sys.exit(1)
 
-    ts0, dur = decode["ts"], decode.get("dur", 0)
-    dur_ms = dur / 1000
-    print(f"\n  Decode walltime: {dur_ms:.2f}ms")
+    # Pool classified layers across all selected decodes.
+    # Each decode contributes ~30 layers (layer_start..layer_end); with 20 decodes
+    # we get ~600 layer samples → per-operator stats much tighter.
+    all_classified = []  # list of [(module, kname, dur), ...] per layer
+    total_dur_ms = 0.0
+    for decode in decodes:
+        ts0, dur = decode["ts"], decode.get("dur", 0)
+        total_dur_ms += dur / 1000
+        kernels = extract_kernels_in_window(evts, ts0, ts0 + dur)
+        layers = split_layers(kernels)
+        # Skip partial first layer (may start mid-layer in post-attn phase)
+        if len(layers) > 1:
+            first_names = [k.get("name", "") for k in layers[0][:5]]
+            if any(any(p in n for p in ["bf16gemm", "grouped_topk", "kernel_moe"])
+                   for n in first_names):
+                layers = layers[1:]
+        # Trim to requested layer range (per-decode), respecting available layers
+        decode_layer_end = min(layer_end, len(layers) - 1)
+        selected = layers[layer_start:decode_layer_end + 1]
+        for l in selected:
+            all_classified.append(classify_layer(l))
 
-    kernels = extract_kernels_in_window(evts, ts0, ts0 + dur)
-    print(f"  Kernels in window: {len(kernels)}")
+    n_layers_total = len(all_classified)
+    n_decodes = len(decodes)
+    avg_dur_ms = total_dur_ms / n_decodes if n_decodes else 0
+    print(f"\n  Aggregated {n_layers_total} layer samples across {n_decodes} decodes")
+    print(f"  Avg decode walltime: {avg_dur_ms:.2f}ms")
 
-    all_layers = split_layers(kernels)
-    # First "layer" may be partial (starts mid-layer). Check if layer starts
-    # with post-attn phase (RS → rmsnorm → router/moe) instead of pre-attn
-    # phase (RS → rmsnorm → quant → qkv_a).
-    # A proper layer should have RS → rmsnorm → quant/gemm_xdl (pre-attn).
-    # If we see RS → rmsnorm → bf16gemm/topk, this is post-attn → skip it.
-    if len(all_layers) > 1:
-        first_names = [k.get("name", "") for k in all_layers[0][:5]]
-        is_post_attn_start = any(
-            any(p in n for p in ["bf16gemm", "grouped_topk", "kernel_moe"])
-            for n in first_names
-        )
-        if is_post_attn_start:
-            print(f"  Skipping partial first layer ({len(all_layers[0])} kernels, starts in MoE phase)")
-            all_layers = all_layers[1:]
-    layers = all_layers
-    print(f"  Layers detected: {len(layers)}")
+    if not all_classified:
+        print("ERROR: no layers extracted — check --target-bs and --layers")
+        sys.exit(1)
 
-    if len(layers) <= layer_end:
-        layer_end = len(layers) - 1
-        print(f"  Adjusted range: {layer_start}-{layer_end}")
+    # Representative layer (for xlsx Sheet 1 single-layer column display only —
+    # the per-position aggregate stats below are what actually matter).
+    rep_layer = all_classified[len(all_classified) // 2]
 
-    selected = layers[layer_start:layer_end + 1]
-    n_layers = len(selected)
-
-    # Classify each layer and compute per-kernel averages
-    # Use representative layer (middle of selected range) for single-layer column
-    rep_idx = n_layers // 2
-    rep_layer = classify_layer(selected[rep_idx])
-
-    # Compute multi-layer averages: aggregate by (position, kernel_name)
-    all_classified = [classify_layer(l) for l in selected]
-    # Average duration per position across layers
+    # Per-position aggregates (mean, median, p95) across all (decode × layer) samples
     max_pos = max(len(cl) for cl in all_classified)
     avg_durs = []
+    med_durs = []
+    p95_durs = []
     for pos in range(max_pos):
-        durs = [cl[pos][2] for cl in all_classified if pos < len(cl)]
-        avg_durs.append(sum(durs) / len(durs) if durs else 0)
+        durs = sorted(cl[pos][2] for cl in all_classified if pos < len(cl))
+        if not durs:
+            avg_durs.append(0); med_durs.append(0); p95_durs.append(0)
+            continue
+        avg_durs.append(sum(durs) / len(durs))
+        med_durs.append(durs[len(durs) // 2])
+        p95_idx = max(0, int(len(durs) * 0.95) - 1)
+        p95_durs.append(durs[p95_idx])
 
     total_rep = sum(d for _, _, d in rep_layer)
     total_avg = sum(avg_durs[:len(rep_layer)])
+    n_layers = n_layers_total  # for back-compat below
 
     print(f"\n{'='*60}")
-    print(f"LAYER {layer_start}-{layer_end} ANALYSIS ({n_layers} layers)")
+    print(f"LAYER {layer_start}-{layer_end} ANALYSIS "
+          f"({n_layers_total} layer samples × {n_decodes} decodes)")
     print(f"{'='*60}")
-    print(f"  Representative layer: {layer_start + rep_idx} ({len(rep_layer)} kernels)")
-    print(f"  Single-layer total: {total_rep:.1f}us ({total_rep/1000:.2f}ms)")
-    print(f"  Multi-layer avg total: {total_avg:.1f}us ({total_avg/1000:.2f}ms)")
-    print(f"  Est decode (x61): {total_avg * 61 / 1000:.1f}ms (actual: {dur_ms:.2f}ms)")
+    print(f"  Representative layer: {len(rep_layer)} kernels")
+    print(f"  Representative-layer total: {total_rep:.1f}us ({total_rep/1000:.2f}ms)")
+    print(f"  Pooled-mean per-layer total: {total_avg:.1f}us ({total_avg/1000:.2f}ms)")
+    print(f"  Est decode (x61): {total_avg * 61 / 1000:.1f}ms (actual avg: {avg_dur_ms:.2f}ms)")
 
     # Print layer structure
     print(f"\n{'#':<3} {'Module':<40} {'Kernel':<55} {'dur(us)':>8} {'avg':>8}")
@@ -270,22 +294,26 @@ def main():
     ws = wb.active
     ws.title = "decode"
     ws.append(["cpu_module", "gpu_kernel", "duration_us", "pct%",
-               "sum per module", "module_pct%", "avg duration_us", "avg sum per module"])
+               "sum per module", "module_pct%",
+               "avg_us", "median_us", "p95_us", "avg sum per module",
+               "n_samples"])
 
     # Group consecutive kernels by module
     groups = []
     for i, (mod, kname, d) in enumerate(rep_layer):
         avg = avg_durs[i] if i < len(avg_durs) else 0
+        med = med_durs[i] if i < len(med_durs) else 0
+        p95 = p95_durs[i] if i < len(p95_durs) else 0
         if not groups or groups[-1][0] != mod:
             groups.append((mod, []))
-        groups[-1][1].append((kname, d, avg))
+        groups[-1][1].append((kname, d, avg, med, p95))
 
     for mod, kernel_list in groups:
-        mod_sum = sum(d for _, d, _ in kernel_list)
-        mod_avg_sum = sum(a for _, _, a in kernel_list)
+        mod_sum = sum(d for _, d, _, _, _ in kernel_list)
+        mod_avg_sum = sum(a for _, _, a, _, _ in kernel_list)
         mod_pct = mod_sum / total_rep * 100 if total_rep else 0
         first = True
-        for kname, d, avg in kernel_list:
+        for kname, d, avg, med, p95 in kernel_list:
             pct = d / total_rep * 100 if total_rep else 0
             ws.append([
                 mod if first else "",
@@ -295,12 +323,15 @@ def main():
                 round(mod_sum, 3) if first else "",
                 round(mod_pct, 1) if first else "",
                 round(avg, 3),
+                round(med, 3),
+                round(p95, 3),
                 round(mod_avg_sum, 3) if first else "",
+                n_layers_total,
             ])
             first = False
 
     ws.append(["TOTAL", "", round(total_rep, 3), "100", "", "100",
-               round(total_avg, 3), ""])
+               round(total_avg, 3), "", "", "", n_layers_total])
 
     # Sheet 2: "kernel_summary" — aggregated by kernel name, sorted by avg duration
     ws2 = wb.create_sheet("kernel_summary")

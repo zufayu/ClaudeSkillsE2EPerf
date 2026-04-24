@@ -116,74 +116,77 @@ jobs:
             ci_exec "cd $REPO && python3 scripts/fix_torch_trace_pro.py $TRACE"
           fi
 
-      - name: "Phase 3a: trace_layer_detail NEW algorithm (3000 samples)"
+      - name: "Phase 3a: STEADY (skip 5 warmup, 20 steady-state steps)"
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          export REPO="$GITHUB_WORKSPACE"
+          TRACE=$(ls $REPO/$RESULT_DIR/*TP-0-EP-0*.fix.json.gz 2>/dev/null | head -1)
+          if [ -n "$TRACE" ]; then
+            ci_exec "cd $REPO && mkdir -p ./$RESULT_DIR/STEADY && python3 scripts/trace_layer_detail.py $TRACE --output-dir ./$RESULT_DIR/STEADY --layer-range 10-40 --skip-warmup-steps 5 --max-steps 20"
+          fi
+
+      - name: "Phase 3b: WARMUP (no skip, first 5 steps) — sanity check"
         continue-on-error: true
         run: |
           source scripts/ci_lib.sh && ci_load_platform b300
           export REPO="$GITHUB_WORKSPACE"
           TRACE=$(ls $REPO/$RESULT_DIR/*TP-0-EP-0*.fix.json.gz 2>/dev/null | head -1)
           if [ -n "$TRACE" ]; then
-            ci_exec "cd $REPO && mkdir -p ./$RESULT_DIR/NEW && python3 scripts/trace_layer_detail.py $TRACE --output-dir ./$RESULT_DIR/NEW --layer-range 10-40 --max-steps 100"
+            ci_exec "cd $REPO && mkdir -p ./$RESULT_DIR/WARMUP && python3 scripts/trace_layer_detail.py $TRACE --output-dir ./$RESULT_DIR/WARMUP --layer-range 10-40 --skip-warmup-steps 0 --max-steps 5"
           fi
 
-      - name: "Phase 3b: trace_layer_detail LEGACY algorithm (10 samples)"
-        continue-on-error: true
-        run: |
-          source scripts/ci_lib.sh && ci_load_platform b300
-          export REPO="$GITHUB_WORKSPACE"
-          TRACE=$(ls $REPO/$RESULT_DIR/*TP-0-EP-0*.fix.json.gz 2>/dev/null | head -1)
-          if [ -n "$TRACE" ]; then
-            ci_exec "cd $REPO && mkdir -p ./$RESULT_DIR/LEGACY && python3 scripts/trace_layer_detail.py $TRACE --output-dir ./$RESULT_DIR/LEGACY --legacy-best-aligned"
-          fi
-
-      - name: "Phase 4: NEW vs LEGACY per-operator comparison"
+      - name: "Phase 4: STEADY vs WARMUP comparison + STEADY summary"
         if: always()
         run: |
           source scripts/ci_lib.sh && ci_load_platform b300
           export REPO="$GITHUB_WORKSPACE"
-          NEW_CSV=$(ci_exec_host "ls $REPO/$RESULT_DIR/NEW/decode_breakdown_*.csv 2>/dev/null | head -1")
-          LEG_CSV=$(ci_exec_host "ls $REPO/$RESULT_DIR/LEGACY/decode_breakdown_*.csv 2>/dev/null | head -1")
-          echo "NEW_CSV=$NEW_CSV"
-          echo "LEG_CSV=$LEG_CSV"
-          if [ -n "$NEW_CSV" ] && [ -n "$LEG_CSV" ]; then
+          STEADY_CSV=$(ci_exec_host "ls $REPO/$RESULT_DIR/STEADY/decode_breakdown_*.csv 2>/dev/null | head -1")
+          WARMUP_CSV=$(ci_exec_host "ls $REPO/$RESULT_DIR/WARMUP/decode_breakdown_*.csv 2>/dev/null | head -1")
+          echo "STEADY_CSV=$STEADY_CSV"
+          echo "WARMUP_CSV=$WARMUP_CSV"
+          if [ -n "$STEADY_CSV" ] && [ -n "$WARMUP_CSV" ]; then
             ci_exec_host "python3 - <<'PYEOF'
           import csv
-          new_rows = {}
-          with open('$NEW_CSV') as f:
-              for r in csv.DictReader(f):
-                  op = r.get('B200_Operator','').strip()
-                  if not op or op.startswith('B200 ') or op.startswith('PASS'): continue
-                  try: new_rows[op] = (float(r['B200_Avg_us']), float(r.get('B200_Std_us',0) or 0), float(r.get('B200_CV_pct',0) or 0), int(r.get('B200_N_samples',0) or 0))
-                  except: pass
-          leg_rows = {}
-          with open('$LEG_CSV') as f:
-              for r in csv.DictReader(f):
-                  op = r.get('B200_Operator','').strip()
-                  if not op or op.startswith('B200 ') or op.startswith('PASS'): continue
-                  try: leg_rows[op] = (float(r['B200_Avg_us']), float(r.get('B200_Std_us',0) or 0), float(r.get('B200_CV_pct',0) or 0), int(r.get('B200_N_samples',0) or 0))
-                  except: pass
-          print(f'{\"Operator\":35s} | {\"NEW μs\":>8s} {\"NEW std\":>7s} {\"NEW CV%\":>7s} N={list(new_rows.values())[0][3]:>4d} | {\"LEG μs\":>8s} {\"LEG std\":>7s} {\"LEG CV%\":>7s} N={list(leg_rows.values())[0][3]:>4d} | mean Δ%')
-          print('-' * 150)
-          common = set(new_rows.keys()) & set(leg_rows.keys())
-          for op in sorted(common):
-              nm, ns, ncv, nn = new_rows[op]
-              lm, ls, lcv, ln = leg_rows[op]
-              delta_pct = (nm - lm) / lm * 100 if lm > 0 else 0
-              print(f'{op[:35]:35s} | {nm:>8.2f} {ns:>7.3f} {ncv:>6.1f}% {nn:>4d} | {lm:>8.2f} {ls:>7.3f} {lcv:>6.1f}% {ln:>4d} | {delta_pct:+5.1f}%')
-          new_only = set(new_rows.keys()) - set(leg_rows.keys())
-          leg_only = set(leg_rows.keys()) - set(new_rows.keys())
-          if new_only: print(f'\\nNEW-only ops: {len(new_only)}: {sorted(new_only)}')
-          if leg_only: print(f'\\nLEGACY-only ops: {len(leg_only)}: {sorted(leg_only)}')
-          print(f'\\nSummary:')
-          print(f'  common ops: {len(common)}')
-          print(f'  NEW avg CV  = {sum(new_rows[op][2] for op in common)/len(common):.1f}%')
-          print(f'  LEG avg CV  = {sum(leg_rows[op][2] for op in common)/len(common):.1f}%')
-          print(f'  mean |Δ%|   = {sum(abs((new_rows[op][0]-leg_rows[op][0])/leg_rows[op][0]*100) for op in common if leg_rows[op][0]>0)/len(common):.1f}%')
+          def load(p):
+              rows = {}
+              with open(p) as f:
+                  for r in csv.DictReader(f):
+                      op = r.get('B200_Operator','').strip()
+                      if not op or op.startswith('B200 ') or op.startswith('PASS'): continue
+                      try:
+                          rows[op] = (
+                              float(r['B200_Avg_us']),
+                              float(r.get('B200_Median_us', r['B200_Avg_us'])),
+                              float(r.get('B200_P95_us', r['B200_Avg_us'])),
+                              float(r.get('B200_CV_pct', 0) or 0),
+                              int(r.get('B200_N_samples', 0) or 0),
+                          )
+                      except: pass
+              return rows
+          steady = load('$STEADY_CSV')
+          warmup = load('$WARMUP_CSV')
+          common = sorted(set(steady) & set(warmup))
+          if not common:
+              print('no common ops'); raise SystemExit(0)
+          steady_n = list(steady.values())[0][4]
+          warmup_n = list(warmup.values())[0][4]
+          print(f'{\"Operator\":35s} | {\"STEADY μs\":>10s} {\"med\":>6s} {\"p95\":>6s} {\"CV%\":>5s} N={steady_n:>4d} | {\"WARM μs\":>8s} {\"CV%\":>5s} N={warmup_n:>3d} | warmup Δ%')
+          print('-' * 130)
+          for op in common:
+              sm, smed, sp95, scv, sn = steady[op]
+              wm, wmed, wp95, wcv, wn = warmup[op]
+              dpct = (wm - sm) / sm * 100 if sm > 0 else 0
+              print(f'{op[:35]:35s} | {sm:>10.2f} {smed:>6.1f} {sp95:>6.1f} {scv:>5.1f}% {sn:>4d} | {wm:>8.2f} {wcv:>5.1f}% {wn:>3d} | {dpct:+5.1f}%')
+          print(f'\\nSummary (STEADY = production estimate, will be compared with MI355X):')
+          print(f'  common ops:        {len(common)}')
+          print(f'  STEADY avg CV:     {sum(steady[o][3] for o in common)/len(common):.1f}%   (lower = tighter mean estimate)')
+          print(f'  WARMUP avg CV:     {sum(warmup[o][3] for o in common)/len(common):.1f}%   (higher = warmup polluted, expected)')
+          print(f'  warmup-vs-steady mean shift: {sum(abs((warmup[o][0]-steady[o][0])/steady[o][0]*100) for o in common if steady[o][0]>0)/len(common):.1f}%')
           PYEOF
           "
           else
-            echo "ERROR: missing one of NEW/LEGACY CSV"
-            ci_exec_host "ls -la $REPO/$RESULT_DIR/NEW/ 2>/dev/null; ls -la $REPO/$RESULT_DIR/LEGACY/ 2>/dev/null"
+            echo "ERROR: missing STEADY or WARMUP CSV"
+            ci_exec_host "ls -la $REPO/$RESULT_DIR/STEADY/ 2>/dev/null; ls -la $REPO/$RESULT_DIR/WARMUP/ 2>/dev/null"
           fi
 
       - name: Fix file ownership (always)

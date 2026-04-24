@@ -149,13 +149,19 @@ def main():
                         help="Layer range as 'lo-hi' (exclusive upper, default 10-40 = 30 layers). "
                              "DSR1 has 61 layers; first ~10 (no MoE on dense layers) and last ~20 (lm_head etc) "
                              "are unstable. 10-40 captures the steady middle.")
-    parser.add_argument("--max-steps", type=int, default=0,
-                        help="Limit accumulation to first N detected decode steps (0 = all available). "
-                             "Per-operator sample count = max_steps × (layer_hi - layer_lo). "
-                             "E.g. 100 steps × 30 layers = 3000 samples per operator.")
+    parser.add_argument("--max-steps", type=int, default=20,
+                        help="Number of steady-state decode steps to aggregate (default 20 → "
+                             "20 × 30 layers = 600 samples per operator). 0 = all available.")
+    parser.add_argument("--skip-warmup-steps", type=int, default=5,
+                        help="Drop first N decode steps to exclude cold-cache / JIT-compile warmup. "
+                             "Default 5 (matches MI355X decode_kernel_breakdown convention).")
+    parser.add_argument("--layers-per-step", type=int, default=61,
+                        help="FMHA events per decode step (DSR1 = 61). Used for layer-anchored "
+                             "step detection. Gap-based detection (old default) fails for "
+                             "steady-state continuous batching where inter-step gaps disappear.")
     parser.add_argument("--legacy-best-aligned", action="store_true",
-                        help="Old behavior: pick 10 most-stable consecutive layers from one decode step "
-                             "(only ~10 samples per operator). Use for backwards comparison only.")
+                        help="DEPRECATED: cherry-picks 10 most-stable consecutive layers from one "
+                             "step. Biased low (survivorship). Kept for back-compat only.")
     args = parser.parse_args()
     layer_lo, layer_hi = (int(x) for x in args.layer_range.split("-"))
 
@@ -210,19 +216,41 @@ def main():
     avg_dt = sum(dt for _, dt in normal) / len(normal)
     print(f"Average FMHA-to-FMHA (normal): {avg_dt:.1f}μs, median: {med_dt:.1f}μs")
 
-    # ── Step boundary detection ──
-    # Long FMHA-to-FMHA intervals (> 3× median) mark transitions between decode steps.
-    # FMHA[i+1] starts a new step when intervals[i].dt > 3× median.
-    step_starts = [0]
-    for idx, dt in intervals:
-        if dt > med_dt * 3:
-            step_starts.append(idx + 1)
-    step_starts.append(len(fmha_events))
-    steps = [(step_starts[i], step_starts[i + 1])
-             for i in range(len(step_starts) - 1)]
-    # Filter steps with enough layers to cover the requested range
-    valid_steps = [(s, e) for s, e in steps if (e - s) > layer_hi]
-    print(f"Detected {len(steps)} decode steps; {len(valid_steps)} have ≥{layer_hi+1} FMHA events for layers {layer_lo}-{layer_hi-1}")
+    # ── Step boundary detection (layer-anchored) ──
+    # Gap-based detection (old: dt > 3× median) fails for steady-state continuous
+    # batching: inter-step gaps disappear, so we'd see "1 step" for the whole trace.
+    # Use a fixed FMHA-per-step count instead; default 61 matches DeepSeek-R1.
+    LAYERS_PER_STEP = args.layers_per_step
+    n_total_steps = len(fmha_events) // LAYERS_PER_STEP
+    all_steps = [(i * LAYERS_PER_STEP, (i + 1) * LAYERS_PER_STEP)
+                 for i in range(n_total_steps)]
+
+    # Prefill-contamination filter: prefill FMHA is much longer than decode FMHA
+    # (long seqlen → long attention). Compute global median FMHA duration; reject
+    # any step whose median is > 2× global median (heuristic: decode FMHA stays
+    # tight ±20%, prefill is 5-50× longer). Without this, continuous-batching
+    # interleave would shift our layer-anchored slicing and pollute the means.
+    fmha_durs = [k["dur"] for k in fmha_events]
+    global_fmha_med = median(fmha_durs)
+    prefill_threshold = global_fmha_med * 2
+    clean_steps = []
+    prefill_skipped = 0
+    for s, e in all_steps:
+        step_med = median(k["dur"] for k in fmha_events[s:e])
+        if step_med <= prefill_threshold:
+            clean_steps.append((s, e))
+        else:
+            prefill_skipped += 1
+    print(f"Detected {n_total_steps} decode steps (layers_per_step={LAYERS_PER_STEP}); "
+          f"filtered {prefill_skipped} prefill-contaminated steps "
+          f"(step FMHA median > {prefill_threshold:.1f}μs); "
+          f"{len(clean_steps)} clean steady-state steps")
+
+    # Drop warmup, cap at max-steps
+    warmup = args.skip_warmup_steps
+    end_step = warmup + args.max_steps if args.max_steps > 0 else len(clean_steps)
+    valid_steps = clean_steps[warmup:end_step]
+    print(f"Using {len(valid_steps)} steps (skipped first {warmup} warmup, max {args.max_steps})")
 
     if args.legacy_best_aligned:
         # ── LEGACY: pick 10 best-aligned consecutive layers from one step ──
@@ -243,8 +271,9 @@ def main():
         selected_intervals = normal[best_start:best_start + 10]
         print(f"\n[LEGACY] Selected 10 consecutive layers starting at FMHA index {selected_intervals[0][0]} (score: {best_score:.1f}μs)")
     else:
-        # ── NEW: accumulate all (step, layer) pairs in --layer-range × first --max-steps steps ──
-        used_steps = valid_steps[:args.max_steps] if args.max_steps > 0 else valid_steps
+        # ── NEW: accumulate (step, layer) pairs across selected steady-state steps ──
+        # valid_steps is already warmup-trimmed and capped above.
+        used_steps = valid_steps
         selected_intervals = []
         for step_start, step_end in used_steps:
             for layer_offset in range(layer_lo, layer_hi):
@@ -621,11 +650,22 @@ def main():
             csv_rows = []
 
             from statistics import pstdev
+            def _percentile(sorted_vals, p):
+                if not sorted_vals:
+                    return 0.0
+                k = (len(sorted_vals) - 1) * p / 100
+                lo = int(k)
+                hi = min(lo + 1, len(sorted_vals) - 1)
+                return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (k - lo)
+
             for ki, op_key in enumerate(ref_keys):
                 durs = op_data[op_key]["durs"]
                 avg_dur = sum(durs) / len(durs)
                 std_dur = pstdev(durs) if len(durs) > 1 else 0.0
                 cv = (std_dur / avg_dur * 100) if avg_dur > 0 else 0.0  # coefficient of variation, %
+                durs_sorted = sorted(durs)
+                med_dur = _percentile(durs_sorted, 50)
+                p95_dur = _percentile(durs_sorted, 95)
                 n_samples = len(durs)
                 ov_tots = op_data[op_key]["ov_totals"]
                 avg_ov = sum(ov_tots) / len(ov_tots) if ov_tots else 0
@@ -654,9 +694,11 @@ def main():
                     kr0["raw_short"],
                     kr0["stream"],
                     f"{avg_dur:.1f}",
-                    f"{std_dur:.2f}",       # NEW: stddev
-                    f"{cv:.1f}",            # NEW: coefficient of variation (%)
-                    n_samples,              # NEW: sample count
+                    f"{med_dur:.1f}",       # NEW: median (robust to outliers)
+                    f"{p95_dur:.1f}",       # NEW: p95 (tail latency)
+                    f"{std_dur:.2f}",
+                    f"{cv:.1f}",
+                    n_samples,
                     f"{avg_ov:.1f}" if avg_ov > 0.05 else "0",
                     ov_with,
                     "",  # MI355X_Module placeholder
@@ -668,23 +710,24 @@ def main():
             with open(csv_path, "w", newline="") as f:
                 w = csv.writer(f)
                 w.writerow(["#", "B200_Module", "B200_Operator", "B200_Raw_Kernel", "B200_Stream",
-                             "B200_Avg_us", "B200_Std_us", "B200_CV_pct", "B200_N_samples",
+                             "B200_Avg_us", "B200_Median_us", "B200_P95_us",
+                             "B200_Std_us", "B200_CV_pct", "B200_N_samples",
                              "B200_Overlap_us", "B200_Overlap_With",
                              "MI355X_Module", "MI355X_Kernel", "MI355X_Avg_us", "Notes"])
                 for row in csv_rows:
                     w.writerow(row)
                 w.writerow([])
-                # Totals (15-col schema: # | Mod | Op | Raw_Kernel | Stream | Avg | Std | CV | N | Overlap | Overlap_With | MI_Mod | MI_Kernel | MI_Avg | Notes)
-                w.writerow(["", "", "B200 TOTAL (kernel_sum)", "", "", f"{avg_ksum:.1f}", "", "", "", "", "", "MI355X TOTAL", "", "", ""])
-                w.writerow(["", "", "B200 Walltime",          "", "", f"{avg_wall:.1f}", "", "", "", "", "", "", "", "", ""])
-                w.writerow(["", "", "B200 Overlap",           "", "", f"{avg_overlap:.1f}", "", "", "", "", "", "", "", "", ""])
+                # Totals (17-col schema: # | Mod | Op | Raw | Stream | Avg | Med | P95 | Std | CV | N | Overlap | Overlap_With | MI_Mod | MI_Kernel | MI_Avg | Notes)
+                w.writerow(["", "", "B200 TOTAL (kernel_sum)", "", "", f"{avg_ksum:.1f}", "", "", "", "", "", "", "", "MI355X TOTAL", "", "", ""])
+                w.writerow(["", "", "B200 Walltime",          "", "", f"{avg_wall:.1f}", "", "", "", "", "", "", "", "", "", "", ""])
+                w.writerow(["", "", "B200 Overlap",           "", "", f"{avg_overlap:.1f}", "", "", "", "", "", "", "", "", "", "", ""])
                 w.writerow([])
                 # Pass-level summary
-                w.writerow(["", "", "PASS", "", "B200", "MI355X", "gap", "", "", "", "NV_Kernels", "AMD_Kernels", "", "", ""])
+                w.writerow(["", "", "PASS", "", "B200", "MI355X", "gap", "", "", "", "", "", "NV_Kernels", "AMD_Kernels", "", "", ""])
                 pass_order = ["MOE", "MHA", "O_proj", "EP_AR_before_MHA", "EP_AR_before_MOE"]
                 for pname in pass_order:
                     b200_val = pass_sums.get(pname, 0)
-                    w.writerow(["", "", pname, "", f"{b200_val:.1f}", "", "", "", "", "", "", "", "", "", ""])
+                    w.writerow(["", "", pname, "", f"{b200_val:.1f}", "", "", "", "", "", "", "", "", "", "", "", ""])
             print(f"\n  CSV written: {csv_path}")
 
     # === allreduce_fusion_kernel distribution analysis ===
