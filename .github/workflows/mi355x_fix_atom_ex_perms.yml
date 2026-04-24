@@ -159,46 +159,47 @@ jobs:
 
       - name: Deep UID/GID map comparison
         if: inputs.strategy == 'deep_uid_map_diff'
+        shell: bash {0}
         run: |
           for C in $WORKING $BROKEN; do
             echo "===== $C ====="
-            echo "--- HostConfig.IDMappings ---"
-            podman inspect $C --format '{{json .HostConfig.IDMappings}}' 2>/dev/null | python3 -m json.tool 2>/dev/null || echo "no IDMappings"
-            echo "--- Top-level UidMap/GidMap ---"
-            podman inspect $C --format 'UidMap: {{.HostConfig.UIDMap}}{{println}}GidMap: {{.HostConfig.GIDMap}}' 2>/dev/null
-            echo "--- Annotations (may show original cmdline) ---"
-            podman inspect $C --format '{{json .Config.Annotations}}' 2>/dev/null | python3 -m json.tool 2>/dev/null | head -30
             echo "--- /proc/<pid>/uid_map of container init process ---"
             PID=$(podman inspect $C --format '{{.State.Pid}}' 2>/dev/null)
             echo "Init PID on host: $PID"
-            if [ -n "$PID" ] && [ "$PID" != "0" ]; then
-              echo "uid_map:"
-              cat /proc/$PID/uid_map 2>&1 || echo "cannot read"
-              echo "gid_map:"
-              cat /proc/$PID/gid_map 2>&1 || echo "cannot read"
-              echo "groups (Status):"
+            if [ -n "$PID" ] && [ "$PID" != "0" ] && [ "$PID" != "<no value>" ]; then
+              echo "uid_map: $(cat /proc/$PID/uid_map 2>&1)"
+              echo "gid_map: $(cat /proc/$PID/gid_map 2>&1)"
+              echo "Status Uid/Gid/Groups:"
               grep -E '^(Uid|Gid|Groups):' /proc/$PID/status 2>&1
+            else
+              echo "container not running"
             fi
-            echo "--- Test: from inside container, what does /shared owner look like? ---"
-            podman exec $C stat -c 'uid=%u gid=%g %n' $MODEL_PROBE 2>&1 || true
-            podman exec $C stat -c 'host-uid=%U host-gid=%G' $MODEL_PROBE 2>&1 || true
+            echo "--- inside container: stat model file ---"
+            podman exec $C stat -c 'container-view: uid=%u gid=%g %n' $MODEL_PROBE 2>&1
+            podman exec $C cat /etc/passwd 2>&1 | head -5
+            podman exec $C cat /etc/group 2>&1 | head -10
             echo
           done
 
-          echo "===== rootless config files ====="
-          echo "--- /etc/subuid (host) ---"
-          grep zufa /etc/subuid 2>&1 | head -5
-          echo "--- /etc/subgid (host) ---"
-          grep zufa /etc/subgid 2>&1 | head -5
+          echo "===== Host config ====="
+          echo "--- /etc/subuid (any zufa) ---"
+          grep -i zufa /etc/subuid 2>&1
+          echo "--- /etc/subgid (any zufa) ---"
+          grep -i zufa /etc/subgid 2>&1
+          echo "--- containers.conf rootless storage ---"
+          podman info --format '{{.Host.IDMappings}}' 2>&1
           echo
-          echo "===== Try minimal podman run with explicit no-userns ====="
-          podman rm -f test_no_userns 2>&1 || true
-          podman run --rm --userns=host --name test_no_userns docker.io/rocm/atom-dev:latest \
-            bash -c 'echo IN; id; ls -ln '$MODEL_PROBE' 2>&1' \
-            -v /shared:/shared 2>&1 | tail -10 || true
-          # try with mount FIRST then arg
-          podman run --rm --userns=host -v /shared:/shared --name test_no_userns docker.io/rocm/atom-dev:latest \
-            bash -c 'id; ls -ln '$MODEL_PROBE 2>&1 | tail -10 || true
+          echo "===== Test: --userns=host (skip mapping) ====="
+          podman rm -f test_userns_host 2>&1
+          podman run --rm --userns=host -v /shared:/shared --name test_userns_host \
+            docker.io/rocm/atom-dev:latest \
+            bash -c 'echo "id:"; id; echo "stat model:"; stat -c "%U:%G %a %n" '$MODEL_PROBE' 2>&1; echo "cat first line:"; head -1 '$MODEL_PROBE 2>&1
+          echo
+          echo "===== Test: default rootless run (compare with broken) ====="
+          podman rm -f test_default 2>&1
+          podman run --rm -v /shared:/shared --name test_default \
+            docker.io/rocm/atom-dev:latest \
+            bash -c 'id; stat -c "%U:%G %a %n" '$MODEL_PROBE' 2>&1; head -1 '$MODEL_PROBE 2>&1
 
       - name: Apply fix - rootful podman via sudo
         if: inputs.strategy == 'recreate_rootful_sudo'
