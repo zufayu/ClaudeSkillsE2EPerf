@@ -1,0 +1,173 @@
+name: "MI355X Delete + recreate zufa_atom from same image + baseline trace"
+on:
+  workflow_dispatch:
+jobs:
+  recreate:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 60
+    env:
+      C: zufa_atom
+      IMAGE: docker.io/rocm/atom-dev:nightly_202604201537
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
+      TRACE_DIR: /tmp/trace_recreated
+      SAVE_DIR: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf/results/mi355x_dsr_mxfp4/triton_poi_recreated
+      BACKUP_TAG: localhost/zufa-atom-backup:before-recreate
+    steps:
+      - name: SAFETY - snapshot zufa_atom before deletion
+        shell: bash {0}
+        run: |
+          echo "=== current zufa_atom state ==="
+          podman ps -a --filter name=^zufa_atom$ --format '{{.Names}} {{.Status}} {{.Image}}'
+          echo "=== creating safety snapshot $BACKUP_TAG ==="
+          podman commit $C $BACKUP_TAG
+          podman images $BACKUP_TAG
+          echo "Safety: if recreation fails, can restore via:"
+          echo "  podman rm -f $C 2>&1 || true"
+          echo "  podman run -d --name $C ... $BACKUP_TAG sleep infinity"
+
+      - name: Stop ATOM server in zufa_atom
+        continue-on-error: true
+        run: podman exec $C bash -c 'pkill -9 -f "python|vllm|atom" 2>/dev/null; sleep 5; true'
+
+      - name: DELETE zufa_atom
+        shell: bash {0}
+        run: |
+          echo "=== Deleting zufa_atom ==="
+          podman rm -f $C
+          echo "=== Confirm gone ==="
+          podman ps -a --filter name=^zufa_atom$ --format '{{.Names}}' || echo "(none)"
+
+      - name: Pull image (cached)
+        shell: bash {0}
+        run: |
+          podman pull $IMAGE 2>&1 | tail -3
+          podman images --digests $IMAGE | head -3
+
+      - name: "Create fresh zufa_atom from $IMAGE with verified flags"
+        shell: bash {0}
+        run: |
+          # Same flags as v3 trace workflow (which proved working with this image)
+          podman run -d --name $C \
+            --security-opt seccomp=unconfined \
+            --ipc=host \
+            --network=slirp4netns \
+            --group-add keep-groups \
+            --cap-add CAP_SYS_PTRACE \
+            --ulimit nproc=4194304:4194304 \
+            --ulimit nofile=1048576:1048576 \
+            --device /dev/kfd \
+            --device /dev/dri \
+            -v /shared:/shared \
+            $IMAGE sleep infinity
+          sleep 3
+          echo "=== id ==="
+          podman exec $C id
+
+      - name: Verify new zufa_atom matches old commits
+        shell: bash {0}
+        run: |
+          echo "=== ATOM commit (expected 58af3e44...) ==="
+          podman exec $C bash -c 'cd /app/ATOM && git rev-parse HEAD'
+          echo "=== aiter commit (expected a3f54e3...) ==="
+          podman exec $C bash -c 'cd /app/aiter-test && git rev-parse HEAD'
+          echo "=== moe.py sha256 (expected 0f3029a0...) ==="
+          podman exec $C sha256sum /app/ATOM/atom/model_ops/moe.py
+          echo "=== mutates_args present ==="
+          podman exec $C grep -n 'mutates_args.*hidden_states\|needs_fixed_stride_order' /app/ATOM/atom/model_ops/moe.py
+
+      - name: Verify GPU + ATOM import
+        shell: bash {0}
+        run: |
+          echo "=== rocminfo ==="
+          podman exec $C bash -c '/opt/rocm-7.2.2/bin/rocminfo 2>&1 | head -5' || echo "rocminfo FAILED"
+          echo "=== from aiter import QuantType ==="
+          podman exec $C python3 -c "from aiter import QuantType; print('QuantType OK')" 2>&1 | tail -3
+          echo "=== ATOM import + torch CUDA ==="
+          podman exec $C python3 -c "
+          import torch
+          print('cuda:', torch.cuda.is_available(), 'devices:', torch.cuda.device_count())
+          import atom; import atom.entrypoints.openai_server
+          print('ATOM import OK')
+          " 2>&1 | tail -5
+
+      - name: Kill residual + clear trace dir
+        continue-on-error: true
+        run: podman exec $C bash -c 'pkill -9 -f "python|vllm|atom" 2>/dev/null; sleep 5; rm -f /dev/shm/aiter_*; rm -rf /tmp/trace_recreated; true'
+
+      - name: "Start ATOM server (baseline A config: TP=4 EP=1 fp8 kv)"
+        run: |
+          podman exec -d $C bash -c "PYTORCH_PROFILER_WITH_STACK=0 python3 -m atom.entrypoints.openai_server --model $MODEL --server-port 8000 --tensor-parallel-size 4 --max-num-seqs 512 --gpu-memory-utilization 0.90 --kv_cache_dtype fp8 --torch-profiler-dir $TRACE_DIR > /tmp/server_recreated.log 2>&1"
+
+      - name: Wait for server ready
+        run: |
+          for i in $(seq 1 120); do if podman exec $C curl -s http://0.0.0.0:8000/health > /dev/null 2>&1; then echo "Server ready after $((i*5))s"; break; fi; sleep 5; done
+          if ! podman exec $C curl -s http://0.0.0.0:8000/health > /dev/null 2>&1; then
+            podman exec $C tail -80 /tmp/server_recreated.log
+            exit 1
+          fi
+
+      - name: Get served model name
+        run: |
+          SERVED=$(podman exec $C curl -s http://0.0.0.0:8000/v1/models | python3 -c "import json,sys; print(json.load(sys.stdin)['data'][0]['id'])")
+          echo "SERVED=$SERVED" >> $GITHUB_ENV
+
+      - name: Warmup (128 prompts, c=64)
+        run: podman exec $C python3 -u -m atom.benchmarks.benchmark_serving --model "${{ env.SERVED }}" --backend vllm --base-url http://0.0.0.0:8000 --dataset-name random --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 --num-prompts 128 --max-concurrency 64 --request-rate inf --ignore-eos
+
+      - name: Profile (64 prompts, c=64)
+        run: |
+          podman exec $C curl -s -X POST http://0.0.0.0:8000/start_profile
+          podman exec $C python3 -u -m atom.benchmarks.benchmark_serving --model "${{ env.SERVED }}" --backend vllm --base-url http://0.0.0.0:8000 --dataset-name random --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 --num-prompts 64 --max-concurrency 64 --request-rate inf --ignore-eos
+          podman exec $C curl -s -X POST http://0.0.0.0:8000/stop_profile
+
+      - name: Wait for trace flush
+        run: |
+          for i in $(seq 1 60); do
+            GZ=$(podman exec $C bash -c "ls $TRACE_DIR/rank_0/*.json.gz 2>/dev/null | grep -v capture_graph | head -1")
+            JSON=$(podman exec $C bash -c "ls $TRACE_DIR/rank_0/*.json 2>/dev/null | grep -v capture_graph | head -1")
+            if [ -n "$GZ" ] && [ -z "$JSON" ]; then echo "Trace ready: $GZ"; break; fi
+            sleep 5
+          done
+
+      - name: Save trace
+        if: always()
+        continue-on-error: true
+        run: |
+          podman exec $C bash -c "mkdir -p $SAVE_DIR && cp $TRACE_DIR/rank_0/*.json.gz $SAVE_DIR/ 2>/dev/null && ls -lh $SAVE_DIR/*.json.gz && sha256sum $SAVE_DIR/*.json.gz"
+
+      - name: "VERDICT: triton_poi_fused count"
+        if: always()
+        continue-on-error: true
+        run: |
+          podman exec $C python3 -c "
+          import gzip, json, glob
+          traces = [f for f in glob.glob('$TRACE_DIR/rank_0/*.json.gz') if 'capture_graph' not in f]
+          if not traces: print('ERROR: no trace'); exit(1)
+          with gzip.open(traces[0], 'rt') as f: data = json.load(f)
+          events = data.get('traceEvents', [])
+          kernels = [e for e in events if e.get('cat') == 'kernel']
+          triton = [e for e in kernels if 'triton_poi_fused' in e.get('name', '')]
+          print(f'Total events: {len(events)}')
+          print(f'GPU kernels: {len(kernels)}')
+          print(f'triton_poi_fused: {len(triton)}')
+          print()
+          if len(triton) == 0:
+              print('VERDICT: recreate ELIMINATED triton_poi_fused')
+              print('=> The 186K issue was due to PERSISTENT STATE in old zufa_atom (lost on recreate)')
+              print('=> Fresh containers from same image dont have the issue')
+          elif len(triton) > 100000:
+              print('VERDICT: recreate did NOT eliminate triton_poi_fused (still ~186K)')
+              print('=> Issue is in IMAGE itself or HOST state, not container persistent state')
+          else:
+              print(f'VERDICT: partial — {len(triton)} kernels')
+          "
+
+      - name: Capture benchmark output
+        if: always()
+        continue-on-error: true
+        run: podman exec $C tail -30 /tmp/server_recreated.log
+
+      - name: Kill server
+        if: always()
+        continue-on-error: true
+        run: podman exec $C bash -c 'pkill -9 -f "python|atom" 2>/dev/null; sleep 3; true'
