@@ -1,0 +1,88 @@
+name: "MI355X Test older atom-dev nightly (one day before latest)"
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'atom-dev tag to test'
+        type: choice
+        default: 'nightly_202604211752'
+        options:
+          - 'nightly_202604211752'
+          - 'nightly_202604221609'
+          - 'sglang-v0.5.10-nightly_20260420'
+          - 'mesh-nightly_202604210650'
+jobs:
+  test:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 30
+    env:
+      DEV: zufa_atom_dev_test
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Pull image
+        shell: bash {0}
+        run: |
+          IMAGE="docker.io/rocm/atom-dev:$TAG"
+          echo "=== pulling $IMAGE ==="
+          podman pull $IMAGE 2>&1 | tail -5
+          podman images --digests $IMAGE 2>&1 | head -3
+
+      - name: Recreate $DEV from tested image
+        shell: bash {0}
+        run: |
+          IMAGE="docker.io/rocm/atom-dev:$TAG"
+          podman rm -f $DEV 2>&1 || true
+          podman run -d --name $DEV \
+            --security-opt seccomp=unconfined \
+            --ipc=host --network=host \
+            --group-add keep-groups \
+            -v /shared:/shared \
+            $IMAGE sleep infinity
+          sleep 3
+          podman exec $DEV id
+
+      - name: Show ATOM + aiter commits
+        shell: bash {0}
+        run: |
+          echo "=== ATOM ==="
+          podman exec $DEV bash -c 'cd /app/ATOM 2>/dev/null && git rev-parse HEAD && git log -1 --pretty=oneline' 2>&1 || echo "/app/ATOM not present"
+          echo "=== aiter ==="
+          podman exec $DEV bash -c 'cd /app/aiter-test 2>/dev/null && git rev-parse HEAD && git log -1 --pretty=oneline' 2>&1 || echo "/app/aiter-test not present"
+
+      - name: "Test: ATOM import + check QuantType"
+        shell: bash {0}
+        continue-on-error: true
+        run: |
+          echo "=== from aiter import QuantType ==="
+          podman exec $DEV python3 -c "from aiter import QuantType; print('QuantType OK:', QuantType)" 2>&1
+          echo
+          echo "=== import atom ==="
+          podman exec $DEV python3 -c "
+          import atom
+          import atom.entrypoints.openai_server
+          print('ATOM import OK')
+          " 2>&1 | tail -5
+
+      - name: "Check moe.py: mutates_args still present?"
+        shell: bash {0}
+        run: |
+          echo "=== mutates_args=['hidden_states'] ==="
+          podman exec $DEV grep -n 'mutates_args.*hidden_states' /app/ATOM/atom/model_ops/moe.py 2>&1 || echo "(not found)"
+          echo "=== needs_fixed_stride_order ==="
+          podman exec $DEV grep -n 'needs_fixed_stride_order' /app/ATOM/atom/model_ops/moe.py 2>&1 || echo "(not found)"
+
+      - name: GPU sanity
+        shell: bash {0}
+        continue-on-error: true
+        run: |
+          echo "=== rocm-smi ==="
+          podman exec $DEV rocm-smi 2>&1 | head -5
+          echo "=== torch CUDA ==="
+          podman exec $DEV python3 -c "import torch; print('cuda:', torch.cuda.is_available(), 'devices:', torch.cuda.device_count())" 2>&1
+          echo "=== rocminfo ==="
+          podman exec $DEV bash -c '/opt/rocm-7.2.2/bin/rocminfo 2>&1 | head -5' || true
+
+      - name: Cleanup test container
+        if: always()
+        continue-on-error: true
+        run: podman rm -f $DEV 2>&1 || true
