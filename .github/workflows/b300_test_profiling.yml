@@ -1,0 +1,165 @@
+name: "B300 Test Profiling (R8c — NEW vs LEGACY comparison)"
+# Runs trace_layer_detail.py twice on the same trace:
+#   - NEW algorithm:    layer 10-40 × 100 steps = 3000 samples/op (default)
+#   - LEGACY algorithm: 10 best-aligned consecutive layers from 1 step (--legacy-best-aligned)
+# Goal: validate new algorithm doesn't shift means, lowers CV (coefficient of variation).
+#
+# No "Commit results" step — test-only, no main pollution.
+on:
+  push:
+    branches: [test/b300-validation]
+    paths: ['.github/workflows/b300_test_profiling.yml']
+  workflow_dispatch:
+    inputs:
+      configs:
+        type: choice
+        options: [fp4-throughput, fp4-latency]
+        default: fp4-throughput
+      ep:
+        type: string
+        default: "8"
+      tp:
+        type: string
+        default: "8"
+      scenario:
+        type: choice
+        options: [chat, reasoning, summarize]
+        default: chat
+      concurrency:
+        type: string
+        default: "4"
+
+jobs:
+  profiling:
+    runs-on: [self-hosted, b300]
+    timeout-minutes: 60
+    steps:
+      - name: Pre-clean container-owned leftover (refactor bug workaround)
+        run: |
+          RUNNER_UID=$(id -u); RUNNER_GID=$(id -g)
+          WS=/home/zufa/actions-runner/_work/ClaudeSkillsE2EPerf/ClaudeSkillsE2EPerf
+          docker exec zufa_sglang chown -R $RUNNER_UID:$RUNNER_GID $WS 2>/dev/null || true
+
+      - uses: actions/checkout@v4
+
+      - name: Setup
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          export REPO="$GITHUB_WORKSPACE"
+          export CONTAINER="zufa_sglang"
+          ci_parse_configs "${{ inputs.configs }}"
+          MODEL="$MODEL_FP4"
+          ci_get_image
+          ENV_TAG=$(ci_detect_env_tag sglang)
+          RESULT_DIR=$(ci_result_dir "$PLATFORM" "$QUANT" "$MTP" "${{ inputs.ep }}" "${{ inputs.tp }}" "$ENV_TAG" "_profiling")
+          for var in CONTAINER MODEL QUANT MTP MODE IMAGE ENV_TAG RESULT_DIR REPO EXEC_MODE PLATFORM CI_USER_NAME CI_USER_EMAIL; do
+            echo "$var=${!var}" >> $GITHUB_ENV
+          done
+          echo "REPO=$REPO  RESULT_DIR=$RESULT_DIR"
+
+      - name: Verify container
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          export REPO="$GITHUB_WORKSPACE"
+          ci_verify_gpu
+          ci_exec "python3 -c 'import sglang; print(f\"SGLang {sglang.__version__}\")'"
+
+      - name: Clean old results
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          export REPO="$GITHUB_WORKSPACE"
+          ci_exec "rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true"
+
+      - name: "Phase 1: Torch trace capture"
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          export REPO="$GITHUB_WORKSPACE"
+          ARGS="--model $MODEL --tp ${{ inputs.tp }} --ep ${{ inputs.ep }} --scenario ${{ inputs.scenario }} --concurrency ${{ inputs.concurrency }} --quant $QUANT --env $ENV_TAG --platform $PLATFORM --container-image $IMAGE --result-dir ./$RESULT_DIR"
+          ci_exec "cd $REPO && bash scripts/collect_sglang_trace.sh $ARGS"
+
+      - name: "Phase 2: Fix overlapping kernels"
+        continue-on-error: true
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          export REPO="$GITHUB_WORKSPACE"
+          TRACE=$(ls $REPO/$RESULT_DIR/*TP-0-EP-0*.trace.json.gz 2>/dev/null | grep -v serialized | grep -v '.fix.' | head -1)
+          if [ -n "$TRACE" ]; then
+            ci_exec "cd $REPO && python3 scripts/fix_torch_trace_pro.py $TRACE"
+          fi
+
+      - name: "Phase 3a: trace_layer_detail NEW algorithm (3000 samples)"
+        continue-on-error: true
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          export REPO="$GITHUB_WORKSPACE"
+          TRACE=$(ls $REPO/$RESULT_DIR/*TP-0-EP-0*.fix.json.gz 2>/dev/null | head -1)
+          if [ -n "$TRACE" ]; then
+            ci_exec "cd $REPO && mkdir -p ./$RESULT_DIR/NEW && python3 scripts/trace_layer_detail.py $TRACE --output-dir ./$RESULT_DIR/NEW --layer-range 10-40 --max-steps 100"
+          fi
+
+      - name: "Phase 3b: trace_layer_detail LEGACY algorithm (10 samples)"
+        continue-on-error: true
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          export REPO="$GITHUB_WORKSPACE"
+          TRACE=$(ls $REPO/$RESULT_DIR/*TP-0-EP-0*.fix.json.gz 2>/dev/null | head -1)
+          if [ -n "$TRACE" ]; then
+            ci_exec "cd $REPO && mkdir -p ./$RESULT_DIR/LEGACY && python3 scripts/trace_layer_detail.py $TRACE --output-dir ./$RESULT_DIR/LEGACY --legacy-best-aligned"
+          fi
+
+      - name: "Phase 4: NEW vs LEGACY per-operator comparison"
+        if: always()
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          export REPO="$GITHUB_WORKSPACE"
+          NEW_CSV=$(ci_exec_host "ls $REPO/$RESULT_DIR/NEW/decode_breakdown_*.csv 2>/dev/null | head -1")
+          LEG_CSV=$(ci_exec_host "ls $REPO/$RESULT_DIR/LEGACY/decode_breakdown_*.csv 2>/dev/null | head -1")
+          echo "NEW_CSV=$NEW_CSV"
+          echo "LEG_CSV=$LEG_CSV"
+          if [ -n "$NEW_CSV" ] && [ -n "$LEG_CSV" ]; then
+            ci_exec_host "python3 - <<'PYEOF'
+          import csv
+          new_rows = {}
+          with open('$NEW_CSV') as f:
+              for r in csv.DictReader(f):
+                  op = r.get('B200_Operator','').strip()
+                  if not op or op.startswith('B200 ') or op.startswith('PASS'): continue
+                  try: new_rows[op] = (float(r['B200_Avg_us']), float(r.get('B200_Std_us',0) or 0), float(r.get('B200_CV_pct',0) or 0), int(r.get('B200_N_samples',0) or 0))
+                  except: pass
+          leg_rows = {}
+          with open('$LEG_CSV') as f:
+              for r in csv.DictReader(f):
+                  op = r.get('B200_Operator','').strip()
+                  if not op or op.startswith('B200 ') or op.startswith('PASS'): continue
+                  try: leg_rows[op] = (float(r['B200_Avg_us']), float(r.get('B200_Std_us',0) or 0), float(r.get('B200_CV_pct',0) or 0), int(r.get('B200_N_samples',0) or 0))
+                  except: pass
+          print(f'{\"Operator\":35s} | {\"NEW μs\":>8s} {\"NEW std\":>7s} {\"NEW CV%\":>7s} N={list(new_rows.values())[0][3]:>4d} | {\"LEG μs\":>8s} {\"LEG std\":>7s} {\"LEG CV%\":>7s} N={list(leg_rows.values())[0][3]:>4d} | mean Δ%')
+          print('-' * 150)
+          common = set(new_rows.keys()) & set(leg_rows.keys())
+          for op in sorted(common):
+              nm, ns, ncv, nn = new_rows[op]
+              lm, ls, lcv, ln = leg_rows[op]
+              delta_pct = (nm - lm) / lm * 100 if lm > 0 else 0
+              print(f'{op[:35]:35s} | {nm:>8.2f} {ns:>7.3f} {ncv:>6.1f}% {nn:>4d} | {lm:>8.2f} {ls:>7.3f} {lcv:>6.1f}% {ln:>4d} | {delta_pct:+5.1f}%')
+          new_only = set(new_rows.keys()) - set(leg_rows.keys())
+          leg_only = set(leg_rows.keys()) - set(new_rows.keys())
+          if new_only: print(f'\\nNEW-only ops: {len(new_only)}: {sorted(new_only)}')
+          if leg_only: print(f'\\nLEGACY-only ops: {len(leg_only)}: {sorted(leg_only)}')
+          print(f'\\nSummary:')
+          print(f'  common ops: {len(common)}')
+          print(f'  NEW avg CV  = {sum(new_rows[op][2] for op in common)/len(common):.1f}%')
+          print(f'  LEG avg CV  = {sum(leg_rows[op][2] for op in common)/len(common):.1f}%')
+          print(f'  mean |Δ%|   = {sum(abs((new_rows[op][0]-leg_rows[op][0])/leg_rows[op][0]*100) for op in common if leg_rows[op][0]>0)/len(common):.1f}%')
+          PYEOF
+          "
+          else
+            echo "ERROR: missing one of NEW/LEGACY CSV"
+            ci_exec_host "ls -la $REPO/$RESULT_DIR/NEW/ 2>/dev/null; ls -la $REPO/$RESULT_DIR/LEGACY/ 2>/dev/null"
+          fi
+
+      - name: Fix file ownership (always)
+        if: always()
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b300
+          export REPO="$GITHUB_WORKSPACE"
+          ci_fix_ownership "$RESULT_DIR" || true
