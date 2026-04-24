@@ -192,14 +192,20 @@ def emit_section_c(b3_rows, mi_rows, b3_path, mi_path, out):
     b3_n = b3_rows[0]["n_samples"] if b3_rows else 0
     mi_n = mi_rows[0]["n_steps"] if mi_rows else 0
     out.write("## C. Caveats / methodology audit\n\n")
+    # Normalize sample counts to same unit. B300's N_samples already counts
+    # (step × layer); MI355X's n_steps is just steps, so multiply by ~30 layers
+    # (default --layers 10-40 range) for apples-to-apples sanity check.
+    LAYERS_PER_STEP = 30
+    mi_samples = mi_n * LAYERS_PER_STEP
     out.write(f"- B300 source: `{os.path.basename(b3_path)}` (N={b3_n} samples/kernel)\n")
-    out.write(f"- MI355X source: `{os.path.basename(mi_path)}` (N={mi_n} steps/kernel × ~30 layers ≈ {mi_n*30} samples)\n")
+    out.write(f"- MI355X source: `{os.path.basename(mi_path)}` (N={mi_n} steps × ~{LAYERS_PER_STEP} layers ≈ {mi_samples} samples/kernel)\n")
     out.write("- Both should use R8d wide-sample defaults: `--skip-warmup 5 --max-steps 20` "
-              f"(target ~600 samples). N={b3_n} vs N={mi_n}: ")
-    if 15 <= b3_n <= 25 and 15 <= mi_n <= 25:
-        out.write("✅ both inside expected range.\n")
+              f"(target ~600 samples).\n")
+    out.write(f"  B300={b3_n} samples ; MI355X={mi_samples} samples → ")
+    if 500 <= b3_n <= 700 and 500 <= mi_samples <= 700:
+        out.write("✅ both inside R8d expected range.\n")
     else:
-        out.write("⚠️ outside expected range — verify both used the new methodology.\n")
+        out.write("⚠️ outside R8d expected range — verify both used the new methodology.\n")
     out.write("- No per-phase MI355X mapping yet — write a kernel rules table next "
               "if cross-architecture per-phase comparison is needed.\n")
     out.write("- Mean is the primary metric per R8d (fits production decode average); "
