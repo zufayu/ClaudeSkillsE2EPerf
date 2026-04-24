@@ -90,26 +90,34 @@ jobs:
           USER_SPEC=$(podman inspect $WORKING --format '{{.Config.User}}')
           USERNS=$(podman inspect $WORKING --format '{{.HostConfig.UsernsMode}}')
           PRIV=$(podman inspect $WORKING --format '{{.HostConfig.Privileged}}')
-          echo "Cloning: image=$IMAGE user=$USER_SPEC userns=$USERNS priv=$PRIV"
+          IPC=$(podman inspect $WORKING --format '{{.HostConfig.IpcMode}}')
+          NET=$(podman inspect $WORKING --format '{{.HostConfig.NetworkMode}}')
+          PID=$(podman inspect $WORKING --format '{{.HostConfig.PidMode}}')
+          echo "Cloning: image=$IMAGE user=$USER_SPEC userns=$USERNS priv=$PRIV ipc=$IPC net=$NET pid=$PID"
 
-          # Mounts from working
           MOUNT_ARGS=$(podman inspect $WORKING --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}} {{end}}')
           echo "Mounts: $MOUNT_ARGS"
 
-          # SecurityOpt from working
           SECOPT_ARGS=$(podman inspect $WORKING --format '{{range .HostConfig.SecurityOpt}}--security-opt {{.}} {{end}}')
           echo "SecurityOpt: $SECOPT_ARGS"
+
+          DEVICE_ARGS=$(podman inspect $WORKING --format '{{range .HostConfig.Devices}}--device {{.PathOnHost}}:{{.PathInContainer}} {{end}}')
+          echo "Devices: $DEVICE_ARGS"
+
+          GRPADD_ARGS=$(podman inspect $WORKING --format '{{range .HostConfig.GroupAdd}}--group-add {{.}} {{end}}')
+          echo "GroupAdd: $GRPADD_ARGS"
 
           podman rm -f $BROKEN 2>&1 || true
           USER_FLAG=""; [ -n "$USER_SPEC" ] && USER_FLAG="--user $USER_SPEC"
           USERNS_FLAG=""; [ "$USERNS" != "" ] && [ "$USERNS" != "host" ] && USERNS_FLAG="--userns=$USERNS"
           PRIV_FLAG=""; [ "$PRIV" = "true" ] && PRIV_FLAG="--privileged"
+          IPC_FLAG=""; [ -n "$IPC" ] && [ "$IPC" != "default" ] && IPC_FLAG="--ipc=$IPC"
+          NET_FLAG=""; [ -n "$NET" ] && [ "$NET" != "default" ] && NET_FLAG="--network=$NET"
+          PID_FLAG=""; [ -n "$PID" ] && [ "$PID" != "default" ] && PID_FLAG="--pid=$PID"
 
-          # Note: NOT using --privileged — working container is privileged=false
-          # and that is the key difference vs the previous broken attempt
+          # Pure clone: NO extras added beyond what working container has
           podman run -d --name $BROKEN $USER_FLAG $USERNS_FLAG $PRIV_FLAG $SECOPT_ARGS \
-            --ipc=host --network=host \
-            --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
+            $IPC_FLAG $NET_FLAG $PID_FLAG $DEVICE_ARGS $GRPADD_ARGS \
             $MOUNT_ARGS \
             $IMAGE sleep infinity
           sleep 3
