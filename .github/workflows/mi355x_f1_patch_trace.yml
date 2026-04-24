@@ -1,3 +1,4 @@
+# trigger reparse
 name: "MI355X F1: patch moe.py mutates_args=[] + trace + restore"
 on:
   workflow_dispatch:
