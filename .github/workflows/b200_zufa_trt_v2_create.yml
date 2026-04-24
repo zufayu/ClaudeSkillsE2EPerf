@@ -3,10 +3,9 @@ on:
   workflow_dispatch:
 jobs:
   create:
-    runs-on: [self-hosted, b200]
+    runs-on: [self-hosted, b200-node1]
     timeout-minutes: 60
     env:
-      NODE: hungry-hippo-fin-03-1
       NEW: zufa_trt_v2
       IMAGE: nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc6.post3
       SFS: /SFS-aGqda6ct
@@ -14,54 +13,57 @@ jobs:
       - name: Recon node and disk
         shell: bash {0}
         run: |
-          echo "=== ssh probe ==="
-          ssh $NODE "hostname; uptime; nvidia-smi -L | head -5"
+          echo "=== host ==="
+          hostname; uptime; nvidia-smi -L | head -5
           echo "=== existing containers ==="
-          ssh $NODE "docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'"
+          docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
           echo "=== existing tensorrt-llm images ==="
-          ssh $NODE "docker images | grep -i tensorrt-llm || echo '(none)'"
+          docker images | grep -i tensorrt-llm || echo '(none)'
           echo "=== disk space ==="
-          ssh $NODE "df -h /var/lib/docker $SFS /home /home/zufayu 2>/dev/null"
+          df -h /var/lib/docker $SFS /home /home/zufayu 2>/dev/null
           echo "=== zufa_trt_v2 already exists? ==="
-          ssh $NODE "docker ps -a --filter name=^${NEW}$ --format '{{.Names}} ({{.Status}})' || echo 'no'"
+          docker ps -a --filter name=^${NEW}$ --format '{{.Names}} ({{.Status}})' || echo 'no'
 
       - name: Pull rc6.post3 image (if not cached)
         shell: bash {0}
         run: |
-          if ssh $NODE "docker image inspect $IMAGE >/dev/null 2>&1"; then
+          if docker image inspect $IMAGE >/dev/null 2>&1; then
             echo "Image already pulled"
           else
             echo "Pulling $IMAGE — may take 5-15 min"
-            ssh $NODE "docker pull $IMAGE" 2>&1 | tail -20
+            docker pull $IMAGE 2>&1 | tail -20
           fi
-          ssh $NODE "docker images $IMAGE"
+          docker images $IMAGE
 
       - name: Create zufa_trt_v2
         shell: bash {0}
         run: |
-          ssh $NODE "docker rm -f $NEW 2>/dev/null || true"
-          # Mounts per user: /home/zufayu, /SFS-aGqda6ct, /data, /dev/shm + GPU
-          # --gpus all + --ipc host gives GPU + /dev/shm; --privileged + --network host align with existing zufa_trt
-          ssh $NODE "docker run -d --name $NEW \
-            --gpus all --privileged --network host --ipc host \
-            -v /home/zufayu:/home/zufayu \
+          docker rm -f $NEW 2>/dev/null || true
+          # Match setup_b200_trt2.yml proven flags + user requested mounts (/home/zufayu via /home, /SFS, /data)
+          docker run -d --name $NEW \
+            --gpus all --ipc host \
+            --ulimit memlock=-1 --ulimit stack=67108864 \
+            --shm-size=64g --cap-add=SYS_PTRACE \
+            -v /home:/home \
             -v $SFS:$SFS \
             -v /data:/data \
             -e NVIDIA_VISIBLE_DEVICES=all \
-            $IMAGE sleep infinity"
+            $IMAGE sleep infinity
           sleep 3
-          ssh $NODE "docker ps --filter name=^${NEW}$ --format '{{.Names}} {{.Status}} {{.Image}}'"
+          docker ps --filter name=^${NEW}$ --format '{{.Names}} {{.Status}} {{.Image}}'
 
       - name: Smoke test
         shell: bash {0}
         run: |
           echo "=== nvidia-smi ==="
-          ssh $NODE "docker exec $NEW nvidia-smi -L"
+          docker exec $NEW nvidia-smi -L
           echo "=== TRT-LLM version ==="
-          ssh $NODE "docker exec $NEW bash -c 'ldconfig 2>/dev/null; python3 -c \"import tensorrt_llm; print(tensorrt_llm.__version__)\"' 2>&1 | tail -5"
+          docker exec $NEW bash -c 'export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH; python3 -c "import tensorrt_llm; print(tensorrt_llm.__version__)"' 2>&1 | tail -5
+          echo "=== trtllm-bench ==="
+          docker exec $NEW which trtllm-bench 2>/dev/null || echo "not found"
           echo "=== model accessible ==="
-          ssh $NODE "docker exec $NEW ls -d $SFS/models/DeepSeek-R1-0528-NVFP4-v2 2>&1 | head -3"
+          docker exec $NEW ls -d $SFS/models/DeepSeek-R1-0528-NVFP4-v2 2>&1 | head -3
           echo "=== repo accessible ==="
-          ssh $NODE "docker exec $NEW ls /home/zufayu/ClaudeSkillsE2EPerf 2>&1 | head -5"
+          docker exec $NEW ls /home/zufayu/ClaudeSkillsE2EPerf 2>&1 | head -5
           echo "=== /data accessible ==="
-          ssh $NODE "docker exec $NEW ls /data 2>&1 | head -5"
+          docker exec $NEW ls /data 2>&1 | head -5
