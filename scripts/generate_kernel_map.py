@@ -361,15 +361,19 @@ def classify_mi355x_row(module, kernel, gemm_a16w16_count):
     if "rocm_aiter_biased_grouped_topk" in mod:
         return "moe_router"
     if "mxfp4_moe" in mod:
-        # mxfp4_moe lumps router (sort/topk) + expert (gemm) on MI355X.
-        # Disambiguate by kernel name: sort/topk → router; gemm → expert.
-        if "sort" in kn or "topk" in kn or "moesort" in kn:
-            return "moe_router"
+        # mxfp4_moe lumps router (sort/topk) + expert (gemm) + shared (quant) on MI355X.
+        # Order matters: `mxfp4_quant_moe_sort_kernel` matches BOTH 'quant' and 'sort'
+        # — it's fundamentally a shared-expert quant (per user's manual alignment table),
+        # so check 'mxfp4_quant' BEFORE generic 'sort'.
         if "moe_gemm" in kn or "moe_mxgemm" in kn:
             return "moe_expert"
-        if "quant" in kn:
-            return "shared_compute"  # mxfp4_quant_moe_sort_kernel = quant for shared expert
-        return "moe_router"  # default for sort phases
+        if "mxfp4_quant" in kn:
+            return "shared_compute"   # quant kernel for shared expert (B200 cvt_fp16_to_fp4)
+        if "grouped_topk" in kn or "topk_opt_sort" in kn or "biased_grouped_topk" in kn:
+            return "moe_router"        # explicit topk → router (TopK_select on B200)
+        if "moesorting" in kn or "moesort" in kn:
+            return "moe_router"        # expert sort phases → router (expert_sort on B200)
+        return "moe_router"            # safe default for unrecognized mxfp4_moe phases
 
     # ── Fallback: kernel name only (when module is empty or unknown) ──
     if "reduce_scatter" in kn or "local_device_load_rmsnorm" in kn:
