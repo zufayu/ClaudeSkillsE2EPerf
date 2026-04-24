@@ -15,6 +15,9 @@ on:
           - recreate_rootful_sudo
           - check_zufa_atom_ownership
           - deep_uid_map_diff
+          - probe_directory_perms
+          - recreate_with_keep_groups
+          - recreate_with_nogroup
 jobs:
   fix:
     runs-on: [self-hosted, mi355x]
@@ -201,6 +204,63 @@ jobs:
             docker.io/rocm/atom-dev:latest \
             bash -c 'id; stat -c "%U:%G %a %n" '$MODEL_PROBE' 2>&1; head -1 '$MODEL_PROBE 2>&1
 
+      - name: Probe directory permissions along path
+        if: inputs.strategy == 'probe_directory_perms'
+        shell: bash {0}
+        run: |
+          P=$MODEL_PROBE
+          DIR=$(dirname $P)
+          echo "=== From host (zufa_yu_qle) ==="
+          for d in / /shared /shared/data /shared/data/amd_int /shared/data/amd_int/models $DIR $P; do
+            stat -c '%a %U:%G %n  (raw uid=%u gid=%g)' $d 2>&1 || echo "  cannot stat $d"
+          done
+          echo
+          echo "=== From inside zufa_atom (working) ==="
+          for d in / /shared /shared/data /shared/data/amd_int /shared/data/amd_int/models $DIR $P; do
+            podman exec $WORKING stat -c '%a %u:%g %n' $d 2>&1
+          done
+          echo
+          echo "=== From inside zufa_atom_ex (broken) ==="
+          for d in / /shared /shared/data /shared/data/amd_int /shared/data/amd_int/models $DIR $P; do
+            podman exec $BROKEN stat -c '%a %u:%g %n' $d 2>&1
+          done
+
+      - name: Apply fix - --group-add keep-groups
+        if: inputs.strategy == 'recreate_with_keep_groups'
+        shell: bash {0}
+        run: |
+          IMAGE=$(podman inspect $WORKING --format '{{.ImageName}}')
+          podman rm -f $BROKEN 2>&1
+          podman run -d --name $BROKEN \
+            --security-opt seccomp=unconfined \
+            --ipc=host --network=host \
+            --group-add keep-groups \
+            -v /shared:/shared \
+            $IMAGE sleep infinity
+          sleep 3
+          echo "--- Test ---"
+          podman exec $BROKEN id
+          podman exec $BROKEN ls -ln $MODEL_PROBE && echo "SUCCESS" || echo "STILL BROKEN"
+
+      - name: Apply fix - --group-add nogroup
+        if: inputs.strategy == 'recreate_with_nogroup'
+        shell: bash {0}
+        run: |
+          IMAGE=$(podman inspect $WORKING --format '{{.ImageName}}')
+          podman rm -f $BROKEN 2>&1
+          # Try multiple group-add forms; nogroup name + numeric 65534
+          podman run -d --name $BROKEN \
+            --security-opt seccomp=unconfined \
+            --ipc=host --network=host \
+            --group-add 65534 \
+            -v /shared:/shared \
+            $IMAGE sleep infinity
+          sleep 3
+          echo "--- Test ---"
+          podman exec $BROKEN id
+          podman exec $BROKEN stat -c 'uid=%u gid=%g %n' $MODEL_PROBE 2>&1
+          podman exec $BROKEN ls -ln $MODEL_PROBE && echo "SUCCESS" || echo "STILL BROKEN"
+
       - name: Apply fix - rootful podman via sudo
         if: inputs.strategy == 'recreate_rootful_sudo'
         run: |
@@ -223,7 +283,7 @@ jobs:
           sudo -n podman exec $BROKEN ls -ln $MODEL_PROBE && echo "SUCCESS: model accessible (rootful)" || echo "STILL BROKEN"
 
       - name: Final verification
-        if: inputs.strategy != 'diagnose_only' && inputs.strategy != 'check_zufa_atom_ownership' && inputs.strategy != 'deep_uid_map_diff'
+        if: inputs.strategy != 'diagnose_only' && inputs.strategy != 'check_zufa_atom_ownership' && inputs.strategy != 'deep_uid_map_diff' && inputs.strategy != 'probe_directory_perms'
         run: |
           # Use sudo prefix for rootful strategy
           PFX=""; [ "${{ inputs.strategy }}" = "recreate_rootful_sudo" ] && PFX="sudo -n"
