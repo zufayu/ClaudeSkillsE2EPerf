@@ -32,6 +32,23 @@ jobs:
       - name: Sync repo
         run: cd $REPO && git fetch origin && git reset --hard origin/main
 
+      - name: Ensure zufa_sglang container is running
+        run: |
+          if docker ps --format '{{.Names}}' | grep -qx 'zufa_sglang'; then
+            echo "zufa_sglang already running"
+          elif docker start zufa_sglang 2>&1 | grep -q zufa_sglang; then
+            echo "started existing zufa_sglang container"
+          else
+            echo "ERROR: zufa_sglang container missing on b200-node1."
+            echo "Re-create manually (mount paths are host-specific, not safe to auto-recreate):"
+            echo "  docker run -d --name zufa_sglang --gpus all --ipc=host --net=host \\"
+            echo "    --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \\"
+            echo "    -v /home/zufayu:/home/zufayu -v /SFS-aGqda6ct:/SFS-aGqda6ct \\"
+            echo "    lmsysorg/sglang:v0.5.9-cu130 sleep infinity"
+            exit 1
+          fi
+          docker ps --filter name=zufa_sglang --format 'name={{.Names}} status={{.Status}}'
+
       - name: Verify container
         run: |
           docker exec $CONTAINER nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -2
