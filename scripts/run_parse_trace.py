@@ -489,8 +489,48 @@ def main():
                 tail = "\n".join("    | " + l for l in captured[-8:]) if captured else ""
                 print(f"  step {i:02d}: parse_decode exception: {e!r}; captured tail:")
                 if tail: print(tail)
-        print(f"\nMerging {len(per_step_paths)}/{len(target_decodes)} step xlsx files...")
-        merge_decode_xlsx(per_step_paths, final_xlsx)
+        if per_step_paths:
+            print(f"\nMerging {len(per_step_paths)}/{len(target_decodes)} step xlsx files...")
+            merge_decode_xlsx(per_step_paths, final_xlsx)
+        else:
+            # All steps silently skipped — typically 'No norm module found in
+            # capture_graph modules' on ROCm 7.2.2+ ATOM. parse_trace.parse_decode
+            # requires the older norm-module hierarchy that newer ATOM stopped
+            # annotating. Fall back to decode_kernel_breakdown.py which uses
+            # mla_a8w8 kernel anchor — doesn't need norm modules.
+            print(f"\nAll {len(target_decodes)} steps silently skipped by parse_trace.parse_decode "
+                  f"(typical: 'No norm module' on ROCm 7.2.2+).")
+            print(f"Falling back to scripts/decode_kernel_breakdown.py (kernel-anchor splitting)...")
+            import subprocess
+            fallback_script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                            "decode_kernel_breakdown.py")
+            if not os.path.exists(fallback_script):
+                print(f"  ERROR: fallback script not found at {fallback_script}")
+                sys.exit(1)
+            cmd = ["python3", fallback_script, args.filepath,
+                   "--target-bs", str(actual_bs),
+                   "--skip-warmup", str(args.skip_warmup),
+                   "--max-steps", str(args.max_steps),
+                   "--output", final_xlsx]
+            if args.suffix:
+                cmd.extend(["--layers", "10-40"])  # decode_kernel_breakdown uses --layers, default 10-40
+            print(f"  $ {' '.join(cmd)}")
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                # Stream child output so user sees progress
+                if result.stdout: print(result.stdout)
+                if result.stderr: print(result.stderr, file=sys.stderr)
+                if result.returncode != 0:
+                    print(f"  FALLBACK FAILED with exit code {result.returncode}")
+                    sys.exit(result.returncode)
+                if os.path.exists(final_xlsx):
+                    print(f"  Fallback xlsx written: {final_xlsx}")
+                else:
+                    print(f"  ERROR: fallback completed but {final_xlsx} not produced")
+                    sys.exit(1)
+            except FileNotFoundError as e:
+                print(f"  Fallback subprocess failed: {e}")
+                sys.exit(1)
 
 
 if __name__ == "__main__":
