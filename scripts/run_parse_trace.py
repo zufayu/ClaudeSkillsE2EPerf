@@ -471,11 +471,24 @@ def main():
                     if i < 3 or i == len(target_decodes) - 1:
                         print(f"  step {i:02d}: parse_decode OK -> {tmp}")
                 else:
-                    print(f"  step {i:02d}: parse_decode silently skipped (no output)")
-            except SystemExit:
-                print(f"  step {i:02d}: parse_decode SystemExit; skipping")
+                    # Silent skip: no xlsx written but no exception either.
+                    # Surface captured stdout so downstream debugging knows why
+                    # (typical reasons: 'No norm module', 'no decode events',
+                    # capture_graph hierarchy mismatch — all printed by ATOM).
+                    captured = cap.getvalue().strip().splitlines()
+                    tail = "\n".join("    | " + l for l in captured[-12:]) if captured else "    (no captured stdout)"
+                    print(f"  step {i:02d}: parse_decode silently skipped — captured stdout tail:")
+                    print(tail)
+            except SystemExit as e:
+                captured = cap.getvalue().strip().splitlines()
+                tail = "\n".join("    | " + l for l in captured[-8:]) if captured else ""
+                print(f"  step {i:02d}: parse_decode SystemExit code={e.code}; captured tail:")
+                if tail: print(tail)
             except Exception as e:
-                print(f"  step {i:02d}: parse_decode exception: {e}")
+                captured = cap.getvalue().strip().splitlines()
+                tail = "\n".join("    | " + l for l in captured[-8:]) if captured else ""
+                print(f"  step {i:02d}: parse_decode exception: {e!r}; captured tail:")
+                if tail: print(tail)
         print(f"\nMerging {len(per_step_paths)}/{len(target_decodes)} step xlsx files...")
         merge_decode_xlsx(per_step_paths, final_xlsx)
 
