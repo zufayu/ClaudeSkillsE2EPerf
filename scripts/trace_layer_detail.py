@@ -145,7 +145,19 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("filepath")
     parser.add_argument("--output-dir", default=None, help="Directory to write CSV output")
+    parser.add_argument("--layer-range", default="10-40",
+                        help="Layer range as 'lo-hi' (exclusive upper, default 10-40 = 30 layers). "
+                             "DSR1 has 61 layers; first ~10 (no MoE on dense layers) and last ~20 (lm_head etc) "
+                             "are unstable. 10-40 captures the steady middle.")
+    parser.add_argument("--max-steps", type=int, default=0,
+                        help="Limit accumulation to first N detected decode steps (0 = all available). "
+                             "Per-operator sample count = max_steps × (layer_hi - layer_lo). "
+                             "E.g. 100 steps × 30 layers = 3000 samples per operator.")
+    parser.add_argument("--legacy-best-aligned", action="store_true",
+                        help="Old behavior: pick 10 most-stable consecutive layers from one decode step "
+                             "(only ~10 samples per operator). Use for backwards comparison only.")
     args = parser.parse_args()
+    layer_lo, layer_hi = (int(x) for x in args.layer_range.split("-"))
 
     events = load_trace(args.filepath)
 
@@ -198,30 +210,53 @@ def main():
     avg_dt = sum(dt for _, dt in normal) / len(normal)
     print(f"Average FMHA-to-FMHA (normal): {avg_dt:.1f}μs, median: {med_dt:.1f}μs")
 
-    # Find 10 consecutive intervals closest to average
-    # Score = sum of |dt - avg| for 10 consecutive intervals
-    best_score = float("inf")
-    best_start = 0
+    # ── Step boundary detection ──
+    # Long FMHA-to-FMHA intervals (> 3× median) mark transitions between decode steps.
+    # FMHA[i+1] starts a new step when intervals[i].dt > 3× median.
+    step_starts = [0]
+    for idx, dt in intervals:
+        if dt > med_dt * 3:
+            step_starts.append(idx + 1)
+    step_starts.append(len(fmha_events))
+    steps = [(step_starts[i], step_starts[i + 1])
+             for i in range(len(step_starts) - 1)]
+    # Filter steps with enough layers to cover the requested range
+    valid_steps = [(s, e) for s, e in steps if (e - s) > layer_hi]
+    print(f"Detected {len(steps)} decode steps; {len(valid_steps)} have ≥{layer_hi+1} FMHA events for layers {layer_lo}-{layer_hi-1}")
 
-    # Only search among normal intervals that are actually consecutive in FMHA index
-    for scan_start in range(len(normal) - 9):
-        # Check if 10 intervals are truly consecutive (FMHA indices are sequential)
-        consecutive = True
-        for j in range(1, 10):
-            if normal[scan_start + j][0] != normal[scan_start + j - 1][0] + 1:
-                consecutive = False
-                break
-        if not consecutive:
-            continue
-
-        score = sum(abs(normal[scan_start + j][1] - avg_dt) for j in range(10))
-        if score < best_score:
-            best_score = score
-            best_start = scan_start
-
-    selected_intervals = normal[best_start:best_start + 10]
-    print(f"\nSelected 10 consecutive layers starting at FMHA index {selected_intervals[0][0]}")
-    print(f"Score (sum |dt-avg|): {best_score:.1f}μs")
+    if args.legacy_best_aligned:
+        # ── LEGACY: pick 10 best-aligned consecutive layers from one step ──
+        best_score = float("inf")
+        best_start = 0
+        for scan_start in range(len(normal) - 9):
+            consecutive = True
+            for j in range(1, 10):
+                if normal[scan_start + j][0] != normal[scan_start + j - 1][0] + 1:
+                    consecutive = False
+                    break
+            if not consecutive:
+                continue
+            score = sum(abs(normal[scan_start + j][1] - avg_dt) for j in range(10))
+            if score < best_score:
+                best_score = score
+                best_start = scan_start
+        selected_intervals = normal[best_start:best_start + 10]
+        print(f"\n[LEGACY] Selected 10 consecutive layers starting at FMHA index {selected_intervals[0][0]} (score: {best_score:.1f}μs)")
+    else:
+        # ── NEW: accumulate all (step, layer) pairs in --layer-range × first --max-steps steps ──
+        used_steps = valid_steps[:args.max_steps] if args.max_steps > 0 else valid_steps
+        selected_intervals = []
+        for step_start, step_end in used_steps:
+            for layer_offset in range(layer_lo, layer_hi):
+                fmha_idx = step_start + layer_offset
+                if fmha_idx + 1 >= step_end:
+                    continue
+                dt = fmha_events[fmha_idx + 1]["ts"] - fmha_events[fmha_idx]["ts"]
+                selected_intervals.append((fmha_idx, dt))
+        print(f"\nAccumulating {len(used_steps)} steps × {layer_hi - layer_lo} layers = {len(selected_intervals)} (step,layer) samples")
+        if not selected_intervals:
+            print("ERROR: no (step, layer) samples found — check --layer-range and trace coverage")
+            return
 
     # For each selected layer, extract kernels between allreduce_fusion and vectorized_elementwise
     RE_LAYER_START = re.compile(r"allreduce_fusion_kernel", re.IGNORECASE)
@@ -374,9 +409,9 @@ def main():
         # Collect per-kernel data for averaging, keyed by op_key
         all_layer_kernels.append(kernel_rows)
 
-    # Average across 10 layers — per-kernel table keyed by op_key
+    # Average across all (step, layer) samples — per-kernel table keyed by op_key
     print(f"\n{'='*260}")
-    print(f"10-LAYER AVERAGED PER-KERNEL TABLE (ordered by timestamp)")
+    print(f"PER-KERNEL TABLE (avg across {len(selected_intervals)} samples, ordered by timestamp)")
     print(f"{'='*260}")
     all_dts = [dt for _, dt in selected_intervals]
     all_walls = []
@@ -586,9 +621,13 @@ def main():
             pass_sums = {}
             csv_rows = []
 
+            from statistics import pstdev
             for ki, op_key in enumerate(ref_keys):
                 durs = op_data[op_key]["durs"]
                 avg_dur = sum(durs) / len(durs)
+                std_dur = pstdev(durs) if len(durs) > 1 else 0.0
+                cv = (std_dur / avg_dur * 100) if avg_dur > 0 else 0.0  # coefficient of variation, %
+                n_samples = len(durs)
                 ov_tots = op_data[op_key]["ov_totals"]
                 avg_ov = sum(ov_tots) / len(ov_tots) if ov_tots else 0
                 kr0 = all_layer_kernels[0][ki]
@@ -616,6 +655,9 @@ def main():
                     kr0["raw_short"],
                     kr0["stream"],
                     f"{avg_dur:.1f}",
+                    f"{std_dur:.2f}",       # NEW: stddev
+                    f"{cv:.1f}",            # NEW: coefficient of variation (%)
+                    n_samples,              # NEW: sample count
                     f"{avg_ov:.1f}" if avg_ov > 0.05 else "0",
                     ov_with,
                     "",  # MI355X_Module placeholder
@@ -627,21 +669,23 @@ def main():
             with open(csv_path, "w", newline="") as f:
                 w = csv.writer(f)
                 w.writerow(["#", "B200_Module", "B200_Operator", "B200_Raw_Kernel", "B200_Stream",
-                             "B200_Avg_us", "B200_Overlap_us", "B200_Overlap_With",
+                             "B200_Avg_us", "B200_Std_us", "B200_CV_pct", "B200_N_samples",
+                             "B200_Overlap_us", "B200_Overlap_With",
                              "MI355X_Module", "MI355X_Kernel", "MI355X_Avg_us", "Notes"])
                 for row in csv_rows:
                     w.writerow(row)
                 w.writerow([])
-                w.writerow(["", "", "B200 TOTAL (kernel_sum)", "", "", f"{avg_ksum:.1f}", "", "", "", "MI355X TOTAL", "", ""])
-                w.writerow(["", "", "B200 Walltime", "", "", f"{avg_wall:.1f}", "", "", "", "", "", ""])
-                w.writerow(["", "", "B200 Overlap", "", "", f"{avg_overlap:.1f}", "", "", "", "", "", ""])
+                # Totals (15-col schema: # | Mod | Op | Raw_Kernel | Stream | Avg | Std | CV | N | Overlap | Overlap_With | MI_Mod | MI_Kernel | MI_Avg | Notes)
+                w.writerow(["", "", "B200 TOTAL (kernel_sum)", "", "", f"{avg_ksum:.1f}", "", "", "", "", "", "MI355X TOTAL", "", "", ""])
+                w.writerow(["", "", "B200 Walltime",          "", "", f"{avg_wall:.1f}", "", "", "", "", "", "", "", "", ""])
+                w.writerow(["", "", "B200 Overlap",           "", "", f"{avg_overlap:.1f}", "", "", "", "", "", "", "", "", ""])
                 w.writerow([])
                 # Pass-level summary
-                w.writerow(["", "", "PASS", "", "B200", "MI355X", "gap", "", "NV_Kernels", "AMD_Kernels", "", ""])
+                w.writerow(["", "", "PASS", "", "B200", "MI355X", "gap", "", "", "", "NV_Kernels", "AMD_Kernels", "", "", ""])
                 pass_order = ["MOE", "MHA", "O_proj", "EP_AR_before_MHA", "EP_AR_before_MOE"]
                 for pname in pass_order:
                     b200_val = pass_sums.get(pname, 0)
-                    w.writerow(["", "", pname, "", f"{b200_val:.1f}", "", "", "", "", "", "", ""])
+                    w.writerow(["", "", pname, "", f"{b200_val:.1f}", "", "", "", "", "", "", "", "", "", ""])
             print(f"\n  CSV written: {csv_path}")
 
     # === allreduce_fusion_kernel distribution analysis ===
