@@ -1,0 +1,71 @@
+name: "MI355X Bench"
+on:
+  workflow_dispatch:
+    inputs:
+      tp:
+        description: "Tensor parallel size"
+        type: string
+        default: "4"
+      ep:
+        description: "Enable expert parallel (adds --ep flag)"
+        type: boolean
+        default: false
+      scenario:
+        description: "Scenario"
+        type: choice
+        options: [chat, reasoning, summarize]
+        default: chat
+      concurrency:
+        description: "Concurrency"
+        type: string
+        default: "64"
+jobs:
+  bench:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 60
+    env:
+      REPO: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf
+      CONTAINER: zufa_atom
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
+    steps:
+      - name: Cleanup
+        continue-on-error: true
+        run: |
+          podman exec $CONTAINER bash -c 'pkill -9 -f "python|vllm|atom" 2>/dev/null; true'
+          sleep 5
+
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Get container image
+        run: echo "IMAGE=$(podman inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: Set EP config
+        run: |
+          if [ "${{ inputs.ep }}" = "true" ]; then
+            echo "EP_FLAG=--ep" >> $GITHUB_ENV
+            echo "EP_TAG=ep${{ inputs.tp }}" >> $GITHUB_ENV
+          else
+            echo "EP_FLAG=" >> $GITHUB_ENV
+            echo "EP_TAG=ep1" >> $GITHUB_ENV
+          fi
+
+      - name: "Bench (TP=${{ inputs.tp }} ${{ env.EP_TAG }} ${{ inputs.scenario }} c=${{ inputs.concurrency }})"
+        run: |
+          RESULT_DIR=results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_${EP_TAG}_tp${{ inputs.tp }}_rocm722
+          podman exec $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_mi355x.sh \
+            --model-mxfp4 $MODEL \
+            --configs mxfp4-throughput \
+            --scenario ${{ inputs.scenario }} \
+            --concurrency ${{ inputs.concurrency }} \
+            --tp ${{ inputs.tp }} $EP_FLAG \
+            --container-image '${{ env.IMAGE }}' \
+            --result-dir ./$RESULT_DIR"
+
+      - name: Show results
+        if: always()
+        run: |
+          for f in $(find $REPO/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_*_rocm722/summary.md 2>/dev/null); do
+            echo "=== $(dirname $f | xargs basename) ==="
+            cat $f
+          done

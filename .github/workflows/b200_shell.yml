@@ -1,0 +1,24 @@
+name: "B200 Shell"
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'Command to run'
+        type: string
+        default: 'echo hello'
+      node:
+        description: 'Node (empty=local, or hostname like hungry-hippo-fin-03-3)'
+        type: string
+        default: ''
+jobs:
+  shell:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 120
+    steps:
+      - name: Run
+        run: |
+          if [ -n "${{ inputs.node }}" ]; then
+            ssh ${{ inputs.node }} '${{ inputs.command }}'
+          else
+            bash -c '${{ inputs.command }}'
+          fi

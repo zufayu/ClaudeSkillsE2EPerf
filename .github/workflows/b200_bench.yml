@@ -1,0 +1,100 @@
+name: "B200 SGLang Bench"
+on:
+  workflow_dispatch:
+    inputs:
+      tp:
+        description: "Tensor parallel size"
+        type: string
+        default: "4"
+      ep:
+        description: "Expert parallel size"
+        type: string
+        default: "1"
+      scenario:
+        description: "Scenario"
+        type: choice
+        options: [chat, reasoning, summarize]
+        default: chat
+      concurrency:
+        description: "Concurrency"
+        type: string
+        default: "64"
+jobs:
+  bench:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 120
+    env:
+      CONTAINER: zufa_sglang
+      REPO: /home/zufayu/ClaudeSkillsE2EPerf
+      MODEL: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Cleanup GPU
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done
+          sleep 3
+
+      - name: Start server
+        run: |
+          docker exec -d $CONTAINER bash -c "python3 -m sglang.launch_server \
+            --model-path $MODEL --tp ${{ inputs.tp }} --ep-size ${{ inputs.ep }} \
+            --mem-fraction-static 0.85 --chunked-prefill-size 16384 \
+            --kv-cache-dtype fp8_e4m3 --cuda-graph-max-bs 256 \
+            --max-running-requests 256 --disable-radix-cache \
+            --attention-backend trtllm_mla \
+            --moe-runner-backend flashinfer_trtllm \
+            --enable-flashinfer-allreduce-fusion \
+            --enable-symm-mem \
+            --port 8888 --host 0.0.0.0 \
+            > /tmp/server.log 2>&1"
+          echo "Server starting (TP=${{ inputs.tp }} EP=${{ inputs.ep }})..."
+
+      - name: Wait for server
+        run: |
+          WAIT=0
+          while true; do
+            if docker exec $CONTAINER curl -sf http://localhost:8888/health > /dev/null 2>&1; then
+              echo "Server ready after ${WAIT}s"
+              break
+            fi
+            sleep 15
+            WAIT=$((WAIT + 15))
+            [ $WAIT -ge 1200 ] && echo "Timeout" && docker exec $CONTAINER tail -30 /tmp/server.log && exit 1
+            [ $((WAIT % 60)) -eq 0 ] && echo "  ${WAIT}s..."
+          done
+
+      - name: "Bench (TP=${{ inputs.tp }} EP=${{ inputs.ep }} ${{ inputs.scenario }} c=${{ inputs.concurrency }})"
+        run: |
+          CONC=${{ inputs.concurrency }}
+          NUM=$((CONC * 10))
+          case "${{ inputs.scenario }}" in
+            chat) ISL=1024; OSL=1024 ;;
+            reasoning) ISL=1024; OSL=8192 ;;
+            summarize) ISL=8192; OSL=1024 ;;
+          esac
+          WARMUP=$((CONC * 2))
+          echo "Bench: $NUM prompts, c=$CONC, ISL=$ISL, OSL=$OSL, warmup=$WARMUP"
+          docker exec $CONTAINER python3 -m sglang.bench_serving \
+            --model $MODEL --port 8888 --backend vllm \
+            --dataset-name random \
+            --random-input-len $ISL --random-output-len $OSL --random-range-ratio 0.8 \
+            --num-prompts $NUM --max-concurrency $CONC \
+            --warmup-requests $WARMUP \
+            --output-file /tmp/bench_tp${{ inputs.tp }}_ep${{ inputs.ep }}_${{ inputs.scenario }}_c${{ inputs.concurrency }}.jsonl \
+            2>&1
+
+      - name: Show server config
+        if: always()
+        run: |
+          docker exec $CONTAINER grep -E "ep_size=|tp_size=" /tmp/server.log 2>/dev/null | head -1 || true
+          docker exec $CONTAINER tail -5 /tmp/server.log 2>/dev/null || true
+
+      - name: Cleanup
+        if: always()
+        continue-on-error: true
+        run: |
+          docker exec $CONTAINER bash -c 'pkill -f sglang 2>/dev/null; true'
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done

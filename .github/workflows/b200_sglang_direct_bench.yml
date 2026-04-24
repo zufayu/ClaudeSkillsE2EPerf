@@ -1,0 +1,82 @@
+name: "B200 SGLang Direct Bench"
+on:
+  workflow_dispatch:
+    inputs:
+      concurrency:
+        description: "Concurrency"
+        type: string
+        default: "64"
+      scenario:
+        description: "Scenario (chat/reasoning/summarize)"
+        type: string
+        default: "chat"
+jobs:
+  bench:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 60
+    env:
+      CONTAINER: zufa_sglang
+      MODEL: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Cleanup
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done
+          docker exec $CONTAINER bash -c 'fuser -k -9 8888/tcp 2>/dev/null; true'
+          sleep 3
+
+      - name: Start SGLang server
+        run: |
+          docker exec -d $CONTAINER bash -c "python3 -m sglang.launch_server \
+            --model-path $MODEL --tp 8 \
+            --mem-fraction-static 0.85 --chunked-prefill-size 16384 \
+            --kv-cache-dtype fp8_e4m3 --cuda-graph-max-bs 256 \
+            --max-running-requests 256 --port 8888 --host 0.0.0.0 \
+            > /tmp/sglang_server.log 2>&1"
+          echo "Server starting..."
+
+      - name: Wait for server ready
+        run: |
+          WAIT=0
+          while true; do
+            if docker exec $CONTAINER curl -sf http://localhost:8888/health > /dev/null 2>&1; then
+              echo "Server ready after ${WAIT}s"
+              break
+            fi
+            sleep 15
+            WAIT=$((WAIT + 15))
+            [ $WAIT -ge 600 ] && echo "Timeout" && docker exec $CONTAINER tail -20 /tmp/sglang_server.log && exit 1
+            [ $((WAIT % 60)) -eq 0 ] && echo "  ${WAIT}s..."
+          done
+
+      - name: "Bench (${{ inputs.scenario }} c=${{ inputs.concurrency }})"
+        run: |
+          CONC=${{ inputs.concurrency }}
+          NUM=$((CONC * 10))
+          case "${{ inputs.scenario }}" in
+            chat) ISL=1024; OSL=1024 ;;
+            reasoning) ISL=1024; OSL=8192 ;;
+            summarize) ISL=8192; OSL=1024 ;;
+          esac
+          echo "Bench: $NUM prompts, c=$CONC, ISL=$ISL, OSL=$OSL"
+          docker exec $CONTAINER python3 -m sglang.bench_serving \
+            --model $MODEL --port 8888 --backend vllm \
+            --dataset-name random \
+            --random-input-len $ISL --random-output-len $OSL --random-range-ratio 0.8 \
+            --num-prompts $NUM --max-concurrency $CONC \
+            --output-file /tmp/bench_${{ inputs.scenario }}_c${{ inputs.concurrency }}.jsonl \
+            2>&1
+
+      - name: Show results
+        if: always()
+        run: docker exec $CONTAINER tail -20 /tmp/sglang_server.log 2>/dev/null || true
+
+      - name: Cleanup
+        if: always()
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done

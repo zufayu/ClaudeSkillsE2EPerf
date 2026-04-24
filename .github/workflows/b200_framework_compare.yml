@@ -1,0 +1,200 @@
+name: "B200 Framework Comparison (DSR FP4)"
+on:
+  workflow_dispatch:
+    inputs:
+      framework:
+        description: "Framework to benchmark"
+        type: choice
+        options:
+          - sglang
+          - vllm
+          - trtllm
+        default: sglang
+      concurrency:
+        description: "Concurrency"
+        type: string
+        default: "64"
+      scenario:
+        description: "Scenario"
+        type: choice
+        options:
+          - chat
+          - reasoning
+          - summarize
+        default: chat
+
+jobs:
+  bench:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 90
+    env:
+      MODEL: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
+    steps:
+      - name: Sync repo
+        run: |
+          mkdir -p $REPO && cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Cleanup GPU
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done
+          sleep 3
+
+      - name: Setup container
+        run: |
+          FRAMEWORK="${{ inputs.framework }}"
+          case "$FRAMEWORK" in
+            sglang)
+              CONTAINER=zufa_sglang_bench
+              IMAGE=lmsysorg/sglang:v0.5.9-cu130
+              ;;
+            vllm)
+              CONTAINER=zufa_vllm_bench
+              IMAGE=vllm/vllm-openai:v0.19.0-cu130
+              ;;
+            trtllm)
+              CONTAINER=zufa_trtllm_bench
+              IMAGE=nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc10
+              ;;
+          esac
+          echo "CONTAINER=$CONTAINER" >> $GITHUB_ENV
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+          # Remove old container if exists
+          docker rm -f $CONTAINER 2>/dev/null || true
+
+          # Create new container (--entrypoint "" overrides any image entrypoint)
+          docker run -d --name $CONTAINER \
+            --privileged --gpus all --ipc=host --net=host \
+            --entrypoint "" \
+            -v /home:/home \
+            -v /SFS-aGqda6ct:/SFS-aGqda6ct \
+            -w /home/ubuntu/zufa \
+            $IMAGE sleep infinity
+          echo "Container $CONTAINER created with $IMAGE"
+
+      - name: Check framework version
+        run: |
+          FRAMEWORK="${{ inputs.framework }}"
+          docker exec $CONTAINER bash -c "
+            echo 'Python: '$(python3 --version 2>&1)
+            echo 'PyTorch: '$(python3 -c 'import torch; print(torch.__version__)' 2>/dev/null || echo 'N/A')
+            echo 'CUDA devices: '$(python3 -c 'import torch; print(torch.cuda.device_count())' 2>/dev/null || echo 'N/A')
+            case '$FRAMEWORK' in
+              sglang) python3 -c 'import sglang; print(f\"SGLang: {sglang.__version__}\")' ;;
+              vllm) python3 -c 'import vllm; print(f\"vLLM: {vllm.__version__}\")' ;;
+              trtllm) python3 -c 'import tensorrt_llm; print(f\"TRT-LLM: {tensorrt_llm.__version__}\")' 2>/dev/null || echo 'TRT-LLM version: check trtllm-serve' ;;
+            esac
+          "
+
+      - name: Start server
+        run: |
+          FRAMEWORK="${{ inputs.framework }}"
+          CONC=${{ inputs.concurrency }}
+          case "$FRAMEWORK" in
+            sglang)
+              docker exec -d $CONTAINER bash -c "python3 -m sglang.launch_server \
+                --model-path $MODEL --tp 8 \
+                --mem-fraction-static 0.85 --chunked-prefill-size 16384 \
+                --kv-cache-dtype fp8_e4m3 --cuda-graph-max-bs 256 \
+                --max-running-requests 256 --port 8888 --host 0.0.0.0 \
+                > /tmp/server.log 2>&1"
+              ;;
+            vllm)
+              docker exec -d $CONTAINER bash -c "python3 -m vllm.entrypoints.openai.api_server \
+                --model $MODEL --tensor-parallel-size 8 \
+                --gpu-memory-utilization 0.90 \
+                --max-model-len 16384 \
+                --port 8888 --host 0.0.0.0 \
+                > /tmp/server.log 2>&1"
+              ;;
+            trtllm)
+              docker exec -d $CONTAINER bash -c "trtllm-serve $MODEL \
+                --port 8888 \
+                --trust_remote_code \
+                --backend pytorch \
+                --tp_size 8 \
+                > /tmp/server.log 2>&1"
+              ;;
+          esac
+          echo "Server starting..."
+
+      - name: Wait for server
+        run: |
+          WAIT=0
+          while true; do
+            if docker exec $CONTAINER curl -sf http://localhost:8888/health > /dev/null 2>&1; then
+              echo "Server ready after ${WAIT}s"
+              break
+            fi
+            # vLLM uses /health, TRT-LLM uses /health or /v1/models
+            if docker exec $CONTAINER curl -sf http://localhost:8888/v1/models > /dev/null 2>&1; then
+              echo "Server ready (v1/models) after ${WAIT}s"
+              break
+            fi
+            sleep 15
+            WAIT=$((WAIT + 15))
+            if [ $WAIT -ge 900 ]; then
+              echo "Timeout after ${WAIT}s"
+              docker exec $CONTAINER tail -40 /tmp/server.log
+              exit 1
+            fi
+            [ $((WAIT % 60)) -eq 0 ] && echo "  ${WAIT}s..."
+          done
+
+      - name: "Bench (${{ inputs.framework }} ${{ inputs.scenario }} c=${{ inputs.concurrency }})"
+        run: |
+          CONC=${{ inputs.concurrency }}
+          NUM=$((CONC * 10))
+          case "${{ inputs.scenario }}" in
+            chat) ISL=1024; OSL=1024 ;;
+            reasoning) ISL=1024; OSL=8192 ;;
+            summarize) ISL=8192; OSL=1024 ;;
+          esac
+
+          FRAMEWORK="${{ inputs.framework }}"
+          BACKEND="vllm"
+          [ "$FRAMEWORK" = "trtllm" ] && BACKEND="vllm"
+
+          echo "Bench: $NUM prompts, c=$CONC, ISL=$ISL, OSL=$OSL, backend=$BACKEND"
+
+          # For non-sglang frameworks, use a separate SGLang container for bench_serving
+          # (sglang.bench_serving is just an HTTP client, works with any OpenAI-compatible server)
+          if [ "$FRAMEWORK" != "sglang" ]; then
+            BENCH_CONTAINER=zufa_bench_client
+            docker rm -f $BENCH_CONTAINER 2>/dev/null || true
+            docker run -d --name $BENCH_CONTAINER --net=host \
+              -v /SFS-aGqda6ct:/SFS-aGqda6ct \
+              lmsysorg/sglang:v0.5.9-cu130 sleep infinity
+            BENCH_TARGET=$BENCH_CONTAINER
+          else
+            BENCH_TARGET=$CONTAINER
+          fi
+
+          docker exec $BENCH_TARGET python3 -m sglang.bench_serving \
+            --model $MODEL --port 8888 --backend $BACKEND \
+            --dataset-name random \
+            --random-input-len $ISL --random-output-len $OSL --random-range-ratio 0.8 \
+            --num-prompts $NUM --max-concurrency $CONC \
+            --output-file /tmp/bench_${{ inputs.framework }}_${{ inputs.scenario }}_c${{ inputs.concurrency }}.jsonl \
+            2>&1
+
+          # Cleanup bench client container
+          if [ "$FRAMEWORK" != "sglang" ]; then
+            docker rm -f $BENCH_CONTAINER 2>/dev/null || true
+          fi
+
+      - name: Show results
+        if: always()
+        run: |
+          echo "=== Server log (last 20 lines) ==="
+          docker exec $CONTAINER tail -20 /tmp/server.log 2>/dev/null || true
+
+      - name: Cleanup
+        if: always()
+        continue-on-error: true
+        run: |
+          docker rm -f $CONTAINER 2>/dev/null || true
+          docker rm -f zufa_bench_client 2>/dev/null || true
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done

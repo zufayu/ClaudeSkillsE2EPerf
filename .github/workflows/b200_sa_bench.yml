@@ -1,0 +1,64 @@
+name: "B200 SA Bench (direct)"
+on:
+  workflow_dispatch:
+    inputs:
+      configs:
+        description: "Config (fp4-throughput/fp4-latency)"
+        type: string
+        default: "fp4-throughput"
+      scenario:
+        description: "Scenario"
+        type: string
+        default: "chat"
+      concurrency:
+        description: "Concurrency"
+        type: string
+        default: "64"
+      ep_sizes:
+        description: "EP sizes"
+        type: string
+        default: "4"
+jobs:
+  bench:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 120
+    env:
+      CONTAINER: zufa_trt
+      MODEL: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      REPO: /home/ubuntu/zufa/ClaudeSkillsE2EPerf
+      RESULT_DIR: results/b200_dsr_fp4/b200_framework_compare
+    steps:
+      - name: Sync repo
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
+
+      - name: Cleanup GPU
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done
+          sleep 3
+
+      - name: Get image name
+        run: echo "IMAGE=$(docker inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: "SA Bench (${{ inputs.configs }} ${{ inputs.scenario }} c=${{ inputs.concurrency }} EP=${{ inputs.ep_sizes }})"
+        run: |
+          docker exec -e LD_LIBRARY_PATH=/usr/local/tensorrt/lib:/usr/local/cuda/lib64 $CONTAINER bash -c "cd $REPO && bash scripts/sa_bench_b200.sh \
+            --model-fp4 $MODEL \
+            --configs ${{ inputs.configs }} \
+            --scenario ${{ inputs.scenario }} \
+            --concurrency ${{ inputs.concurrency }} \
+            --ep-sizes ${{ inputs.ep_sizes }} \
+            --dp false \
+            --container-image ${{ env.IMAGE }} \
+            --result-dir ./$RESULT_DIR"
+
+      - name: Show results
+        if: always()
+        run: |
+          cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo "No summary"
+
+      - name: Cleanup
+        if: always()
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done

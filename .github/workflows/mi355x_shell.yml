@@ -17,7 +17,7 @@ on:
 jobs:
   shell:
     runs-on: [self-hosted, mi355x]
-    timeout-minutes: 10
+    timeout-minutes: 120
     steps:
       - name: Run command
         run: |
