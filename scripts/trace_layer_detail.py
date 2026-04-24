@@ -155,10 +155,11 @@ def main():
     parser.add_argument("--skip-warmup-steps", type=int, default=5,
                         help="Drop first N decode steps to exclude cold-cache / JIT-compile warmup. "
                              "Default 5 (matches MI355X decode_kernel_breakdown convention).")
-    parser.add_argument("--layers-per-step", type=int, default=61,
-                        help="FMHA events per decode step (DSR1 = 61). Used for layer-anchored "
-                             "step detection. Gap-based detection (old default) fails for "
-                             "steady-state continuous batching where inter-step gaps disappear.")
+    parser.add_argument("--layers-per-step", type=int, default=0,
+                        help="FMHA events per decode step (DSR1 = 61). 0 = auto-detect from "
+                             "CPU annotations (looks for 'layers.<N>' / 'model.layers.<N>' "
+                             "patterns; takes max+1). Auto-detect falls back to 61 if no "
+                             "annotation found. Used for layer-anchored step detection.")
     parser.add_argument("--enforce-min-samples", type=int, default=0,
                         help="Fail with non-zero exit if final per-operator sample count "
                              "(used_steps × layers_in_range) drops below this threshold. "
@@ -226,7 +227,40 @@ def main():
     # Gap-based detection (old: dt > 3× median) fails for steady-state continuous
     # batching: inter-step gaps disappear, so we'd see "1 step" for the whole trace.
     # Use a fixed FMHA-per-step count instead; default 61 matches DeepSeek-R1.
-    LAYERS_PER_STEP = args.layers_per_step
+    if args.layers_per_step > 0:
+        LAYERS_PER_STEP = args.layers_per_step
+        print(f"layers_per_step = {LAYERS_PER_STEP} (user-supplied)")
+    else:
+        # Auto-detect: scan CPU events for 'layers.<N>' / 'model.layers.<N>' annotations
+        # and take max+1. Sglang/vLLM/TRT torch profiler all emit these via
+        # record_function() around per-layer forward passes.
+        layer_re = re.compile(r"(?:^|[._/])layers\.(\d+)\b|model\.layers\[?(\d+)\]?", re.IGNORECASE)
+        max_layer = -1
+        scanned = 0
+        for e in events:
+            if e.get("ph") != "X":
+                continue
+            scanned += 1
+            if scanned > 200000:  # cap scan cost — model annotations cluster early in trace
+                break
+            name = e.get("name", "")
+            m = layer_re.search(name)
+            if m:
+                idx = int(m.group(1) or m.group(2))
+                if idx > max_layer:
+                    max_layer = idx
+        if max_layer >= 0:
+            LAYERS_PER_STEP = max_layer + 1
+            print(f"layers_per_step = {LAYERS_PER_STEP} (auto-detected from layers.{max_layer} annotation)")
+        else:
+            LAYERS_PER_STEP = 61
+            print(f"layers_per_step = {LAYERS_PER_STEP} (no layer annotation found, "
+                  f"falling back to DSR1 default — pass --layers-per-step explicitly if wrong)")
+    # Sanity: warn if FMHA count doesn't divide cleanly (off-by-one config?)
+    remainder = len(fmha_events) % LAYERS_PER_STEP
+    if remainder != 0 and remainder >= LAYERS_PER_STEP // 4:
+        print(f"  WARN: {len(fmha_events)} FMHA events leave remainder {remainder} "
+              f"after dividing by {LAYERS_PER_STEP} — likely wrong layers_per_step value")
     n_total_steps = len(fmha_events) // LAYERS_PER_STEP
     all_steps = [(i * LAYERS_PER_STEP, (i + 1) * LAYERS_PER_STEP)
                  for i in range(n_total_steps)]
