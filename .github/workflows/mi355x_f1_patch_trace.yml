@@ -19,8 +19,8 @@ jobs:
         continue-on-error: true
         run: podman exec $C bash -c 'pkill -9 -f "python|vllm|atom" 2>/dev/null; sleep 5; rm -f /dev/shm/aiter_*; rm -rf /tmp/trace_f1; true'
 
-      - name: Sync repo
-        run: podman exec $C bash -c "cd $REPO && git fetch origin && git reset --hard origin/main"
+      - name: Sync repo (on host — container has no network)
+        run: cd $REPO && git fetch origin && git reset --hard origin/main
 
       - name: Pre-flight - confirm patch site + backup with sha256
         shell: bash {0}
@@ -134,8 +134,13 @@ jobs:
         shell: bash {0}
         run: |
           set -e
+          if ! podman exec $C test -f $BAK; then
+            echo "No backup file — patch was never applied. Verifying moe.py is original."
+            podman exec $C grep -q 'mutates_args.*hidden_states' $SRC && echo "moe.py is intact (no patch ever applied) — OK" || { echo "ANOMALY: no .bak AND mutates_args missing"; exit 1; }
+            exit 0
+          fi
           echo "=== sha256 before restore ==="
-          podman exec $C sha256sum $BAK $SRC || true
+          podman exec $C sha256sum $BAK $SRC
           podman exec $C cp -f $BAK $SRC
           echo "=== sha256 after restore ==="
           podman exec $C sha256sum $BAK $SRC
