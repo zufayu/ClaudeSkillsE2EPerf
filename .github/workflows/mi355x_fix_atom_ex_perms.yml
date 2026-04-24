@@ -92,23 +92,30 @@ jobs:
           PRIV=$(podman inspect $WORKING --format '{{.HostConfig.Privileged}}')
           echo "Cloning: image=$IMAGE user=$USER_SPEC userns=$USERNS priv=$PRIV"
 
-          # Build mount args from working container
+          # Mounts from working
           MOUNT_ARGS=$(podman inspect $WORKING --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}} {{end}}')
           echo "Mounts: $MOUNT_ARGS"
+
+          # SecurityOpt from working
+          SECOPT_ARGS=$(podman inspect $WORKING --format '{{range .HostConfig.SecurityOpt}}--security-opt {{.}} {{end}}')
+          echo "SecurityOpt: $SECOPT_ARGS"
 
           podman rm -f $BROKEN 2>&1 || true
           USER_FLAG=""; [ -n "$USER_SPEC" ] && USER_FLAG="--user $USER_SPEC"
           USERNS_FLAG=""; [ "$USERNS" != "" ] && [ "$USERNS" != "host" ] && USERNS_FLAG="--userns=$USERNS"
           PRIV_FLAG=""; [ "$PRIV" = "true" ] && PRIV_FLAG="--privileged"
 
-          podman run -d --name $BROKEN $USER_FLAG $USERNS_FLAG $PRIV_FLAG \
+          # Note: NOT using --privileged — working container is privileged=false
+          # and that is the key difference vs the previous broken attempt
+          podman run -d --name $BROKEN $USER_FLAG $USERNS_FLAG $PRIV_FLAG $SECOPT_ARGS \
             --ipc=host --network=host \
             --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
             $MOUNT_ARGS \
             $IMAGE sleep infinity
           sleep 3
+          echo "--- Test ---"
           podman exec $BROKEN id
-          podman exec $BROKEN ls -ln $MODEL_PROBE && echo "SUCCESS" || echo "STILL BROKEN"
+          podman exec $BROKEN ls -ln $MODEL_PROBE && echo "SUCCESS: model accessible" || echo "STILL BROKEN"
 
       - name: Final verification
         if: inputs.strategy != 'diagnose_only'
