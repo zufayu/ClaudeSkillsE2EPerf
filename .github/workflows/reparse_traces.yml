@@ -46,7 +46,7 @@ jobs:
           echo "=== In container /tmp ==="
           podman exec $CONTAINER bash -c "find /tmp/trace -name '*.json.gz' 2>/dev/null | head -10" || echo "None"
 
-      - name: Re-parse with run_parse_trace.py (multi-EP fix)
+      - name: Re-parse with decode_kernel_breakdown.py
         run: |
           RUN_TRACE=$(find $TRACE_DIR -name "*.json.gz" ! -name "*capture*" -type f 2>/dev/null | head -1)
           if [ -z "$RUN_TRACE" ]; then
@@ -64,7 +64,7 @@ jobs:
           if [ -n "${{ inputs.target_bs }}" ]; then
             BS_ARG="--target-bs ${{ inputs.target_bs }}"
           fi
-          podman exec $CONTAINER bash -c "cd $TRACE_DIR && python3 $REPO/scripts/run_parse_trace.py '$RUN_TRACE' --layer ${{ inputs.layer }} $BS_ARG 2>&1" | tee /tmp/reparse.log
+          podman exec $CONTAINER bash -c "cd $TRACE_DIR && python3 $REPO/scripts/decode_kernel_breakdown.py '$RUN_TRACE' $BS_ARG 2>&1" | tee /tmp/reparse.log
 
       - name: Show decode breakdown
         if: always()
@@ -121,13 +121,13 @@ jobs:
       - name: Find trace files
         run: ssh $NODE "ls -lh $REPO/$TRACE_DIR/*.json.gz 2>/dev/null || echo 'No traces'"
 
-      - name: Re-parse with run_parse_trace.py
+      - name: Re-parse with decode_kernel_breakdown.py
         run: |
           BS_ARG=""
           if [ -n "${{ inputs.target_bs }}" ]; then
             BS_ARG="--target-bs ${{ inputs.target_bs }}"
           fi
-          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO/$TRACE_DIR && python3 $REPO/scripts/run_parse_trace.py \$(ls $REPO/$TRACE_DIR/*TP-0*.trace.json.gz 2>/dev/null | head -1) --layer ${{ inputs.layer }} $BS_ARG 2>&1'"
+          ssh $NODE "docker exec $CONTAINER bash -c 'cd $REPO/$TRACE_DIR && python3 $REPO/scripts/decode_kernel_breakdown.py \$(ls $REPO/$TRACE_DIR/*TP-0*.trace.json.gz 2>/dev/null | head -1) $BS_ARG 2>&1'"
 
       - name: Show results
         if: always()

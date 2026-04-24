@@ -9,7 +9,7 @@ Inputs:
                B200_Median_us, B200_P95_us, B200_Std_us, B200_CV_pct,
                B200_N_samples, ..., plus PASS rows at end)
   --mi355x results/.../decode_breakdown_c<N>.csv
-              (from scripts/run_parse_trace.py merge_decode_xlsx; columns:
+              (from scripts/decode_kernel_breakdown.py; columns:
                cpu_module, gpu_kernel, avg_us, median_us, p95_us, std_us,
                n_steps, pct%)
 

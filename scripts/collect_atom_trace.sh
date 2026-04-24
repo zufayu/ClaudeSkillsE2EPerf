@@ -616,18 +616,14 @@ TRIM_PYEOF
         log "Trimmed trace: $(du -h "$TRIM_FILE" | cut -f1)"
     fi
 
-    # Run kernel breakdown analysis (selects steady-state bs for decode)
-    RUN_PARSE="$SCRIPT_DIR/run_parse_trace.py"
-    if [[ -f "$RUN_PARSE" ]]; then
-        CAPTURE_ARG=""
-        CAPTURE_FILE="$RESULT_DIR/capture_graph_${TAG}.json.gz"
-        if [[ -f "$CAPTURE_FILE" ]]; then
-            CAPTURE_ARG="--capture-trace $(basename "$CAPTURE_FILE")"
-            log "Using explicit capture trace: $(basename "$CAPTURE_FILE")"
-        fi
-        log "Running run_parse_trace.py --layer $LAYER (target-bs=auto)..."
-        (cd "$RESULT_DIR" && ATOM_TOOLS=/app/ATOM/tools python3 "$RUN_PARSE" "$(basename "$TRACE_FILE")" --layer "$LAYER" $CAPTURE_ARG 2>&1) || \
-            log "WARNING: run_parse_trace.py failed"
+    # Run kernel breakdown analysis (R8d wide-sample: 20 steady-state decodes,
+    # mla anchor for layer split). Replaces older parse_decode-based wrapper
+    # which silently returned on ROCm 7.2.2+ traces (no norm module annotations).
+    DKB="$SCRIPT_DIR/decode_kernel_breakdown.py"
+    if [[ -f "$DKB" ]]; then
+        log "Running decode_kernel_breakdown.py (R8d wide-sample, target-bs=auto)..."
+        (cd "$RESULT_DIR" && python3 "$DKB" "$(basename "$TRACE_FILE")" 2>&1) || \
+            log "WARNING: decode_kernel_breakdown.py failed"
     fi
 else
     log "ERROR: No trace file found in $TRACE_DIR/rank_0/"

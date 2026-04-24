@@ -45,7 +45,7 @@ jobs:
       - name: Run decode breakdown
         if: success()
         run: |
-          podman exec $CONTAINER bash -c "cd $REPO/$RESULT_DIR && TRACE=\$(ls trace_torch_*_c*_full.json.gz 2>/dev/null | head -1) && CAPTURE=\$(ls capture_graph_trace_*_c*_full.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE\" ]; then echo \"Trace: \$TRACE\"; python3 $REPO/scripts/run_parse_trace.py \$TRACE --target-bs 64 --layer 40 \$([ -n \"\$CAPTURE\" ] && echo \"--capture-trace \$CAPTURE\") && ls -lh *breakdown*.xlsx 2>/dev/null; else echo 'No trace file'; fi"
+          podman exec $CONTAINER bash -c "cd $REPO/$RESULT_DIR && TRACE=\$(ls trace_torch_*_c*_full.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE\" ]; then echo \"Trace: \$TRACE\"; python3 $REPO/scripts/decode_kernel_breakdown.py \$TRACE --target-bs 64 && ls -lh *breakdown*.xlsx 2>/dev/null; else echo 'No trace file'; fi"
       - name: Git commit results
         if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
         run: |
@@ -95,7 +95,7 @@ jobs:
       - name: Run decode breakdown (parse_trace)
         if: success()
         run: |
-          podman exec $CONTAINER bash -c "cd $REPO/$RESULT_DIR && TRACE=\$(ls trace_torch_*_c*_full.json.gz 2>/dev/null | head -1) && CAPTURE=\$(ls capture_graph_trace_*_c*_full.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE\" ]; then echo \"Trace: \$TRACE\"; echo \"Capture: \$CAPTURE\"; python3 $REPO/scripts/run_parse_trace.py \$TRACE --target-bs 64 --layer 40 \$([ -n \"\$CAPTURE\" ] && echo \"--capture-trace \$CAPTURE\") && echo 'Breakdown files:' && ls -lh *breakdown*.xlsx 2>/dev/null; else echo 'No trace file found'; fi"
+          podman exec $CONTAINER bash -c "cd $REPO/$RESULT_DIR && TRACE=\$(ls trace_torch_*_c*_full.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE\" ]; then echo \"Trace: \$TRACE\"; python3 $REPO/scripts/decode_kernel_breakdown.py \$TRACE --target-bs 64 && ls -lh *breakdown*.xlsx 2>/dev/null; else echo 'No trace file'; fi"
 
       - name: Git commit and push results (exclude large .json.gz traces)
         if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')

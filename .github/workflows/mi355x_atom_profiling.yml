@@ -72,7 +72,7 @@ jobs:
         continue-on-error: true
         run: |
           source scripts/ci_lib.sh && ci_load_platform mi355x
-          ci_exec "cd $REPO/$RESULT_DIR && TRACE=\$(ls trace_torch_*_c*_full.json.gz 2>/dev/null | head -1) && CAPTURE=\$(ls capture_graph_trace_*_c*_full.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE\" ]; then python3 $REPO/scripts/run_parse_trace.py \$TRACE --target-bs ${{ inputs.concurrency }} --layer 40 \$([ -n \"\$CAPTURE\" ] && echo \"--capture-trace \$CAPTURE\"); else echo 'No trace file'; fi"
+          ci_exec "cd $REPO/$RESULT_DIR && TRACE=\$(ls trace_torch_*_c*_full.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE\" ]; then python3 $REPO/scripts/decode_kernel_breakdown.py \$TRACE --target-bs ${{ inputs.concurrency }}; else echo 'No trace file'; fi"
 
       - name: Show results
         if: always()
