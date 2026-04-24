@@ -1,0 +1,54 @@
+name: "MI355X Test multiple atom-dev nightlies (4-20, 4-19, 4-18)"
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 60
+    env:
+      DEV: zufa_atom_dev_test
+    steps:
+      - name: Test 4-20 / 4-19 / 4-18 in sequence
+        shell: bash {0}
+        run: |
+          for TAG in nightly_202604201537 nightly_202604191502 nightly_202604181501; do
+            IMAGE="docker.io/rocm/atom-dev:$TAG"
+            echo "============================================================"
+            echo "=== Testing $IMAGE ==="
+            echo "============================================================"
+
+            echo "--- pull (may take 3-5 min) ---"
+            podman pull $IMAGE 2>&1 | tail -3
+
+            echo "--- recreate container ---"
+            podman rm -f $DEV 2>&1 || true
+            podman run -d --name $DEV \
+              --security-opt seccomp=unconfined \
+              --ipc=host --network=host \
+              --group-add keep-groups \
+              -v /shared:/shared \
+              $IMAGE sleep infinity
+            sleep 3
+
+            echo "--- ATOM commit ---"
+            podman exec $DEV bash -c 'cd /app/ATOM 2>/dev/null && git rev-parse HEAD && git log -1 --pretty=oneline' 2>&1 || echo "ATOM not present"
+
+            echo "--- aiter commit ---"
+            podman exec $DEV bash -c 'cd /app/aiter-test 2>/dev/null && git rev-parse HEAD && git log -1 --pretty=oneline' 2>&1 || echo "aiter not present"
+
+            echo "--- QuantType import test ---"
+            podman exec $DEV python3 -c "from aiter import QuantType; print('  QuantType OK')" 2>&1 | tail -3
+
+            echo "--- ATOM import test ---"
+            podman exec $DEV python3 -c "import atom; print('  ATOM import OK')" 2>&1 | tail -3
+
+            echo "--- moe.py mutates_args ---"
+            podman exec $DEV grep -n 'mutates_args.*hidden_states' /app/ATOM/atom/model_ops/moe.py 2>&1 | head -3 || echo "  not found"
+
+            echo
+          done
+
+          echo "============================================================"
+          echo "=== Cleanup ==="
+          echo "============================================================"
+          podman rm -f $DEV 2>&1 || true
