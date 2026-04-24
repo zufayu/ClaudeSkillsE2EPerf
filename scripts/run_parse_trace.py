@@ -7,23 +7,34 @@ of a single CompiledFxGraph block inside capture_graph. With EP>1, torch.compile
 splits the model into multiple CompiledFxGraph blocks (one per few layers), and
 parse_trace only sees modules from the first block → incomplete breakdown.
 
-This wrapper fixes both issues:
-  1. Target-BS: selects a steady-state decode event instead of the first one
+This wrapper fixes three issues:
+  1. Target-BS: selects steady-state decode events instead of the first one
   2. Multi-EP: flattens the capture_graph hierarchy so all modules from all
      CompiledFxGraph blocks appear as direct children of capture_graph
+  3. Wide-sample aggregation (R8d): aggregates over N steady-state decodes
+     (default --skip-warmup 5 --max-steps 20 → ~600 samples/op) instead of
+     picking a single decode. Output xlsx adds median_us / p95_us / n_steps
+     columns. Methodology mirrors B300/B200 trace_layer_detail.py for
+     apples-to-apples cross-platform comparison. Pass --max-steps 1 with
+     --skip-ratio for back-compat single-decode behavior.
 
 Usage:
     python3 scripts/run_parse_trace.py <trace.json.gz> [--layer N] [--target-bs N]
 
-    # Auto-select most frequent bs (steady state):
-    python3 scripts/run_parse_trace.py trace.json.gz --layer 40
-
-    # Explicit bs=64:
+    # R8d default: skip 5 warmup decodes, aggregate next 20 (~600 samples/op):
     python3 scripts/run_parse_trace.py trace.json.gz --layer 40 --target-bs 64
 
+    # Back-compat single-decode (median position):
+    python3 scripts/run_parse_trace.py trace.json.gz --target-bs 64 \\
+        --max-steps 1 --skip-ratio 0.5
+
 Output:
-    decode_breakdown_c64.xlsx   (kernel breakdown at target bs, suffix auto-detected from filename)
+    decode_breakdown_c64.xlsx   (kernel breakdown at target bs; columns:
+                                 cpu_module, gpu_kernel, avg_us, median_us,
+                                 p95_us, std_us, n_steps, pct%)
+    decode_breakdown_c64.csv    (sister CSV in same schema for diff scripts)
     prefill_breakdown_c64.xlsx  (prefill breakdown, unchanged from upstream)
+    decode_per_step_c64/        (per-step intermediate xlsx, when N > 1)
 
 Requires ATOM's tools/ on sys.path. Set ATOM_TOOLS env var if not at default.
 """
