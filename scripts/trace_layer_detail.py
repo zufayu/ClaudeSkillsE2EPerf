@@ -540,10 +540,15 @@ def main():
         print(f"    {'Dual-stream':<25} {avg_dual:>6.1f}μs")
         print(f"    {'TOTAL':<25} {avg_pdl + avg_dual:>6.1f}μs  (ksum-wall: {avg_overlap:.1f}μs)")
 
-        # Write CSV output — per-operator decode breakdown (paired with MI355X's decode_breakdown.xlsx)
+        # Write CSV output — per-operator decode breakdown (paired with MI355X's decode_breakdown.xlsx).
+        # Filename mirrors MI355X's `decode_breakdown_c<N>.xlsx` — concurrency suffix
+        # extracted from input trace filename (pattern: ..._c<N>_step...).
         if args.output_dir:
             os.makedirs(args.output_dir, exist_ok=True)
-            csv_path = os.path.join(args.output_dir, "decode_breakdown.csv")
+            import re
+            m = re.search(r'_c(\d+)_', os.path.basename(args.filepath))
+            suffix = f"_c{m.group(1)}" if m else ""
+            csv_path = os.path.join(args.output_dir, f"decode_breakdown{suffix}.csv")
 
             # Pass-level grouping: map each operator to a pass
             PASS_MAP = {

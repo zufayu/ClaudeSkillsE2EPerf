@@ -31,7 +31,7 @@ jobs:
 
       - name: Show CSV
         if: always()
-        run: ssh $NODE "cat $REPO/$RESULT_DIR/decode_breakdown.csv 2>/dev/null || echo 'No CSV'"
+        run: ssh $NODE "cat $REPO/$RESULT_DIR/decode_breakdown_c4.csv 2>/dev/null || echo 'No CSV'"
 
       - name: Git commit and push
         if: always()
