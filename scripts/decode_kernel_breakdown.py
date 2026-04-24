@@ -509,6 +509,38 @@ def main():
     wb.save(args.output)
     print(f"Done. {len(rep_layer)} kernel rows, {len(groups)} module groups.")
 
+    # Companion CSV with cross-platform comparator schema (compare_b300_mi355x.py).
+    # Columns: cpu_module, gpu_kernel, avg_us, median_us, p95_us, std_us, n_steps, pct%
+    import csv as _csv
+    from statistics import pstdev
+    csv_path = (args.output[:-5] + ".csv") if args.output.endswith(".xlsx") else args.output + ".csv"
+
+    # Re-derive per-position std (we have avg/med/p95 above; std needs raw durs)
+    pos_durs = [[] for _ in range(max_pos)]
+    for cl in all_classified:
+        for pos, (_mod, _kn, d) in enumerate(cl):
+            if pos < max_pos:
+                pos_durs[pos].append(d)
+    std_durs = [pstdev(d) if len(d) > 1 else 0.0 for d in pos_durs]
+
+    with open(csv_path, "w", newline="") as f:
+        w = _csv.writer(f)
+        w.writerow(["cpu_module", "gpu_kernel", "avg_us", "median_us", "p95_us",
+                    "std_us", "n_steps", "pct%"])
+        for i, (mod, kname, d) in enumerate(rep_layer):
+            avg = avg_durs[i] if i < len(avg_durs) else 0
+            med = med_durs[i] if i < len(med_durs) else 0
+            p95 = p95_durs[i] if i < len(p95_durs) else 0
+            std = std_durs[i] if i < len(std_durs) else 0
+            pct = avg / total_avg * 100 if total_avg > 0 else 0
+            # n_steps = decode-iterations consumed (each contributing one sample
+            # per position). Cross-platform comparator multiplies by ~30 layers
+            # to compare against B300's N_samples (= step × layer).
+            w.writerow([mod, kname, f"{avg:.3f}", f"{med:.3f}", f"{p95:.3f}",
+                        f"{std:.3f}", n_used, f"{pct:.2f}"])
+        w.writerow(["TOTAL", "", f"{total_avg:.3f}", "", "", "", n_used, "100.00"])
+    print(f"Companion CSV: {csv_path}")
+
 
 if __name__ == "__main__":
     main()
