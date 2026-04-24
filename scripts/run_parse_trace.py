@@ -53,12 +53,17 @@ except ImportError:
     sys.exit(1)
 
 
-def select_decode_bs(events, target_bs=None, skip_ratio=0.5):
-    """Find target bs and a steady-state decode event at that bs.
+def select_decodes_bs(events, target_bs=None, skip_warmup=5, max_steps=20,
+                       skip_ratio=None):
+    """Find target bs and a list of steady-state decode events at that bs.
 
-    Picks the decode event at skip_ratio position (by timestamp) among all
-    events with the target batch size, so the system is well into steady
-    state — graph replay is warm, caches are hot, batch is full.
+    R8d wide-sample default: skip first `skip_warmup` decodes (cold caches /
+    JIT compile), then take next `max_steps` for ~600 (decode×layer) samples
+    per kernel — matches B300/B200 trace_layer_detail.py convention so cross-
+    platform comparison is apples-to-apples. Set max_steps=1 with skip_ratio
+    to reproduce the old single-decode picker behavior for back-compat.
+
+    Returns (list_of_decodes, target_bs).
     """
     decodes = sorted(
         [
@@ -70,7 +75,7 @@ def select_decode_bs(events, target_bs=None, skip_ratio=0.5):
         key=lambda x: x["ts"],
     )
     if not decodes:
-        return None, None
+        return [], None
 
     bs_counts = {}
     decodes_by_bs = {}
@@ -89,20 +94,139 @@ def select_decode_bs(events, target_bs=None, skip_ratio=0.5):
     else:
         print(f"--target-bs={target_bs} ({bs_counts.get(target_bs, 0)} events)")
 
-    candidates = decodes_by_bs.get(target_bs)
+    candidates = decodes_by_bs.get(target_bs, [])
     if not candidates:
-        return None, target_bs
+        return [], target_bs
 
-    # Pick event at skip_ratio position for steady state
-    idx = int(len(candidates) * skip_ratio)
-    idx = min(idx, len(candidates) - 1)
-    selected = candidates[idx]
-    dur_ms = selected.get("dur", 0) / 1000
-    print(
-        f"Picked decode #{idx}/{len(candidates)} "
-        f"(skip_ratio={skip_ratio}, dur={dur_ms:.2f}ms)"
-    )
+    # Back-compat single-decode mode: explicit skip_ratio + max_steps=1
+    if skip_ratio is not None and max_steps == 1:
+        idx = min(int(len(candidates) * skip_ratio), len(candidates) - 1)
+        selected = [candidates[idx]]
+        dur_ms = selected[0].get("dur", 0) / 1000
+        print(f"  [single-decode mode] picked #{idx}/{len(candidates)} "
+              f"(skip_ratio={skip_ratio}, dur={dur_ms:.2f}ms)")
+        return selected, target_bs
+
+    # Default R8d wide-sample mode
+    if len(candidates) <= skip_warmup:
+        print(f"  WARN: only {len(candidates)} decodes, can't skip {skip_warmup} warmup; using all")
+        selected = candidates
+    else:
+        end = skip_warmup + max_steps if max_steps > 0 else len(candidates)
+        selected = candidates[skip_warmup:end]
+    avg_dur_ms = sum(d.get("dur", 0) for d in selected) / len(selected) / 1000
+    print(f"  Selected {len(selected)} steady-state decodes "
+          f"(skipped first {skip_warmup} warmup, max {max_steps}); "
+          f"avg dur={avg_dur_ms:.2f}ms")
     return selected, target_bs
+
+
+# Back-compat shim: old single-decode picker (kept for any external callers).
+def select_decode_bs(events, target_bs=None, skip_ratio=0.5):
+    """DEPRECATED: returns one decode. Use select_decodes_bs going forward."""
+    decodes, bs = select_decodes_bs(events, target_bs,
+                                     skip_warmup=0, max_steps=1,
+                                     skip_ratio=skip_ratio)
+    return (decodes[0] if decodes else None), bs
+
+
+def merge_decode_xlsx(per_step_paths, output_xlsx):
+    """Aggregate N per-step decode xlsx files into a single wide-sample xlsx.
+
+    Reads each step's "decode" sheet, groups by (cpu_module, gpu_kernel),
+    and emits mean / median / p95 / std / N per kernel — same schema convention
+    as B300 trace_layer_detail.py output (apples-to-apples cross-platform).
+
+    Output sheet "decode":
+      cpu_module | gpu_kernel | avg_us | median_us | p95_us | std_us | n_steps | pct%
+    """
+    from openpyxl import load_workbook, Workbook
+    from collections import defaultdict
+    from statistics import pstdev
+
+    if not per_step_paths:
+        print("merge_decode_xlsx: no input files"); return
+
+    pooled = defaultdict(list)   # (cpu_module, gpu_kernel) -> [duration_us, ...]
+    order = []                   # preserve first-occurrence order
+    seen = set()
+    for p in per_step_paths:
+        if not os.path.exists(p):
+            print(f"  WARN: missing {p}"); continue
+        try:
+            wb = load_workbook(p, read_only=True, data_only=True)
+        except Exception as e:
+            print(f"  WARN: failed to load {p}: {e}"); continue
+        ws = wb["decode"] if "decode" in wb.sheetnames else wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            wb.close(); continue
+        # Skip header (row 0); skip TOTAL row
+        for r in rows[1:]:
+            if not r or r[0] in (None, "TOTAL"):
+                continue
+            cpu_mod, gpu_kernel, dur = r[0], r[1], r[2]
+            if dur is None or gpu_kernel is None:
+                continue
+            try:
+                dur = float(dur)
+            except (TypeError, ValueError):
+                continue
+            key = (str(cpu_mod or ""), str(gpu_kernel))
+            pooled[key].append(dur)
+            if key not in seen:
+                seen.add(key); order.append(key)
+        wb.close()
+
+    if not pooled:
+        print("merge_decode_xlsx: no kernel data extracted"); return
+
+    def percentile(sorted_vals, p):
+        if not sorted_vals: return 0.0
+        k = (len(sorted_vals) - 1) * p / 100
+        lo = int(k); hi = min(lo + 1, len(sorted_vals) - 1)
+        return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (k - lo)
+
+    means = {k: sum(v)/len(v) for k, v in pooled.items()}
+    total_avg = sum(means.values())
+
+    out_wb = Workbook(); ws = out_wb.active; ws.title = "decode"
+    ws.append(["cpu_module", "gpu_kernel", "avg_us", "median_us", "p95_us",
+               "std_us", "n_steps", "pct%"])
+    for key in order:
+        durs = pooled[key]
+        durs_sorted = sorted(durs)
+        avg = means[key]
+        med = percentile(durs_sorted, 50)
+        p95 = percentile(durs_sorted, 95)
+        std = pstdev(durs) if len(durs) > 1 else 0.0
+        pct = 100 * avg / total_avg if total_avg > 0 else 0
+        ws.append([key[0], key[1],
+                   round(avg, 3), round(med, 3), round(p95, 3),
+                   round(std, 3), len(durs), round(pct, 2)])
+    ws.append(["TOTAL", "", round(total_avg, 3), "", "", "", len(per_step_paths), 100.0])
+    out_wb.save(output_xlsx)
+    print(f"  Aggregated {len(pooled)} kernels across {len(per_step_paths)} steps → {output_xlsx}")
+
+    # Sister CSV for quick inspection / cross-platform diff scripts
+    csv_path = output_xlsx[:-5] + ".csv" if output_xlsx.endswith(".xlsx") else output_xlsx + ".csv"
+    import csv as _csv
+    with open(csv_path, "w", newline="") as f:
+        w = _csv.writer(f)
+        w.writerow(["cpu_module", "gpu_kernel", "avg_us", "median_us", "p95_us",
+                    "std_us", "n_steps", "pct%"])
+        for key in order:
+            durs = pooled[key]
+            durs_sorted = sorted(durs)
+            avg = means[key]
+            med = percentile(durs_sorted, 50)
+            p95 = percentile(durs_sorted, 95)
+            std = pstdev(durs) if len(durs) > 1 else 0.0
+            pct = 100 * avg / total_avg if total_avg > 0 else 0
+            w.writerow([key[0], key[1],
+                        f"{avg:.3f}", f"{med:.3f}", f"{p95:.3f}",
+                        f"{std:.3f}", len(durs), f"{pct:.2f}"])
+    print(f"  Companion CSV: {csv_path}")
 
 
 def detect_multi_compiled_graph(capture_events, cg_event):
@@ -201,8 +325,20 @@ def main():
         help="Decode batch size (default: most frequent)",
     )
     parser.add_argument(
-        "--skip-ratio", type=float, default=0.5,
-        help="Position within target-bs decodes to pick (0.0=first, 0.5=median, 0.9=late). Default: 0.5",
+        "--skip-warmup", type=int, default=5,
+        help="Drop first N decode steps (cold caches / JIT). Matches B300/B200 "
+             "trace_layer_detail.py convention. Default 5.",
+    )
+    parser.add_argument(
+        "--max-steps", type=int, default=20,
+        help="Aggregate over N steady-state decodes (default 20 → ~600 samples "
+             "per kernel). 0 = all available. Set 1 + --skip-ratio for old "
+             "single-decode behavior.",
+    )
+    parser.add_argument(
+        "--skip-ratio", type=float, default=None,
+        help="DEPRECATED: position-based picker (0.0=first, 0.5=median). "
+             "Only honored when --max-steps=1. Otherwise --skip-warmup wins.",
     )
     parser.add_argument(
         "--capture-trace", type=str, default=None,

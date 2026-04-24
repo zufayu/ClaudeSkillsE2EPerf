@@ -23,12 +23,14 @@ jobs:
         run: |
           podman rm -f $DEV 2>&1 || true
           # Match zufa_atom flags + add GPU devices (numeric GIDs to avoid /etc/group lookup issue)
+          # COPY zufa_atom flags VERBATIM (per podman inspect):
+          # security-opt seccomp=unconfined, ipc=host, network=slirp4netns,
+          # group-add keep-groups, /shared mount, NO devices, NO extra group-add
           podman run -d --name $DEV \
             --security-opt seccomp=unconfined \
-            --ipc=host --network=host \
+            --ipc=host \
+            --network=slirp4netns \
             --group-add keep-groups \
-            --group-add 44 --group-add 109 \
-            --device /dev/kfd --device /dev/dri \
             -v /shared:/shared \
             $IMAGE sleep infinity
           sleep 3
