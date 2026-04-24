@@ -1,0 +1,126 @@
+name: "MI355X Fix zufa_atom_ex model path permissions"
+on:
+  workflow_dispatch:
+    inputs:
+      strategy:
+        description: "Fix strategy to apply"
+        required: true
+        default: "diagnose_only"
+        type: choice
+        options:
+          - diagnose_only
+          - recreate_userns_keepid
+          - recreate_match_uid
+          - recreate_clone_zufa_atom_config
+jobs:
+  fix:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 30
+    env:
+      WORKING: zufa_atom
+      BROKEN: zufa_atom_ex
+      MODEL_PROBE: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4/config.json
+    steps:
+      - name: Diagnose - inspect both containers
+        run: |
+          echo "=== HOST: who am I? ==="
+          id
+          echo "=== HOST: model file stat ==="
+          ls -ln /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4/config.json 2>&1 || echo "host cannot see either"
+          stat -c '%U:%G %a %n' /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4/config.json 2>&1 || true
+          echo
+          echo "=== zufa_atom (WORKING) container info ==="
+          podman inspect $WORKING --format '{{.Config.User}} | UserNS: {{.HostConfig.UsernsMode}} | SecurityOpt: {{.HostConfig.SecurityOpt}} | Privileged: {{.HostConfig.Privileged}}' 2>&1 || echo "inspect failed"
+          echo "Mounts:"
+          podman inspect $WORKING --format '{{range .Mounts}}  {{.Source}} -> {{.Destination}} (mode={{.Mode}}, options={{.Options}}){{println}}{{end}}' 2>&1 | head -20
+          echo "Inside zufa_atom: who am I?"
+          podman exec $WORKING id 2>&1 || true
+          echo "Inside zufa_atom: can read model?"
+          podman exec $WORKING ls -ln $MODEL_PROBE 2>&1 || true
+          echo
+          echo "=== zufa_atom_ex (BROKEN) container info ==="
+          if podman inspect $BROKEN --format '{{.Id}}' >/dev/null 2>&1; then
+            podman inspect $BROKEN --format '{{.Config.User}} | UserNS: {{.HostConfig.UsernsMode}} | SecurityOpt: {{.HostConfig.SecurityOpt}} | Privileged: {{.HostConfig.Privileged}}' 2>&1
+            echo "Mounts:"
+            podman inspect $BROKEN --format '{{range .Mounts}}  {{.Source}} -> {{.Destination}} (mode={{.Mode}}, options={{.Options}}){{println}}{{end}}' 2>&1 | head -20
+            echo "Inside zufa_atom_ex: who am I?"
+            podman exec $BROKEN id 2>&1 || true
+            echo "Inside zufa_atom_ex: model access?"
+            podman exec $BROKEN ls -ln $MODEL_PROBE 2>&1 || true
+            podman exec $BROKEN cat $MODEL_PROBE 2>&1 | head -3 || true
+          else
+            echo "$BROKEN does not exist (will be created by fix strategy)"
+          fi
+
+      - name: Apply fix - recreate_userns_keepid
+        if: inputs.strategy == 'recreate_userns_keepid'
+        run: |
+          IMAGE=$(podman inspect $WORKING --format '{{.ImageName}}' 2>/dev/null || echo "docker.io/rocm/atom-dev:latest")
+          echo "Using image: $IMAGE"
+          podman rm -f $BROKEN 2>&1 || true
+          podman run -d --name $BROKEN --userns=keep-id --ipc=host --network=host \
+            --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
+            -v /shared:/shared \
+            $IMAGE sleep infinity
+          sleep 3
+          echo "--- Test ---"
+          podman exec $BROKEN id
+          podman exec $BROKEN ls -ln $MODEL_PROBE && echo "SUCCESS: model accessible" || echo "STILL BROKEN"
+
+      - name: Apply fix - recreate_match_uid
+        if: inputs.strategy == 'recreate_match_uid'
+        run: |
+          HOST_UID=$(id -u)
+          HOST_GID=$(id -g)
+          IMAGE=$(podman inspect $WORKING --format '{{.ImageName}}' 2>/dev/null || echo "docker.io/rocm/atom-dev:latest")
+          echo "Recreating $BROKEN as UID:GID=$HOST_UID:$HOST_GID"
+          podman rm -f $BROKEN 2>&1 || true
+          podman run -d --name $BROKEN --user $HOST_UID:$HOST_GID --ipc=host --network=host \
+            --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
+            -v /shared:/shared \
+            $IMAGE sleep infinity
+          sleep 3
+          podman exec $BROKEN id
+          podman exec $BROKEN ls -ln $MODEL_PROBE && echo "SUCCESS" || echo "STILL BROKEN"
+
+      - name: Apply fix - clone zufa_atom config exactly
+        if: inputs.strategy == 'recreate_clone_zufa_atom_config'
+        run: |
+          IMAGE=$(podman inspect $WORKING --format '{{.ImageName}}')
+          USER_SPEC=$(podman inspect $WORKING --format '{{.Config.User}}')
+          USERNS=$(podman inspect $WORKING --format '{{.HostConfig.UsernsMode}}')
+          PRIV=$(podman inspect $WORKING --format '{{.HostConfig.Privileged}}')
+          echo "Cloning: image=$IMAGE user=$USER_SPEC userns=$USERNS priv=$PRIV"
+
+          # Build mount args from working container
+          MOUNT_ARGS=$(podman inspect $WORKING --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}} {{end}}')
+          echo "Mounts: $MOUNT_ARGS"
+
+          podman rm -f $BROKEN 2>&1 || true
+          USER_FLAG=""; [ -n "$USER_SPEC" ] && USER_FLAG="--user $USER_SPEC"
+          USERNS_FLAG=""; [ "$USERNS" != "" ] && [ "$USERNS" != "host" ] && USERNS_FLAG="--userns=$USERNS"
+          PRIV_FLAG=""; [ "$PRIV" = "true" ] && PRIV_FLAG="--privileged"
+
+          podman run -d --name $BROKEN $USER_FLAG $USERNS_FLAG $PRIV_FLAG \
+            --ipc=host --network=host \
+            --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
+            $MOUNT_ARGS \
+            $IMAGE sleep infinity
+          sleep 3
+          podman exec $BROKEN id
+          podman exec $BROKEN ls -ln $MODEL_PROBE && echo "SUCCESS" || echo "STILL BROKEN"
+
+      - name: Final verification
+        if: inputs.strategy != 'diagnose_only'
+        run: |
+          echo "=== Final state ==="
+          podman exec $BROKEN id
+          echo
+          echo "Model config readable?"
+          podman exec $BROKEN python3 -c "import json; print(list(json.load(open('$MODEL_PROBE')).keys())[:5])" 2>&1 || echo "FAIL"
+          echo
+          echo "GPU visible?"
+          podman exec $BROKEN rocm-smi --showid 2>&1 | head -10 || echo "GPU not visible"
+          echo
+          echo "ATOM source present?"
+          podman exec $BROKEN ls -d /app/ATOM 2>&1 || echo "/app/ATOM missing — needs git clone"
