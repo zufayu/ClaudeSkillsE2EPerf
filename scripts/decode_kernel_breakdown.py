@@ -125,57 +125,143 @@ def extract_kernels_in_window(evts, ts_start, ts_end):
     )
 
 
-def split_layers(kernels):
-    """Split kernels into layers.
+# ----------------------------------------------------------------------------
+# Robust per-layer anchor detection (R8d — Task #11, structural / name-agnostic)
+# ----------------------------------------------------------------------------
+# Attention kernel names differ across models/backends and sometimes vary
+# *within* a model (dynamic shapes, FlashInfer autotune, ATOM jit-fused names).
+# Hardcoding name patterns breaks. Instead use a structural property:
+# every transformer layer fires the SAME named GPU kernel exactly once per
+# decode iteration, so the layer-anchor is the kernel that:
+#   (a) fires `layer_count` times in one decode window
+#   (b) fires at regular intervals (low CV of inter-fire gaps)
+# `layer_count` itself is auto-discovered (= the count of the chosen anchor).
+#
+# Reference layer counts for common open models (sanity check the printed
+# anchor count against these — wildly off means the heuristic mispicked):
+#   DeepSeek-R1 / V3 / V2.5  61    Llama 3.x 70B          80
+#   DeepSeek-V2              60    Llama 3.1 405B        126
+#   Llama 2/3 7B/8B          32    Llama 2 13B / Phi-3 14B  40
+#   Mistral 7B / Mixtral 8x7B 32   Mixtral 8x22B           56
+#   Qwen 2.5 7B              28    Qwen 2.5 14B            48
+#   Qwen 2.5 32B             64    Qwen 2.5/3 72B/32B      80/64
+#   Qwen 3 235B              94    Gemma 2 9B / 27B       42 / 46
+# If the printed count looks wrong, override with --attn-kernel <regex> or
+# tighten --anchor-min/--anchor-max bounds.
 
-    Layer structure (old trace, rocm711):
-      input_layernorm(RS+norm) → qkv_a → q/k_norm → q_b → k_up → rope →
-      mla → mla_reduce → v_up → o_proj → post_attn(RS+norm) → router → MoE
 
-    Layer structure (new trace, rocm722, norms fused):
-      RS+norm → per_token_quant → qkv_a → fused_qk_rmsnorm_quant → q_b → k_up →
-      rope → mla → mla_reduce → v_up → o_proj → quant → RS+norm → router → MoE
+def _stdev(xs):
+    if len(xs) < 2:
+        return 0.0
+    m = sum(xs) / len(xs)
+    return (sum((x - m) ** 2 for x in xs) / len(xs)) ** 0.5
 
-    Use mla_a8w8 (MLA attention, exactly 1 per layer) as anchor.
-    Layer boundary = midpoint between consecutive mla_a8w8 occurrences,
-    which falls in the MoE → next pre-attn transition.
+
+def find_layer_anchor(kernels, anchor_min=20, anchor_max=150,
+                      max_cv=0.5, override_regex=None):
+    """Detect the per-layer anchor kernel structurally (no name assumptions).
+
+    Returns (anchor_name, [positions]). Raises ValueError if nothing fits.
+
+    Algorithm:
+      1. Group kernel positions by exact name.
+      2. Discard names whose count is outside [anchor_min, anchor_max] (typical
+         model layer count is 28-126; 20-150 range covers everything).
+      3. For each remaining name, compute CV of inter-fire intervals.
+      4. Discard names with CV > max_cv (irregular spacing → not a per-layer
+         anchor; e.g. element-wise ops fire on demand, not periodically).
+      5. Pick the name with lowest interval CV (most regular). Tiebreak: count
+         closest to median of plausible model layer counts (~50).
+
+    --attn-kernel REGEX bypasses everything and uses regex matches as anchor.
     """
-    # Find all MLA attention positions
-    mla_positions = [i for i, k in enumerate(kernels)
-                     if "mla_a8w8" in k.get("name", "")]
+    if override_regex:
+        positions = [i for i, k in enumerate(kernels)
+                     if re.search(override_regex, k.get("name", ""), re.IGNORECASE)]
+        if not positions:
+            raise ValueError(
+                f"--attn-kernel regex {override_regex!r} matched 0 kernels in decode")
+        return override_regex, positions
 
-    if len(mla_positions) < 2:
+    # Group by exact name (note: dynamic-shape kernels with templated names
+    # are still grouped — they share the same emitted name string)
+    name_positions = {}
+    for i, k in enumerate(kernels):
+        name = k.get("name", "")
+        if not name:
+            continue
+        name_positions.setdefault(name, []).append(i)
+
+    # Filter to plausible layer-count range
+    candidates = []
+    for name, positions in name_positions.items():
+        n = len(positions)
+        if not (anchor_min <= n <= anchor_max):
+            continue
+        intervals = [positions[i+1] - positions[i] for i in range(len(positions)-1)]
+        if not intervals:
+            continue
+        mean_int = sum(intervals) / len(intervals)
+        if mean_int <= 0:
+            continue
+        cv = _stdev(intervals) / mean_int
+        if cv > max_cv:
+            continue
+        candidates.append((cv, abs(n - 50), name, positions))
+
+    if not candidates:
+        # Build a diagnostic showing top-5 most-frequent kernels in plausible range
+        debug = sorted(
+            ((len(p), name) for name, p in name_positions.items()
+             if anchor_min <= len(p) <= anchor_max),
+            reverse=True,
+        )[:5]
+        raise ValueError(
+            f"No structural per-layer anchor found (count in [{anchor_min},{anchor_max}], "
+            f"interval CV ≤ {max_cv}). Top frequency candidates (count, name): {debug}. "
+            f"Override with --attn-kernel <regex> if you know the right kernel.")
+
+    # Lowest CV first, then count closest to ~50 (heuristic median model layer count)
+    candidates.sort()
+    cv, _, best_name, best_pos = candidates[0]
+    return best_name, best_pos
+
+
+def split_layers(kernels, anchor_positions=None, override_regex=None):
+    """Split kernels into per-layer windows using anchor-to-anchor cuts.
+
+    Each layer = kernels[anchor[i] : anchor[i+1]]. This is name-agnostic and
+    works for any model (no reliance on reduce_scatter / specific kernel names
+    that vary across ATOM/sglang/vLLM/TRT-LLM and across model architectures).
+
+    Note: position 0 within each layer is the anchor kernel itself (e.g. attn).
+    Pre-attn kernels (norm/quant/qkv_a) end up at the END of the PREVIOUS
+    layer's window. The phase shift is constant across all decodes, so per-
+    position aggregation is consistent (just remember the indexing convention).
+
+    Args:
+        kernels: GPU kernels in one decode window, sorted by ts.
+        anchor_positions: pre-computed list (from find_layer_anchor). If None,
+                          auto-detect now.
+        override_regex: explicit anchor pattern when auto-detecting.
+
+    Returns: list of layer-kernel-lists (length = len(anchor_positions)).
+    """
+    if anchor_positions is None:
+        try:
+            _, anchor_positions = find_layer_anchor(kernels, override_regex=override_regex)
+        except ValueError:
+            return [kernels]
+
+    if len(anchor_positions) < 2:
         return [kernels]
 
-    # For each pair of consecutive MLA positions, find the layer boundary between them.
-    # The boundary is the reduce_scatter that comes AFTER the MoE phase.
-    # Strategy: search backwards from each MLA to find the nearest pre-attn RS.
-    # Pre-attn RS is the one followed by quant/gemm_xdl (not router/topk).
-    boundaries = []
-    for mla_pos in mla_positions[1:]:
-        # Search backwards from MLA for the nearest reduce_scatter
-        for j in range(mla_pos - 1, -1, -1):
-            if "reduce_scatter_cross_device" in kernels[j].get("name", ""):
-                # This RS is pre-attn if it's followed by quant or gemm (not router)
-                # Look 2-3 ahead
-                for look in range(j+1, min(j+4, len(kernels))):
-                    n = kernels[look].get("name", "")
-                    if "dynamic_per_token_scaled_quant" in n or "gemm_xdl" in n:
-                        boundaries.append(j)
-                        break
-                    if "bf16gemm" in n or "grouped_topk" in n:
-                        break  # This is post-attn RS, keep searching
-                break
-
-    # Split at boundaries
     layers = []
-    prev = 0
-    for b in sorted(set(boundaries)):
-        if b > prev:
-            layers.append(kernels[prev:b])
-        prev = b
-    if prev < len(kernels):
-        layers.append(kernels[prev:])
+    for i in range(len(anchor_positions) - 1):
+        layers.append(kernels[anchor_positions[i]:anchor_positions[i+1]])
+    # Tail after last anchor — usually a partial layer (just attn through end of decode);
+    # keep it so callers can see it but they typically drop incomplete layers.
+    layers.append(kernels[anchor_positions[-1]:])
     return layers
 
 
@@ -203,7 +289,26 @@ def main():
     parser.add_argument("--skip-ratio", type=float, default=None,
                         help="DEPRECATED. Old single-decode picker. Ignored when "
                              "--skip-warmup / --max-steps are used.")
-    parser.add_argument("--layers", type=str, default="10-40")
+    parser.add_argument("--layers", type=str, default="10-40",
+                        help="Layer index range to keep, lo-hi (exclusive upper). "
+                             "Default 10-40 = 30 layers (steady middle, common for "
+                             "60+ layer models like DSR1/Llama70B). For smaller models "
+                             "(Llama 7B 32 layers, Mistral 7B 32 layers), use e.g. 5-25.")
+    parser.add_argument("--anchor-min", type=int, default=20,
+                        help="Min plausible per-decode layer count (for structural "
+                             "anchor detection). Default 20 covers smallest open models.")
+    parser.add_argument("--anchor-max", type=int, default=150,
+                        help="Max plausible per-decode layer count. Default 150 covers "
+                             "Llama-405B (126).")
+    parser.add_argument("--attn-kernel", type=str, default=None,
+                        help="Explicit anchor-kernel regex (skip auto-detect). Use when "
+                             "auto-detection picks a wrong kernel — e.g. force "
+                             "'mla_a8w8' on ATOM int8 MLA traces.")
+    parser.add_argument("--enforce-min-samples", type=int, default=0,
+                        help="Fail with non-zero exit if final aggregated layer count "
+                             "drops below this (e.g. 500 to require ~17 of 20 decodes "
+                             "× 30 layers). Use in CI to catch silent under-sampling. "
+                             "Default 0 = no enforcement.")
     parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()
 
@@ -219,37 +324,84 @@ def main():
     if not decodes:
         sys.exit(1)
 
-    # Pool classified layers across all selected decodes.
-    # Each decode contributes ~30 layers (layer_start..layer_end); with 20 decodes
-    # we get ~600 layer samples → per-operator stats much tighter.
-    all_classified = []  # list of [(module, kname, dur), ...] per layer
+    # Pool classified layers across all selected decodes (R8d wide-sample).
+    # Per-decode quality gate: reject decodes whose anchor count is too low to
+    # cover layer_start..layer_end (otherwise per-decode contribution would be
+    # truncated, polluting per-position aggregation).
+    all_classified = []        # list of [(module, kname, dur), ...] per layer
     total_dur_ms = 0.0
-    for decode in decodes:
+    n_used = 0
+    n_rejected = 0
+    rejection_log = []
+    detected_anchor = None     # cache the anchor name from first successful decode
+    for i, decode in enumerate(decodes):
         ts0, dur = decode["ts"], decode.get("dur", 0)
-        total_dur_ms += dur / 1000
         kernels = extract_kernels_in_window(evts, ts0, ts0 + dur)
-        layers = split_layers(kernels)
+
+        # Find layer anchor for this decode (structural detection, name-agnostic)
+        try:
+            anchor_name, anchor_pos = find_layer_anchor(
+                kernels,
+                anchor_min=args.anchor_min,
+                anchor_max=args.anchor_max,
+                override_regex=args.attn_kernel,
+            )
+        except ValueError as e:
+            n_rejected += 1
+            rejection_log.append(f"  decode #{i:02d} ts={ts0}: anchor fail — {str(e)[:200]}")
+            continue
+
+        if i == 0 or detected_anchor is None:
+            detected_anchor = anchor_name
+            print(f"  Anchor: {anchor_name!r} ({len(anchor_pos)} positions in decode #{i})")
+
+        # Reject if anchor count < required (need at least layer_end+1 anchors
+        # to slice up to layer index layer_end)
+        min_required = layer_end + 1
+        if len(anchor_pos) < min_required:
+            n_rejected += 1
+            rejection_log.append(
+                f"  decode #{i:02d}: only {len(anchor_pos)} anchors (need ≥{min_required} "
+                f"for layers {layer_start}-{layer_end})")
+            continue
+
+        layers = split_layers(kernels, anchor_positions=anchor_pos)
         # Skip partial first layer (may start mid-layer in post-attn phase)
         if len(layers) > 1:
             first_names = [k.get("name", "") for k in layers[0][:5]]
             if any(any(p in n for p in ["bf16gemm", "grouped_topk", "kernel_moe"])
                    for n in first_names):
                 layers = layers[1:]
-        # Trim to requested layer range (per-decode), respecting available layers
+        # Trim to requested layer range
         decode_layer_end = min(layer_end, len(layers) - 1)
         selected = layers[layer_start:decode_layer_end + 1]
         for l in selected:
             all_classified.append(classify_layer(l))
+        total_dur_ms += dur / 1000
+        n_used += 1
 
     n_layers_total = len(all_classified)
     n_decodes = len(decodes)
-    avg_dur_ms = total_dur_ms / n_decodes if n_decodes else 0
-    print(f"\n  Aggregated {n_layers_total} layer samples across {n_decodes} decodes")
+    avg_dur_ms = total_dur_ms / n_used if n_used else 0
+    print(f"\n  Aggregated {n_layers_total} layer samples across {n_used}/{n_decodes} decodes "
+          f"({n_rejected} rejected)")
+    if rejection_log:
+        print(f"  Rejection log (first 5):")
+        for r in rejection_log[:5]:
+            print(r)
     print(f"  Avg decode walltime: {avg_dur_ms:.2f}ms")
 
     if not all_classified:
-        print("ERROR: no layers extracted — check --target-bs and --layers")
+        print(f"ERROR: no layers extracted from {n_decodes} decodes — check --target-bs, "
+              f"--layers, --attn-kernel. Anchor detected: {detected_anchor!r}.")
         sys.exit(1)
+
+    # R8d guard rail: --enforce-min-samples
+    if args.enforce_min_samples > 0 and n_layers_total < args.enforce_min_samples:
+        print(f"ERROR: --enforce-min-samples={args.enforce_min_samples} not met "
+              f"(got {n_layers_total} layer samples). "
+              f"Causes: short trace, too-strict warmup, or anchor-count mismatch.")
+        sys.exit(2)
 
     # Representative layer (for xlsx Sheet 1 single-layer column display only —
     # the per-position aggregate stats below are what actually matter).
