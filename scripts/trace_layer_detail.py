@@ -580,7 +580,6 @@ def main():
         # extracted from input trace filename (pattern: ..._c<N>_step...).
         if args.output_dir:
             os.makedirs(args.output_dir, exist_ok=True)
-            import re
             m = re.search(r'_c(\d+)_', os.path.basename(args.filepath))
             suffix = f"_c{m.group(1)}" if m else ""
             csv_path = os.path.join(args.output_dir, f"decode_breakdown{suffix}.csv")
