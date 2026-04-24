@@ -403,6 +403,30 @@ if [[ -n "$MAX_MODEL_LEN" ]]; then
     MAX_MODEL_LEN_ARGS+=(--max-model-len "$MAX_MODEL_LEN")
 fi
 
+# Provenance header — overwrites server log with image identity & framework
+# commits before server starts; server stdout appends below. Lets every
+# artifact carry reproducible "what was running" metadata.
+{
+  echo "=========================================="
+  echo "=== Image provenance (in-container) ==="
+  echo "Hostname:   $(hostname)"
+  echo "Date:       $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "Tag:        $TAG"
+  echo "Args:       $0 $*"
+  python3 --version 2>&1 | sed 's/^/Python:     /'
+  python3 -c "import atom; print('atom ver:   ', getattr(atom,'__version__','n/a'), '|', atom.__file__)" 2>&1 || echo "atom ver:    n/a"
+  python3 -c "import torch; print('torch ver:  ', torch.__version__, '| rocm', getattr(torch.version,'hip','n/a'))" 2>&1 || echo "torch ver:   n/a"
+  python3 -c "import aiter; print('aiter ver:  ', getattr(aiter,'__version__','n/a'), '|', aiter.__file__)" 2>&1 || echo "aiter ver:   n/a"
+  echo "GPU:"
+  rocm-smi --showproductname --csv 2>/dev/null | head -3 | sed 's/^/  /' || echo "  (rocm-smi unavailable)"
+  echo "Repo:"
+  for d in /app/atom /app/aiter-test /app/aiter; do
+    [ -d "$d/.git" ] && echo "  $(basename $d): $(git -C $d rev-parse --short HEAD 2>/dev/null) ($(git -C $d log -1 --format=%cd --date=short 2>/dev/null))"
+  done
+  echo "=========================================="
+  echo ""
+} > "$RESULT_DIR/server_${TAG}.log"
+
 PYTORCH_PROFILER_WITH_STACK=0 \
 python3 -m atom.entrypoints.openai_server \
     --model "$MODEL" \
@@ -415,7 +439,7 @@ python3 -m atom.entrypoints.openai_server \
     --torch-profiler-dir "$TRACE_DIR" \
     --mark-trace \
     "${EP_ARGS[@]}" \
-    > "$RESULT_DIR/server_${TAG}.log" 2>&1 &
+    >> "$RESULT_DIR/server_${TAG}.log" 2>&1 &
 SERVER_PID=$!
 log "Server PID: $SERVER_PID"
 

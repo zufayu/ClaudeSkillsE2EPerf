@@ -113,6 +113,38 @@ ci_get_image() {
   echo "IMAGE=$IMAGE"
 }
 
+# Print image provenance (digest + ID + size + framework commits) so every
+# bench/profiling artifact has reproducible "what was running" metadata.
+# Output is plain text suitable for prepending to server logs or saving as
+# its own file. Adds ~2s; safe to call after ci_get_image().
+ci_log_image_provenance() {
+  echo "=== Image provenance ==="
+  echo "Container:  ${CONTAINER:-<unset>}"
+  echo "Image:      ${IMAGE:-<unset>}"
+  ci_inspect '{{.Image}}'           | sed 's/^/Image ID:   /'
+  ci_inspect '{{.Created}}'         | sed 's/^/Container created: /'
+  # Image-level metadata (RepoDigests, Created, Size). Wrapped to tolerate
+  # podman/docker inspect format diff and missing fields.
+  ci_exec_host "docker image inspect ${IMAGE:-} --format '{{index .RepoDigests 0}}' 2>/dev/null \
+                || podman image inspect ${IMAGE:-} --format '{{index .RepoDigests 0}}' 2>/dev/null \
+                || echo '(digest unavailable)'" | sed 's/^/Digest:     /'
+  ci_exec_host "docker image inspect ${IMAGE:-} --format '{{.Size}}' 2>/dev/null \
+                || podman image inspect ${IMAGE:-} --format '{{.Size}}' 2>/dev/null \
+                || echo unknown" | awk '{ if ($1+0>0) printf "Size:       %.1f GB\n", $1/1024/1024/1024; else print "Size:       " $1 }'
+  # Per-framework commit fingerprints (best-effort; missing dirs print "n/a")
+  case "${IMAGE:-}" in
+    *atom*)
+      ci_exec "cd /app/atom 2>/dev/null && echo \"ATOM commit:  \$(git rev-parse HEAD 2>/dev/null) (\$(git log -1 --format=%cd --date=short 2>/dev/null))\" || echo 'ATOM commit:  n/a (no /app/atom)'"
+      ci_exec "cd /app/aiter-test 2>/dev/null && echo \"aiter commit: \$(git rev-parse HEAD 2>/dev/null)\" || echo 'aiter commit: n/a (no /app/aiter-test)'"
+      ;;
+    *sglang*)
+      ci_exec "python3 -c 'import sglang; print(\"sglang ver:  \", sglang.__version__)' 2>/dev/null || echo 'sglang ver:   n/a'"
+      ci_exec "python3 -c 'import torch; print(\"torch ver:   \", torch.__version__)' 2>/dev/null || echo 'torch ver:    n/a'"
+      ;;
+  esac
+  echo "========================="
+}
+
 # Kill residual GPU processes (MI355X needs this between runs)
 # CRITICAL: Never use pkill -f — it matches its own cmdline and kills itself (exit 143).
 #   See: 9564e80, 7a8b506, 53c5b8f, 482c67e, a71cff4 (5 fix commits for this bug)

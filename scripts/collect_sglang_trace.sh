@@ -242,6 +242,31 @@ cleanup
 # ======================== Step 2: Start Server ================================
 
 SERVER_LOG="$RESULT_DIR/server_${TAG}.log"
+
+# Provenance header — preserves "what was running" for every artifact so
+# stale data has reproducible context months later. Written before server
+# starts (overwrite); server stdout appends below.
+{
+  echo "=========================================="
+  echo "=== Image provenance (in-container) ==="
+  echo "Hostname:   $(hostname)"
+  echo "Date:       $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "Tag:        $TAG"
+  echo "Args:       $0 $*"
+  python3 --version 2>&1 | sed 's/^/Python:     /'
+  python3 -c "import sglang; print('sglang ver: ', sglang.__version__, '|', sglang.__file__)" 2>&1 || echo "sglang ver:  n/a"
+  python3 -c "import torch; print('torch ver:  ', torch.__version__, '| cuda', getattr(torch.version,'cuda','n/a'))" 2>&1 || echo "torch ver:   n/a"
+  python3 -c "import flashinfer; print('flashinfer: ', flashinfer.__version__)" 2>&1 || echo "flashinfer:  n/a"
+  echo "GPU:"
+  nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>&1 | head -1 | sed 's/^/  /'
+  echo "Repo:"
+  for d in /sgl-workspace/sglang /sgl-workspace/flashinfer /workspace; do
+    [ -d "$d/.git" ] && echo "  $(basename $d): $(git -C $d rev-parse --short HEAD 2>/dev/null) ($(git -C $d log -1 --format=%cd --date=short 2>/dev/null))"
+  done
+  echo "=========================================="
+  echo ""
+} > "$SERVER_LOG"
+
 log "Starting SGLang server with profiler enabled..."
 
 SGLANG_TORCH_PROFILER_DIR="$TRACE_DIR" \
@@ -268,7 +293,7 @@ python3 -m sglang.launch_server \
     --attention-backend trtllm_mla \
     --moe-runner-backend flashinfer_trtllm \
     --stream-interval "$STREAM_INTERVAL" \
-    > "$SERVER_LOG" 2>&1 &
+    >> "$SERVER_LOG" 2>&1 &
 
 SERVER_PID=$!
 log "Server PID=$SERVER_PID"
