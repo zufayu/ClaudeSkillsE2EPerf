@@ -622,7 +622,11 @@ def generate_map(b200_rows, b200_totals, mi355x_rows, mi355x_total, b200_csv_pat
         checksum_notes.append(f"WARNING: {len(unmapped_mi355x)} MI355X operators unmapped")
 
     # ── Write XLSX ──
-    # 11 columns total: PASS + 9 original data columns + Notes
+    # 9-column data section: B200_PASS / B200_Kernel / B200_Stream / B200_Avg_us /
+    # B200_Overlap_us / MI355X_PASS / MI355X_Kernel / MI355X_Avg_us / Notes.
+    # B200_PASS and MI355X_PASS contain "PASS:operator" combined value; standalone
+    # PASS column dropped (was redundant). B200_Overlap_With moved to dedicated
+    # "Stream Overlap Analysis" section below.
     from openpyxl import Workbook
     wb = Workbook()
     ws = wb.active
@@ -633,47 +637,60 @@ def generate_map(b200_rows, b200_totals, mi355x_rows, mi355x_total, b200_csv_pat
             return f"{v:.{prec}f}"
         return v
 
-    # Header (11 cols)
+    def pass_op(pass_name, op_or_module):
+        """Format 'PASS:operator' (or 'PASS:module' for MI355X side).
+        Returns empty string when neither side present."""
+        if not op_or_module:
+            return ""
+        if not pass_name:
+            return op_or_module
+        return f"{pass_name}:{op_or_module}"
+
+    # Header (9 cols)
     ws.append([
-        "PASS",
-        "B200_Operator", "B200_Raw_Kernel", "B200_Stream", "B200_Avg_us",
-        "B200_Overlap_us", "B200_Overlap_With",
-        "MI355X_Module", "MI355X_Kernel", "MI355X_Avg_us",
+        "B200_PASS", "B200_Kernel", "B200_Stream", "B200_Avg_us", "B200_Overlap_us",
+        "MI355X_PASS", "MI355X_Kernel", "MI355X_Avg_us",
         "Notes",
     ])
 
-    # Data rows
+    # Data rows — collect overlap_with strings for the analysis section below
+    overlap_pairs = []  # list of (b200_op, b200_pass, [(other_op, type, μs), ...])
     for r in output_rows:
+        pass_name = r.get("pass", "")
         ws.append([
-            r.get("pass", ""),
-            r["b200_operator"], r["b200_raw_kernel"], r["b200_stream"],
+            pass_op(pass_name, r["b200_operator"]),
+            r["b200_raw_kernel"], r["b200_stream"],
             fmt(r["b200_avg_us"], 1),
             fmt(r["b200_overlap_us"], 1),
-            r["b200_overlap_with"],
-            r["mi355x_module"], r["mi355x_kernel"],
+            pass_op(pass_name, r["mi355x_module"]),
+            r["mi355x_kernel"],
             fmt(r["mi355x_avg_us"], 2),
             r["notes"],
         ])
+        # Capture for overlap analysis
+        if r.get("b200_operator") and r.get("b200_overlap_with"):
+            overlap_pairs.append((r["b200_operator"], pass_name, r["b200_overlap_with"]))
 
     # Blank line
     ws.append([])
 
-    # Totals
-    ws.append(["", "B200 TOTAL (kernel_sum)", "", "", f"{b200_sum_check:.1f}", "", "",
-                "MI355X TOTAL", "", f"{mi355x_sum_check:.2f}", ""])
+    # Totals (9-col layout: B200 ops in col 1; MI355X label in col 6)
+    ws.append(["B200 TOTAL (kernel_sum)", "", "", f"{b200_sum_check:.1f}", "",
+               "MI355X TOTAL", "", f"{mi355x_sum_check:.2f}", ""])
     if b200_totals.get("walltime"):
-        ws.append(["", "B200 Walltime", "", "", f'{b200_totals["walltime"]:.1f}', "", "", "", "", "", ""])
+        ws.append(["B200 Walltime", "", "", f'{b200_totals["walltime"]:.1f}', "",
+                   "", "", "", ""])
     if b200_totals.get("overlap"):
         overlap = b200_totals["overlap"]
         pct = overlap / b200_sum_check * 100 if b200_sum_check > 0 else 0
-        ws.append(["", "B200 Overlap", "", "", f"{overlap:.1f}", "", "", "", "", "",
-                   f"{overlap:.1f}us overlap = {pct:.1f}% of kernel sum"])
+        ws.append(["B200 Overlap", "", "", f"{overlap:.1f}", "",
+                   "", "", "", f"{overlap:.1f}us = {pct:.1f}% of kernel sum"])
 
     ws.append([])
 
-    # PASS summary (user's 7-PASS taxonomy)
-    ws.append(["", "", "Silicon NV", "Silicon AMD", "", "", "", "", "", "", ""])
-    ws.append(["PASS", "", "B200", "MI355X", "gap", "NV_Kernels", "AMD_Kernels", "", "", "", ""])
+    # ── PASS summary (user's 7-PASS taxonomy) ──
+    ws.append(["", "Silicon NV", "Silicon AMD", "", "", "", "", "", ""])
+    ws.append(["PASS", "B200", "MI355X", "gap", "NV_Kernels", "AMD_Kernels", "", "", ""])
     pass_order = ["EP_AR", "MHA", "O_proj", "MoE_Route", "Shared_Exp", "MoE_Expert", "Residual", "Other"]
     for pname in pass_order:
         b200_val = pass_b200.get(pname, 0)
@@ -682,12 +699,57 @@ def generate_map(b200_rows, b200_totals, mi355x_rows, mi355x_total, b200_csv_pat
         nv_k = "\n".join(pass_nv_kernels.get(pname, []))
         amd_k = "\n".join(pass_amd_kernels.get(pname, []))
         if b200_val > 0 or mi355x_val > 0:
-            ws.append([pname, "", f"{b200_val:.1f}", f"{mi355x_val:.2f}",
-                       f"{gap:+.1f}", nv_k, amd_k, "", "", "", ""])
+            ws.append([pname, f"{b200_val:.1f}", f"{mi355x_val:.2f}",
+                       f"{gap:+.1f}", nv_k, amd_k, "", "", ""])
 
     ws.append([])
 
-    # Footer: data sources + checksum
+    # ── Stream Overlap Analysis (B200 only — parses overlap_with field) ──
+    # overlap_with format: "kernel_name(pdl):X.Yμs | kernel_name(dual_stream):X.Yμs | ..."
+    import re
+    OVERLAP_ITEM_RE = re.compile(r"([^|]+?)\(([^)]+)\):\s*([\d.]+)μs")
+    pdl_pairs = {}    # (op_a, op_b) sorted tuple → max μs (dedup both sides)
+    dual_pairs = {}   # same
+
+    for b200_op, b200_pass, ow_str in overlap_pairs:
+        for m in OVERLAP_ITEM_RE.finditer(ow_str):
+            other_op = m.group(1).strip()
+            otype = m.group(2).strip()        # 'pdl' or 'dual_stream'
+            us = float(m.group(3))
+            # Dedup: pair stored under sorted-tuple key (each pair appears in both sides' overlap_with)
+            key = tuple(sorted([b200_op, other_op]))
+            if otype == "pdl":
+                pdl_pairs[key] = max(pdl_pairs.get(key, 0), us)
+            elif otype == "dual_stream":
+                dual_pairs[key] = max(dual_pairs.get(key, 0), us)
+
+    pdl_total = sum(pdl_pairs.values())
+    dual_total = sum(dual_pairs.values())
+    grand_total = pdl_total + dual_total
+
+    ws.append(["=== Stream Overlap Analysis (B200) ==="])
+    ws.append([f"Total overlap captured", f"{grand_total:.1f} μs", "",
+               f"(script totals.overlap = {b200_totals.get('overlap', 0):.1f} μs — different aggregation, our value uses max-per-pair dedup)" if b200_totals.get('overlap') else ""])
+    ws.append([f"  Single-stream (PDL)", f"{pdl_total:.1f} μs",
+               f"{pdl_total/grand_total*100:.1f}%" if grand_total else "0.0%"])
+    ws.append([f"  Dual-stream",         f"{dual_total:.1f} μs",
+               f"{dual_total/grand_total*100:.1f}%" if grand_total else "0.0%"])
+
+    ws.append([])
+    ws.append(["Top PDL overlaps (single-stream parallel via PDL):"])
+    ws.append(["  rank", "op_A", "op_B", "μs"])
+    for i, ((a, b), us) in enumerate(sorted(pdl_pairs.items(), key=lambda x: -x[1])[:10], 1):
+        ws.append([f"  {i}", a, b, f"{us:.1f}"])
+
+    ws.append([])
+    ws.append(["Top Dual-stream overlaps (cross-stream parallel — typical: shared_expert ↔ MoE):"])
+    ws.append(["  rank", "op_A", "op_B", "μs"])
+    for i, ((a, b), us) in enumerate(sorted(dual_pairs.items(), key=lambda x: -x[1])[:10], 1):
+        ws.append([f"  {i}", a, b, f"{us:.1f}"])
+
+    ws.append([])
+
+    # ── Footer: data sources + checksum ──
     ws.append(["# Data Sources:"])
     ws.append([f"#   B200: {os.path.abspath(b200_csv_path)}"])
     ws.append([f"#   MI355X: {os.path.abspath(mi355x_xlsx_path)}"])
