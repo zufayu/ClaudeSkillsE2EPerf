@@ -37,8 +37,16 @@ jobs:
       - name: Pre-clean container-owned leftover (refactor bug workaround)
         run: |
           RUNNER_UID=$(id -u); RUNNER_GID=$(id -g)
-          WS=/home/zufa/actions-runner/_work/ClaudeSkillsE2EPerf/ClaudeSkillsE2EPerf
-          docker exec zufa_sglang chown -R $RUNNER_UID:$RUNNER_GID $WS 2>/dev/null || true
+          WS_PARENT=/home/zufa/actions-runner/_work/ClaudeSkillsE2EPerf
+          # Try in-container chown first (cheap, works if zufa_sglang is up)
+          docker exec zufa_sglang chown -R $RUNNER_UID:$RUNNER_GID "$WS_PARENT/ClaudeSkillsE2EPerf" 2>/dev/null || true
+          # Robust fallback: throwaway root container chowns workspace from outside,
+          # so checkout's clean step can rmdir container-owned leftovers.
+          if [ -d "$WS_PARENT" ]; then
+            docker run --rm -u 0 -v "$WS_PARENT:/ws" alpine sh -c "chown -R $RUNNER_UID:$RUNNER_GID /ws" 2>/dev/null \
+              || docker run --rm -u 0 -v "$WS_PARENT:/ws" busybox sh -c "chown -R $RUNNER_UID:$RUNNER_GID /ws" 2>/dev/null \
+              || true
+          fi
 
       - uses: actions/checkout@v4
 
