@@ -183,11 +183,30 @@ jobs:
               wm, wmed, wp95, wcv, wn = warmup[op]
               dpct = (wm - sm) / sm * 100 if sm > 0 else 0
               print(f'{op[:35]:35s} | {sm:>10.2f} {smed:>6.1f} {sp95:>6.1f} {scv:>5.1f}% {sn:>4d} | {wm:>8.2f} {wcv:>5.1f}% {wn:>3d} | {dpct:+5.1f}%')
+          mean_shift = sum(abs((warmup[o][0]-steady[o][0])/steady[o][0]*100) for o in common if steady[o][0]>0)/len(common)
           print(f'\\nSummary (STEADY = production estimate, will be compared with MI355X):')
           print(f'  common ops:        {len(common)}')
           print(f'  STEADY avg CV:     {sum(steady[o][3] for o in common)/len(common):.1f}%   (lower = tighter mean estimate)')
           print(f'  WARMUP avg CV:     {sum(warmup[o][3] for o in common)/len(common):.1f}%   (higher = warmup polluted, expected)')
-          print(f'  warmup-vs-steady mean shift: {sum(abs((warmup[o][0]-steady[o][0])/steady[o][0]*100) for o in common if steady[o][0]>0)/len(common):.1f}%')
+          print(f'  warmup-vs-steady mean shift: {mean_shift:.1f}%')
+          # Methodology stability assertions (R8d guard rails):
+          #   1. STEADY must have full sample budget (>= 600 = 20 step × 30 layer).
+          #      Falling below means trace was too short or analyzer regressed.
+          #   2. warmup-vs-steady mean shift must be < 5%. Larger shift means
+          #      either collect-side warmup buffer broke, or analyzer-side
+          #      skip-warmup is being undercut.
+          #   3. STEADY avg CV must be sane (< 30%). Larger means new noise
+          #      source (DVFS thrash, container contention, ...) — investigate.
+          assertions = []
+          if steady_n < 600: assertions.append(f'STEADY_N={steady_n} < 600 (under-sampled)')
+          if mean_shift >= 5.0: assertions.append(f'mean shift {mean_shift:.1f}% >= 5% (warmup convention broken)')
+          steady_cv = sum(steady[o][3] for o in common)/len(common)
+          if steady_cv >= 30.0: assertions.append(f'STEADY avg CV {steady_cv:.1f}% >= 30% (new noise source)')
+          if assertions:
+              print('\\n=== METHODOLOGY ASSERTION FAILURES ===')
+              for a in assertions: print(f'  FAIL: {a}')
+              raise SystemExit(3)
+          print('\\n=== methodology assertions: all pass ===')
           PYEOF
           "
           else
