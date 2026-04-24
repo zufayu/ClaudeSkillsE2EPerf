@@ -1,0 +1,141 @@
+name: "MI355X zufa_atom_dev from 4-20 nightly + GPU devices + trace"
+on:
+  workflow_dispatch:
+jobs:
+  trace:
+    runs-on: [self-hosted, mi355x]
+    timeout-minutes: 60
+    env:
+      DEV: zufa_atom_dev
+      IMAGE: docker.io/rocm/atom-dev:nightly_202604201537
+      MODEL: /shared/data/amd_int/models/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
+      TRACE_DIR: /tmp/trace_atomdev420
+      SAVE_DIR: /shared/amdgpu/home/zufa_yu_qle/ClaudeSkillsE2EPerf/results/mi355x_dsr_mxfp4/triton_poi_atomdev_4_20
+    steps:
+      - name: Pull 4-20 nightly (cached if already pulled)
+        shell: bash {0}
+        run: |
+          podman pull $IMAGE 2>&1 | tail -3
+          podman images --digests $IMAGE | head -3
+
+      - name: "Recreate $DEV with GPU devices"
+        shell: bash {0}
+        run: |
+          podman rm -f $DEV 2>&1 || true
+          # Match zufa_atom flags + add GPU devices (numeric GIDs to avoid /etc/group lookup issue)
+          podman run -d --name $DEV \
+            --security-opt seccomp=unconfined \
+            --ipc=host --network=host \
+            --group-add keep-groups \
+            --group-add 44 --group-add 109 \
+            --device /dev/kfd --device /dev/dri \
+            -v /shared:/shared \
+            $IMAGE sleep infinity
+          sleep 3
+          echo "=== id (should have video=44, render=109 + nogroup=65534) ==="
+          podman exec $DEV id
+
+      - name: Verify GPU + ATOM import
+        shell: bash {0}
+        run: |
+          echo "=== rocm-smi ==="
+          podman exec $DEV rocm-smi 2>&1 | head -5
+          echo
+          echo "=== /dev/kfd accessible ==="
+          podman exec $DEV ls -la /dev/kfd 2>&1
+          echo
+          echo "=== rocminfo (must work) ==="
+          podman exec $DEV bash -c '/opt/rocm-7.2.2/bin/rocminfo 2>&1 | head -10' || echo "rocminfo FAILED"
+          echo
+          echo "=== from aiter import QuantType ==="
+          podman exec $DEV python3 -c "from aiter import QuantType; print('QuantType OK:', QuantType)" 2>&1 | tail -5
+          echo
+          echo "=== ATOM import + torch CUDA ==="
+          podman exec $DEV python3 -c "
+          import torch
+          print('torch.cuda.is_available:', torch.cuda.is_available())
+          print('torch.cuda.device_count:', torch.cuda.device_count())
+          import atom
+          import atom.entrypoints.openai_server
+          print('ATOM import OK')
+          " 2>&1 | tail -5
+
+      - name: Confirm moe.py mutates_args present
+        shell: bash {0}
+        run: |
+          podman exec $DEV grep -n 'mutates_args.*hidden_states\|needs_fixed_stride_order' /app/ATOM/atom/model_ops/moe.py
+
+      - name: Kill residual + clear trace dir
+        continue-on-error: true
+        run: podman exec $DEV bash -c 'pkill -9 -f "python|vllm|atom" 2>/dev/null; sleep 5; rm -f /dev/shm/aiter_*; rm -rf /tmp/trace_atomdev420; true'
+
+      - name: "Start ATOM server (TP=4 EP=1 fp8 kv, baseline A config)"
+        run: |
+          podman exec -d $DEV bash -c "PYTORCH_PROFILER_WITH_STACK=0 python3 -m atom.entrypoints.openai_server --model $MODEL --server-port 8000 --tensor-parallel-size 4 --max-num-seqs 512 --gpu-memory-utilization 0.90 --kv_cache_dtype fp8 --torch-profiler-dir $TRACE_DIR > /tmp/server_atomdev420.log 2>&1"
+
+      - name: Wait for server ready
+        run: |
+          for i in $(seq 1 120); do if podman exec $DEV curl -s http://0.0.0.0:8000/health > /dev/null 2>&1; then echo "Server ready after $((i*5))s"; break; fi; sleep 5; done
+          if ! podman exec $DEV curl -s http://0.0.0.0:8000/health > /dev/null 2>&1; then
+            echo "=== server log (last 80 lines) ==="
+            podman exec $DEV tail -80 /tmp/server_atomdev420.log
+            exit 1
+          fi
+
+      - name: Get served model name
+        run: |
+          SERVED=$(podman exec $DEV curl -s http://0.0.0.0:8000/v1/models | python3 -c "import json,sys; print(json.load(sys.stdin)['data'][0]['id'])")
+          echo "SERVED=$SERVED" >> $GITHUB_ENV
+
+      - name: Warmup (128 prompts, c=64)
+        run: podman exec $DEV python3 -u -m atom.benchmarks.benchmark_serving --model "${{ env.SERVED }}" --backend vllm --base-url http://0.0.0.0:8000 --dataset-name random --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 --num-prompts 128 --max-concurrency 64 --request-rate inf --ignore-eos
+
+      - name: Profile (64 prompts, c=64)
+        run: |
+          podman exec $DEV curl -s -X POST http://0.0.0.0:8000/start_profile
+          podman exec $DEV python3 -u -m atom.benchmarks.benchmark_serving --model "${{ env.SERVED }}" --backend vllm --base-url http://0.0.0.0:8000 --dataset-name random --random-input-len 1024 --random-output-len 1024 --random-range-ratio 0.8 --num-prompts 64 --max-concurrency 64 --request-rate inf --ignore-eos
+          podman exec $DEV curl -s -X POST http://0.0.0.0:8000/stop_profile
+
+      - name: Wait for trace flush
+        run: |
+          for i in $(seq 1 60); do
+            GZ=$(podman exec $DEV bash -c "ls $TRACE_DIR/rank_0/*.json.gz 2>/dev/null | grep -v capture_graph | head -1")
+            JSON=$(podman exec $DEV bash -c "ls $TRACE_DIR/rank_0/*.json 2>/dev/null | grep -v capture_graph | head -1")
+            if [ -n "$GZ" ] && [ -z "$JSON" ]; then echo "Trace ready: $GZ ($(podman exec $DEV du -h $GZ | cut -f1))"; break; fi
+            sleep 5
+          done
+
+      - name: Save trace
+        if: always()
+        continue-on-error: true
+        run: |
+          podman exec $DEV bash -c "mkdir -p $SAVE_DIR && cp $TRACE_DIR/rank_0/*.json.gz $SAVE_DIR/ 2>/dev/null && ls -lh $SAVE_DIR/*.json.gz && sha256sum $SAVE_DIR/*.json.gz"
+          echo "TRACE LOCATION: mi355-gpu-41:$SAVE_DIR/"
+
+      - name: Count triton_poi_fused
+        if: always()
+        continue-on-error: true
+        run: |
+          podman exec $DEV python3 -c "
+          import gzip, json, glob
+          traces = [f for f in glob.glob('$TRACE_DIR/rank_0/*.json.gz') if 'capture_graph' not in f]
+          if not traces: print('ERROR: no trace'); exit(1)
+          with gzip.open(traces[0], 'rt') as f: data = json.load(f)
+          events = data.get('traceEvents', [])
+          kernels = [e for e in events if e.get('cat') == 'kernel']
+          triton = [e for e in kernels if 'triton_poi_fused' in e.get('name', '')]
+          print(f'Total events: {len(events)}')
+          print(f'GPU kernels: {len(kernels)}')
+          print(f'triton_poi_fused: {len(triton)}')
+          "
+
+      - name: Capture benchmark output
+        if: always()
+        continue-on-error: true
+        run: |
+          podman exec $DEV tail -30 /tmp/server_atomdev420.log
+
+      - name: Kill server
+        if: always()
+        continue-on-error: true
+        run: podman exec $DEV bash -c 'pkill -9 -f "python|atom" 2>/dev/null; sleep 3; true'
