@@ -1,0 +1,240 @@
+name: "B200 PDL Verify (nsys trace)"
+on:
+  workflow_dispatch:
+jobs:
+  pdl-verify:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 120
+    env:
+      CONTAINER: zufa_trt
+      REPO: /home/zufayu/ClaudeSkillsE2EPerf
+      MODEL: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      TRACE_DIR: /tmp/pdl_verify
+    steps:
+      - name: Unpause container if paused
+        continue-on-error: true
+        run: docker unpause $CONTAINER 2>/dev/null || true
+
+      - name: Fix git safe.directory
+        run: |
+          git config --global --add safe.directory $REPO 2>/dev/null || true
+          docker exec $CONTAINER bash -c "git config --global --add safe.directory $REPO 2>/dev/null; true"
+
+      - name: Sync repo
+        run: |
+          cd $REPO
+          git remote set-url origin https://x-access-token:${{ github.token }}@github.com/zufayu/ClaudeSkillsE2EPerf.git
+          git rebase --abort 2>/dev/null || true
+          git reset --hard 2>/dev/null || true
+          git fetch origin main && git reset --hard origin/main
+
+      - name: Cleanup GPU
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done; sleep 3; true
+
+      - name: Setup trace dir
+        run: docker exec $CONTAINER bash -c "rm -rf $TRACE_DIR && mkdir -p $TRACE_DIR"
+
+      - name: "A: PDL-on nsys trace"
+        run: |
+          docker exec -e LD_LIBRARY_PATH=/usr/local/tensorrt/lib:/usr/local/cuda/lib64 $CONTAINER bash -c '
+          cd '"$REPO"'
+          echo "=== Starting trtllm-serve with PDL ON (default) ==="
+          echo "TRTLLM_ENABLE_PDL=${TRTLLM_ENABLE_PDL:-not_set}"
+
+          # Start server under nsys
+          nsys profile -t cuda,nvtx -s none --capture-range=cudaProfilerApi --capture-range-end=stop -o '"$TRACE_DIR"'/pdl_on \
+            mpirun -n 1 --oversubscribe --allow-run-as-root \
+            trtllm-serve '"$MODEL"' --port=8888 \
+            --trust_remote_code --backend=pytorch \
+            --max_seq_len=8192 --max_num_tokens=8192 \
+            --tp_size=4 --ep_size=1 \
+            > '"$TRACE_DIR"'/server_pdl_on.log 2>&1 &
+          SERVER_PID=$!
+
+          # Wait for server ready
+          echo "Waiting for server..."
+          for i in $(seq 1 120); do
+            if curl -s http://localhost:8888/health 2>/dev/null | grep -q "200\|ok\|healthy\|true" 2>/dev/null; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            if ! kill -0 $SERVER_PID 2>/dev/null; then
+              echo "Server died"; tail -30 '"$TRACE_DIR"'/server_pdl_on.log; exit 1
+            fi
+            sleep 5
+          done
+
+          # Start profiling
+          echo "Starting nsys capture..."
+          nsys start --session pdl_on_session 2>/dev/null || true
+          curl -s http://localhost:8888/v1/profile/start 2>/dev/null || true
+
+          # Send a few requests (low concurrency for clean trace)
+          python3 '"$REPO"'/utils/bench_serving/benchmark_serving.py \
+            --model '"$MODEL"' --backend openai --base-url http://0.0.0.0:8888 \
+            --dataset-name random --random-input-len 128 --random-output-len 128 \
+            --random-range-ratio 1.0 --num-prompts 10 --max-concurrency 1 \
+            --request-rate inf --ignore-eos --num-warmups 2 \
+            --result-dir '"$TRACE_DIR"' --result-filename pdl_on_bench.json \
+            2>&1 | tail -10
+
+          # Stop profiling and server
+          nsys stop --session pdl_on_session 2>/dev/null || true
+          curl -s http://localhost:8888/v1/profile/stop 2>/dev/null || true
+          sleep 2
+          kill $SERVER_PID 2>/dev/null || true
+          wait $SERVER_PID 2>/dev/null || true
+          echo "PDL-on trace done"
+          ls -lh '"$TRACE_DIR"'/pdl_on* 2>/dev/null || echo "No trace file yet"
+          '
+
+      - name: Cleanup GPU between traces
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done; sleep 5; true
+
+      - name: "B: PDL-off nsys trace"
+        run: |
+          docker exec -e TRTLLM_ENABLE_PDL=0 -e LD_LIBRARY_PATH=/usr/local/tensorrt/lib:/usr/local/cuda/lib64 $CONTAINER bash -c '
+          cd '"$REPO"'
+          echo "=== Starting trtllm-serve with PDL OFF ==="
+          echo "TRTLLM_ENABLE_PDL=${TRTLLM_ENABLE_PDL}"
+
+          # Start server under nsys
+          nsys profile -t cuda,nvtx -s none --capture-range=cudaProfilerApi --capture-range-end=stop -o '"$TRACE_DIR"'/pdl_off \
+            mpirun -n 1 --oversubscribe --allow-run-as-root \
+            trtllm-serve '"$MODEL"' --port=8888 \
+            --trust_remote_code --backend=pytorch \
+            --max_seq_len=8192 --max_num_tokens=8192 \
+            --tp_size=4 --ep_size=1 \
+            > '"$TRACE_DIR"'/server_pdl_off.log 2>&1 &
+          SERVER_PID=$!
+
+          # Wait for server ready
+          echo "Waiting for server..."
+          for i in $(seq 1 120); do
+            if curl -s http://localhost:8888/health 2>/dev/null | grep -q "200\|ok\|healthy\|true" 2>/dev/null; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            if ! kill -0 $SERVER_PID 2>/dev/null; then
+              echo "Server died"; tail -30 '"$TRACE_DIR"'/server_pdl_off.log; exit 1
+            fi
+            sleep 5
+          done
+
+          # Start profiling
+          echo "Starting nsys capture..."
+          nsys start --session pdl_off_session 2>/dev/null || true
+          curl -s http://localhost:8888/v1/profile/start 2>/dev/null || true
+
+          # Send same requests
+          python3 '"$REPO"'/utils/bench_serving/benchmark_serving.py \
+            --model '"$MODEL"' --backend openai --base-url http://0.0.0.0:8888 \
+            --dataset-name random --random-input-len 128 --random-output-len 128 \
+            --random-range-ratio 1.0 --num-prompts 10 --max-concurrency 1 \
+            --request-rate inf --ignore-eos --num-warmups 2 \
+            --result-dir '"$TRACE_DIR"' --result-filename pdl_off_bench.json \
+            2>&1 | tail -10
+
+          # Stop profiling and server
+          nsys stop --session pdl_off_session 2>/dev/null || true
+          curl -s http://localhost:8888/v1/profile/stop 2>/dev/null || true
+          sleep 2
+          kill $SERVER_PID 2>/dev/null || true
+          wait $SERVER_PID 2>/dev/null || true
+          echo "PDL-off trace done"
+          ls -lh '"$TRACE_DIR"'/pdl_off* 2>/dev/null || echo "No trace file yet"
+          '
+
+      - name: "Compare: extract kernel stats"
+        if: always()
+        run: |
+          docker exec $CONTAINER bash -c '
+          echo "=== Trace files ==="
+          ls -lh '"$TRACE_DIR"'/*.nsys-rep 2>/dev/null || echo "No nsys-rep files"
+
+          for trace in '"$TRACE_DIR"'/pdl_on '"$TRACE_DIR"'/pdl_off; do
+            rep="${trace}.nsys-rep"
+            if [ ! -f "$rep" ]; then
+              echo "MISSING: $rep"
+              continue
+            fi
+            echo ""
+            echo "============================================"
+            echo "  $(basename $trace)"
+            echo "============================================"
+
+            # Export kernel trace to SQLite
+            nsys export -t sqlite -o "${trace}.sqlite" "$rep" 2>/dev/null || true
+
+            # Analyze kernel overlap on same stream
+            python3 -c "
+          import sqlite3, os
+          db = \"${trace}.sqlite\"
+          if not os.path.exists(db):
+              print(\"No SQLite export\")
+              exit()
+          conn = sqlite3.connect(db)
+          cur = conn.cursor()
+
+          # Get CUDA kernels sorted by stream and start time
+          try:
+              cur.execute('''
+                  SELECT demangledName, start, end, streamId
+                  FROM CUPTI_ACTIVITY_KIND_KERNEL
+                  ORDER BY streamId, start
+              ''')
+              kernels = cur.fetchall()
+          except:
+              cur.execute('''
+                  SELECT shortName, start, end, streamId
+                  FROM CUPTI_ACTIVITY_KIND_KERNEL
+                  ORDER BY streamId, start
+              ''')
+              kernels = cur.fetchall()
+
+          print(f\"Total kernels: {len(kernels)}\")
+
+          # Check for same-stream overlap (PDL signature)
+          overlaps = 0
+          total_overlap_ns = 0
+          by_stream = {}
+          for name, start, end, stream in kernels:
+              if stream not in by_stream:
+                  by_stream[stream] = []
+              by_stream[stream].append((name, start, end))
+
+          for stream, klist in by_stream.items():
+              for i in range(1, len(klist)):
+                  prev_end = klist[i-1][2]
+                  curr_start = klist[i][1]
+                  if curr_start < prev_end:  # overlap!
+                      overlap_ns = prev_end - curr_start
+                      overlaps += 1
+                      total_overlap_ns += overlap_ns
+
+          print(f\"Same-stream kernel overlaps: {overlaps}\")
+          print(f\"Total overlap time: {total_overlap_ns/1000:.1f} us\")
+          print(f\"Streams with kernels: {len(by_stream)}\")
+          for s in sorted(by_stream.keys())[:5]:
+              print(f\"  Stream {s}: {len(by_stream[s])} kernels\")
+          conn.close()
+          " 2>/dev/null || echo "  (analysis failed)"
+          done
+
+          echo ""
+          echo "=== Server logs: PDL status ==="
+          echo "--- PDL ON ---"
+          grep -i "PDL" '"$TRACE_DIR"'/server_pdl_on.log 2>/dev/null | head -5 || echo "(no PDL log)"
+          echo "--- PDL OFF ---"
+          grep -i "PDL" '"$TRACE_DIR"'/server_pdl_off.log 2>/dev/null | head -5 || echo "(no PDL log)"
+          '
+
+      - name: Cleanup
+        if: always()
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done; true

@@ -1,0 +1,127 @@
+name: "B200 PDL A/B Test (CUDA_LAUNCH_BLOCKING)"
+on:
+  workflow_dispatch:
+jobs:
+  pdl-test:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 120
+    env:
+      CONTAINER: zufa_sglang
+      REPO: /home/zufayu/ClaudeSkillsE2EPerf
+      MODEL: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      RESULT_DIR: results/b200_dsr_fp4/b200_pdl_ab_test
+      BASELINE_DIR: results/b200_dsr_fp4/b200_dsr_fp4_mtp0_ep1_tp4_sglang059_profiling
+    steps:
+      - name: Fix permissions
+        run: docker exec $CONTAINER bash -c "chmod -R a+rwX $REPO 2>/dev/null; true"
+
+      - name: Sync repo
+        run: cd $REPO && git fetch origin main && git reset --hard origin/main
+
+      - name: Fix git safe.directory
+        run: docker exec $CONTAINER bash -c "git config --global --add safe.directory $REPO 2>/dev/null; true"
+
+      - name: Verify container
+        run: |
+          docker exec $CONTAINER nvidia-smi --query-gpu=name --format=csv,noheader | head -1
+          docker exec $CONTAINER python3 -c 'import sglang; print(f"SGLang {sglang.__version__}")'
+
+      - name: "Run profiling with CUDA_LAUNCH_BLOCKING=1 (no overlap)"
+        run: |
+          docker exec $CONTAINER bash -c "cd $REPO && mkdir -p $RESULT_DIR && CUDA_LAUNCH_BLOCKING=1 bash scripts/collect_sglang_trace.sh --model $MODEL --tp 4 --ep 1 --scenario chat --concurrency 64 --profile-prompts 128 --profile-steps 200 --profile-start-step 10 --env sglang059_clb1 --result-dir ./$RESULT_DIR"
+
+      - name: Show trace files
+        if: always()
+        run: ls -lh $REPO/$RESULT_DIR/*.json.gz 2>/dev/null | head -5 || echo 'No traces'
+
+      - name: Find and fix trace
+        if: always()
+        run: |
+          TRACE=$(ls -t $REPO/$RESULT_DIR/*rank0*.trace.json.gz 2>/dev/null | grep -v serialized | grep -v '.fix.' | head -1)
+          if [ -z "$TRACE" ]; then TRACE=$(ls -t $REPO/$RESULT_DIR/*.trace.json.gz 2>/dev/null | grep -v serialized | grep -v '.fix.' | head -1); fi
+          if [ -z "$TRACE" ]; then echo "No trace found"; ls -lh $REPO/$RESULT_DIR/ 2>/dev/null; exit 1; fi
+          echo "TRACE=$TRACE" >> $GITHUB_ENV
+          echo "Trace: $TRACE ($(du -h $TRACE | cut -f1))"
+          FIX=$(echo "$TRACE" | sed 's/.trace.json.gz/.fix.json.gz/')
+          docker exec $CONTAINER python3 $REPO/scripts/fix_torch_trace_pro.py $TRACE 2>&1 | tail -5 || true
+          if [ -f "$FIX" ]; then echo "FIX_TRACE=$FIX" >> $GITHUB_ENV; fi
+
+      - name: Run trace_layer_detail.py (CLB=1)
+        if: always()
+        run: |
+          INPUT="${{ env.FIX_TRACE }}"
+          if [ -z "$INPUT" ] || [ ! -f "$INPUT" ]; then INPUT="${{ env.TRACE }}"; fi
+          echo "Using: $INPUT"
+          docker exec $CONTAINER bash -c "cd $REPO && python3 scripts/trace_layer_detail.py $INPUT --output-dir ./$RESULT_DIR"
+
+      - name: "Compare: CLB=1 vs Baseline"
+        if: always()
+        run: |
+          echo "============================================================"
+          echo "  B200 PDL A/B Test Results"
+          echo "============================================================"
+          echo ""
+          echo "=== BASELINE (normal, with PDL + dual-stream) ==="
+          cat $REPO/$BASELINE_DIR/layer_kernel_avg.csv 2>/dev/null | tail -10 || echo 'No baseline CSV'
+          echo ""
+          echo "=== CUDA_LAUNCH_BLOCKING=1 (no overlap) ==="
+          cat $REPO/$RESULT_DIR/layer_kernel_avg.csv 2>/dev/null | tail -10 || echo 'No CLB=1 CSV'
+          echo ""
+          echo "=== Side-by-side comparison ==="
+          python3 -c "
+          import csv, sys
+          def parse_csv(path):
+              try:
+                  with open(path) as f:
+                      lines = f.readlines()
+                  result = {}
+                  for line in lines:
+                      if 'kernel_sum' in line.lower() or 'TOTAL' in line:
+                          parts = line.split(',')
+                          for p in parts:
+                              p = p.strip()
+                              if 'kernel_sum' in p or 'TOTAL' in p:
+                                  for pp in parts:
+                                      pp = pp.strip()
+                                      try: result['kernel_sum'] = float(pp); break
+                                      except: pass
+                      if 'Walltime' in line or 'walltime' in line:
+                          parts = line.split(',')
+                          for p in parts:
+                              try: result['walltime'] = float(p.strip()); break
+                              except: pass
+                      if 'Overlap' in line and 'TOTAL' not in line:
+                          parts = line.split(',')
+                          for p in parts:
+                              try: result['overlap'] = float(p.strip()); break
+                              except: pass
+                  return result
+              except: return {}
+          baseline = parse_csv('$REPO/$BASELINE_DIR/layer_kernel_avg.csv')
+          clb1 = parse_csv('$REPO/$RESULT_DIR/layer_kernel_avg.csv')
+          print(f'                    Baseline    CLB=1       Delta')
+          print(f'  kernel_sum:     {baseline.get(\"kernel_sum\",0):>8.1f}   {clb1.get(\"kernel_sum\",0):>8.1f}   {clb1.get(\"kernel_sum\",0)-baseline.get(\"kernel_sum\",0):>+8.1f}')
+          print(f'  walltime:       {baseline.get(\"walltime\",0):>8.1f}   {clb1.get(\"walltime\",0):>8.1f}   {clb1.get(\"walltime\",0)-baseline.get(\"walltime\",0):>+8.1f}')
+          print(f'  overlap:        {baseline.get(\"overlap\",0):>8.1f}   {clb1.get(\"overlap\",0):>8.1f}   {clb1.get(\"overlap\",0)-baseline.get(\"overlap\",0):>+8.1f}')
+          if clb1.get('walltime') and baseline.get('walltime'):
+              total_overlap = clb1['walltime'] - baseline['walltime']
+              print(f'')
+              print(f'  Total overlap impact (CLB1_wall - baseline_wall): {total_overlap:.1f} us')
+              print(f'  Trace-computed overlap (baseline):                {baseline.get(\"overlap\",0):.1f} us')
+              print(f'  Sync overhead (CLB1_wall - baseline_kernel_sum):  {clb1[\"walltime\"] - baseline.get(\"kernel_sum\",0):.1f} us')
+          " 2>/dev/null || echo "Comparison script failed"
+
+      - name: Git commit results
+        if: always()
+        run: |
+          cd $REPO && git config user.email ci@github.com && git config user.name 'B200 CI'
+          for ext in csv json log md; do git add -f $RESULT_DIR/*.$ext 2>/dev/null || true; done
+          git diff --cached --name-only
+          if ! git diff --cached --quiet; then
+            git commit -m "data: B200 PDL A/B test — CUDA_LAUNCH_BLOCKING=1 vs baseline
+
+          Co-Authored-By: Claude Opus 4 <noreply@anthropic.com>"
+            git pull --rebase origin main && git push
+          else
+            echo 'Nothing to commit'
+          fi

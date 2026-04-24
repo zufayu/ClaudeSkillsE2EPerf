@@ -1,0 +1,120 @@
+name: "B200 PDL A/B Test (TRT-LLM)"
+on:
+  workflow_dispatch:
+jobs:
+  pdl-ab-test:
+    runs-on: [self-hosted, b200]
+    timeout-minutes: 180
+    env:
+      CONTAINER: zufa_trt
+      REPO: /home/zufayu/ClaudeSkillsE2EPerf
+      MODEL: /SFS-aGqda6ct/models/DeepSeek-R1-0528-NVFP4-v2
+      RESULT_BASELINE: results/b200_dsr_fp4/b200_pdl_baseline
+      RESULT_NOPDL: results/b200_dsr_fp4/b200_pdl_nopdl
+    steps:
+      - name: Unpause container if paused
+        continue-on-error: true
+        run: docker unpause $CONTAINER 2>/dev/null; true
+
+      - name: Fix git safe.directory
+        run: |
+          git config --global --add safe.directory $REPO 2>/dev/null; true
+          docker exec $CONTAINER bash -c "git config --global --add safe.directory $REPO 2>/dev/null; true"
+
+      - name: Sync repo
+        run: |
+          cd $REPO
+          git remote set-url origin https://x-access-token:${{ github.token }}@github.com/zufayu/ClaudeSkillsE2EPerf.git
+          git rebase --abort 2>/dev/null || true
+          git reset --hard 2>/dev/null || true
+          git fetch origin main && git reset --hard origin/main
+
+      - name: Verify container and GPU
+        run: |
+          docker exec $CONTAINER nvidia-smi --query-gpu=name --format=csv,noheader | head -1
+          docker exec $CONTAINER bash -c "pip show tensorrt-llm 2>/dev/null | grep Version || trtllm-bench --version 2>/dev/null || echo 'TRT-LLM version unknown'"
+
+      - name: Cleanup GPU before baseline
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done; sleep 3; true
+
+      - name: Get image name
+        run: echo "IMAGE=$(docker inspect $CONTAINER --format '{{.Config.Image}}' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
+
+      - name: "A: Baseline benchmark (PDL on)"
+        run: |
+          docker exec -e LD_LIBRARY_PATH=/usr/local/tensorrt/lib:/usr/local/cuda/lib64 $CONTAINER bash -c "cd $REPO && mkdir -p $RESULT_BASELINE && bash scripts/sa_bench_b200.sh --model-fp4 $MODEL --configs fp4-throughput --scenario chat --concurrency 64 --ep-sizes 1 --tp 4 --dp false --gpus 0,1,2,3 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_BASELINE 2>&1 | tee $RESULT_BASELINE/bench.log"
+
+      - name: Show baseline results
+        if: always()
+        run: |
+          echo "=== BASELINE (PDL on) ==="
+          cat $REPO/$RESULT_BASELINE/bench.log 2>/dev/null | grep -E "throughput|TPOT|TTFT|token|output" | tail -20 || echo "No results"
+          ls -lh $REPO/$RESULT_BASELINE/ 2>/dev/null | head -10
+
+      - name: Cleanup GPU before no-PDL
+        continue-on-error: true
+        run: |
+          for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sort -u | tr -d " "); do kill -9 $p 2>/dev/null; done; sleep 3; true
+
+      - name: "B: No-PDL benchmark (TRTLLM_ENABLE_PDL=0)"
+        run: |
+          docker exec -e TRTLLM_ENABLE_PDL=0 -e LD_LIBRARY_PATH=/usr/local/tensorrt/lib:/usr/local/cuda/lib64 $CONTAINER bash -c "cd $REPO && mkdir -p $RESULT_NOPDL && bash scripts/sa_bench_b200.sh --model-fp4 $MODEL --configs fp4-throughput --scenario chat --concurrency 64 --ep-sizes 1 --tp 4 --dp false --gpus 0,1,2,3 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_NOPDL 2>&1 | tee $RESULT_NOPDL/bench.log"
+
+      - name: Show no-PDL results
+        if: always()
+        run: |
+          echo "=== NO-PDL (TRTLLM_ENABLE_PDL=0) ==="
+          cat $REPO/$RESULT_NOPDL/bench.log 2>/dev/null | grep -E "throughput|TPOT|TTFT|token|output" | tail -20 || echo "No results"
+          ls -lh $REPO/$RESULT_NOPDL/ 2>/dev/null | head -10
+
+      - name: "Compare: Baseline vs No-PDL"
+        if: always()
+        run: |
+          echo "============================================================"
+          echo "  B200 PDL A/B Test — TRT-LLM FP4 TP4 EP1 c=64 chat"
+          echo "============================================================"
+          echo ""
+          echo "=== BASELINE (PDL on) ==="
+          cat $REPO/$RESULT_BASELINE/bench.log 2>/dev/null | tail -30
+          echo ""
+          echo "=== NO-PDL (TRTLLM_ENABLE_PDL=0) ==="
+          cat $REPO/$RESULT_NOPDL/bench.log 2>/dev/null | tail -30
+          echo ""
+          echo "=== Summary JSON files ==="
+          for d in $RESULT_BASELINE $RESULT_NOPDL; do
+            echo "--- $d ---"
+            python3 -c "
+          import json, glob
+          files = sorted(glob.glob('$REPO/' + '$d' + '/*.json'))
+          for f in files:
+              try:
+                  d = json.load(open(f))
+                  tput = d.get('total_throughput', d.get('throughput', '?'))
+                  otput = d.get('output_throughput', d.get('output_token_throughput', '?'))
+                  tpot = d.get('tpot_p50', d.get('inter_token_latency_p50', '?'))
+                  ttft = d.get('ttft_p50', d.get('time_to_first_token_p50', '?'))
+                  print(f'  {f.split(\"/\")[-1]}: total_tput={tput} output_tput={otput} tpot_p50={tpot} ttft_p50={ttft}')
+              except: pass
+          " 2>/dev/null || echo "  (no JSON found)"
+          done
+
+      - name: Git commit results
+        if: always()
+        run: |
+          cd $REPO && git config user.email ci@github.com && git config user.name 'B200 CI'
+          for d in $RESULT_BASELINE $RESULT_NOPDL; do
+            for ext in csv json log md; do git add -f $d/*.$ext 2>/dev/null || true; done
+          done
+          git diff --cached --name-only
+          if ! git diff --cached --quiet; then
+            git commit -m "data: B200 PDL A/B test — TRT-LLM FP4 TP4 EP1 c=64 chat
+
+          Baseline (PDL on) vs No-PDL (TRTLLM_ENABLE_PDL=0)
+
+          Co-Authored-By: Claude Opus 4 <noreply@anthropic.com>"
+            git pull --rebase origin main && git push
+          else
+            echo 'Nothing to commit'
+          fi
