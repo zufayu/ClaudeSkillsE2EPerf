@@ -173,6 +173,47 @@ Rules:
 - `summary.md` and main `result_profiled_*.json` stay at profiling root
 - `.gitignore` controls large binaries per sub-directory (e.g. `**/nsys/*.nsys-rep`)
 
+#### Naming requirements for new files
+
+> Augments the templates above. Existing legacy files NOT auto-renamed; new
+> writes (workflow runs after 2026-04-25) MUST follow these rules.
+
+**Mandatory fields** in every new bench/profiling file name:
+- `_<scenario>` ∈ {`chat`, `reasoning`, `summarize`}
+- `_c<concurrency>` (e.g. `c4`, `c64`)
+
+**Canonical role prefixes** (extend only with rationale):
+
+| role | location | what |
+|---|---|---|
+| `decode_breakdown_*` | `<run-config-tag>/` (R8d output, MI355X) or `STEADY/` (B300/B200) | per-kernel R8d wide-sample stats |
+| `prefill_breakdown_*` | profiling root | prefill-phase kernel stats |
+| `kernel_breakdown_*` | `torch_trace/` | flat kernel listing from extract_cuda_kernels |
+| `per_layer_breakdown_*` | `torch_trace/` | per-layer breakdown from same script |
+| `layer_walltime.{csv,json}` | `torch_trace/` | per-layer walltime (legacy but still emitted) |
+| `nsys_kernels_*.csv` | `nsys/` | nsys analysis output |
+| `*.ncu-rep` | `ncu/` | raw NCU report |
+| `gpu_<bench>_<scenario>_*.csv` | bench root | GPU-side bench output |
+| `result_<bench>_<scenario>_*.json` | bench root | benchmark JSON |
+| `result_profiled_*.json` | profiling root | main task bench result |
+| `server_*.log` | bench/profiling root | server stdout |
+| `summary.md` | bench/profiling root | human readable |
+| `dispatch_inputs.json` | bench/profiling root | workflow_dispatch context (added 2026-04-25) |
+| `trace_torch_*.json.gz` / `.fix.json.gz` | `torch_trace/` or root | raw torch profiler trace |
+
+**Forbidden patterns** (linter-targets for future `validate_naming.py`):
+
+| pattern | example | fix |
+|---|---|---|
+| missing `_c<N>` suffix on bench/profiling file | `decode_breakdown.xlsx` (rocm711) | `decode_breakdown_c64.xlsx` |
+| trace TAG duplicated in derivative file (>70 chars) | `kernel_breakdown_trace_torch_b200_sglang_dsr1_fp4_sglang059_chat_ep1_tp4_c64_step30-1030.csv` | dir already encodes platform/quant/framework; use `kernel_breakdown_chat_c64_step30-1030.csv` |
+| inconsistent suffix across env (rocm711 vs rocm722) | `decode_breakdown.xlsx` vs `decode_breakdown_c64.xlsx` | always include `_c<N>` |
+
+**Snapshot violation count (2026-04-25 audit)**: 97 violations in `results/`,
+mostly the long-redundant-name pattern (31 files) emitted by
+`collect_*_trace.sh`'s `<TAG>` form — kept by user direction not to rename
+existing files. Spec applies to new generators going forward.
+
 ### `runs/` — Unified Import Format (flat)
 
 ```
