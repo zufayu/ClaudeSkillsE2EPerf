@@ -25,6 +25,10 @@ on:
       concurrency:
         type: string
         default: "64"
+      commit_results:
+        description: "Commit results to main (false = upload artifact only, no main pollution)"
+        type: boolean
+        default: false
 
 jobs:
   bench:
@@ -75,8 +79,18 @@ jobs:
           source scripts/ci_lib.sh && ci_load_platform mi355x
           ci_fix_ownership "$RESULT_DIR" || true
 
-      - name: Commit results
+      - name: Upload results artifact (always, for review before commit)
         if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mi355x-atom-${{ inputs.configs }}-tp${{ inputs.tp }}-ep${{ inputs.ep }}-${{ inputs.scenario }}-c${{ inputs.concurrency }}-${{ github.run_id }}
+          path: |
+            ${{ env.REPO }}/${{ env.RESULT_DIR }}
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Commit results
+        if: always() && inputs.commit_results
         run: |
           source scripts/ci_lib.sh && ci_load_platform mi355x
           ci_commit_results "$RESULT_DIR" \
