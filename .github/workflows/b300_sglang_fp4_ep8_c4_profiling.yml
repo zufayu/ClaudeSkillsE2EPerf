@@ -29,6 +29,28 @@ jobs:
 
       - name: Clean old results
         run: docker exec -e REPO=$REPO -e RESULT_DIR=$RESULT_DIR $CONTAINER bash -c 'rm -rf $REPO/$RESULT_DIR/* 2>/dev/null; true'
+      - name: Record dispatch context
+        run: |
+          mkdir -p $REPO/$RESULT_DIR
+          cat > $REPO/$RESULT_DIR/dispatch_inputs.json <<EOF
+          {
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "ref": "${{ github.ref_name }}",
+            "sha": "${{ github.sha }}",
+            "actor": "${{ github.actor }}",
+            "dispatched_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platform": "b300",
+            "container": "$CONTAINER",
+            "model": "$MODEL",
+            "result_dir": "$RESULT_DIR",
+            "inputs": {"commit_results": "${{ inputs.commit_results }}"}
+          }
+          EOF
+          echo "=== dispatch_inputs.json written ==="
+          cat $REPO/$RESULT_DIR/dispatch_inputs.json
+
 
       - name: "Torch trace capture (chat c=4, TP8 EP8)"
         run: docker exec -e REPO=$REPO -e MODEL_FP4=$MODEL_FP4 -e RESULT_DIR=$RESULT_DIR $CONTAINER bash -c 'cd $REPO && bash scripts/collect_sglang_trace.sh --model $MODEL_FP4 --tp 8 --ep 8 --scenario chat --concurrency 4 --env sglang059 --container-image ${{ env.IMAGE }} --result-dir ./$RESULT_DIR'

@@ -35,6 +35,28 @@ jobs:
         run: cd $REPO && git fetch origin && git reset --hard origin/main
       - name: Clean old results
         run: podman exec $CONTAINER bash -c "rm -rf $REPO/$RESULT_DIR/result_profiled_*.json $REPO/$RESULT_DIR/decode_walltime_*.csv $REPO/$RESULT_DIR/summary.md $REPO/$RESULT_DIR/*.log 2>/dev/null; true"
+      - name: Record dispatch context
+        run: |
+          mkdir -p $REPO/$RESULT_DIR
+          cat > $REPO/$RESULT_DIR/dispatch_inputs.json <<EOF
+          {
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "ref": "${{ github.ref_name }}",
+            "sha": "${{ github.sha }}",
+            "actor": "${{ github.actor }}",
+            "dispatched_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platform": "mi355x",
+            "container": "$CONTAINER",
+            "model": "$MODEL",
+            "result_dir": "$RESULT_DIR",
+            "inputs": {"config": "${{ inputs.config }}", "commit_results": "${{ inputs.commit_results }}"}
+          }
+          EOF
+          echo "=== dispatch_inputs.json written ==="
+          cat $REPO/$RESULT_DIR/dispatch_inputs.json
+
       - name: Run MXFP4 EP1 TP4 profiling (chat c=64)
         run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/collect_atom_trace.sh --model $MODEL --scenario chat --concurrency 64 --tp 4 --profile-prompts 640 --roctracer-max-events 20000000 --env rocm722 --result-dir ./$RESULT_DIR"
       - name: Show profiling results
@@ -82,6 +104,28 @@ jobs:
 
       - name: Clean old results
         run: podman exec $CONTAINER bash -c "rm -rf $REPO/$RESULT_DIR/result_profiled_*.json $REPO/$RESULT_DIR/decode_walltime_*.csv $REPO/$RESULT_DIR/summary.md $REPO/$RESULT_DIR/*.log 2>/dev/null; true"
+      - name: Record dispatch context
+        run: |
+          mkdir -p $REPO/$RESULT_DIR
+          cat > $REPO/$RESULT_DIR/dispatch_inputs.json <<EOF
+          {
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "ref": "${{ github.ref_name }}",
+            "sha": "${{ github.sha }}",
+            "actor": "${{ github.actor }}",
+            "dispatched_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platform": "mi355x",
+            "container": "$CONTAINER",
+            "model": "$MODEL",
+            "result_dir": "$RESULT_DIR",
+            "inputs": {"config": "${{ inputs.config }}", "commit_results": "${{ inputs.commit_results }}"}
+          }
+          EOF
+          echo "=== dispatch_inputs.json written ==="
+          cat $REPO/$RESULT_DIR/dispatch_inputs.json
+
 
       - name: Run MXFP4 EP4 TP4 profiling (chat c=64)
         run: podman exec $CONTAINER bash -c "cd $REPO && bash scripts/collect_atom_trace.sh --model $MODEL --scenario chat --concurrency 64 --tp 4 --ep --profile-prompts 640 --roctracer-max-events 20000000 --env rocm722 --result-dir ./$RESULT_DIR"
@@ -136,6 +180,28 @@ jobs:
 
       - name: Clean old results (keep trace .json.gz separate)
         run: |
+      - name: Record dispatch context
+        run: |
+          mkdir -p $REPO/$RESULT_DIR
+          cat > $REPO/$RESULT_DIR/dispatch_inputs.json <<EOF
+          {
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "ref": "${{ github.ref_name }}",
+            "sha": "${{ github.sha }}",
+            "actor": "${{ github.actor }}",
+            "dispatched_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platform": "mi355x",
+            "container": "$CONTAINER",
+            "model": "$MODEL",
+            "result_dir": "$RESULT_DIR",
+            "inputs": {"config": "${{ inputs.config }}", "commit_results": "${{ inputs.commit_results }}"}
+          }
+          EOF
+          echo "=== dispatch_inputs.json written ==="
+          cat $REPO/$RESULT_DIR/dispatch_inputs.json
+
           podman exec $CONTAINER bash -c "rm -rf $REPO/$RESULT_DIR/result_profiled_*.json $REPO/$RESULT_DIR/decode_walltime_*.csv $REPO/$RESULT_DIR/summary.md $REPO/$RESULT_DIR/*.log 2>/dev/null; true"
 
       - name: Run MXFP4 EP8 TP8 profiling (chat c=64, with_stack=False)
