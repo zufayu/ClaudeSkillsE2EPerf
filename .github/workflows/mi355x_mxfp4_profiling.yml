@@ -68,6 +68,21 @@ jobs:
         if: success()
         run: |
           podman exec $CONTAINER bash -c "cd $REPO/$RESULT_DIR && TRACE=\$(ls trace_torch_*_c*_full.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE\" ]; then echo \"Trace: \$TRACE\"; python3 $REPO/scripts/decode_kernel_breakdown.py \$TRACE --target-bs 64 && ls -lh *breakdown*.xlsx 2>/dev/null; else echo 'No trace file'; fi"
+      - name: Upload analysis artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mi355x-mxfp4-${{ inputs.config }}-${{ github.run_id }}
+          path: |
+            $REPO/$RESULT_DIR/decode_breakdown*.csv
+            $REPO/$RESULT_DIR/decode_breakdown*.xlsx
+            $REPO/$RESULT_DIR/prefill_breakdown*.xlsx
+            $REPO/$RESULT_DIR/result_profiled_*.json
+            $REPO/$RESULT_DIR/summary.md
+            $REPO/$RESULT_DIR/dispatch_inputs.json
+          retention-days: 30
+          if-no-files-found: warn
+
       - name: Git commit results
         if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
         run: |
@@ -141,6 +156,21 @@ jobs:
         run: |
           podman exec $CONTAINER bash -c "cd $REPO/$RESULT_DIR && TRACE=\$(ls trace_torch_*_c*_full.json.gz 2>/dev/null | head -1) && if [ -n \"\$TRACE\" ]; then echo \"Trace: \$TRACE\"; python3 $REPO/scripts/decode_kernel_breakdown.py \$TRACE --target-bs 64 && ls -lh *breakdown*.xlsx 2>/dev/null; else echo 'No trace file'; fi"
 
+      - name: Upload analysis artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mi355x-mxfp4-${{ inputs.config }}-${{ github.run_id }}
+          path: |
+            $REPO/$RESULT_DIR/decode_breakdown*.csv
+            $REPO/$RESULT_DIR/decode_breakdown*.xlsx
+            $REPO/$RESULT_DIR/prefill_breakdown*.xlsx
+            $REPO/$RESULT_DIR/result_profiled_*.json
+            $REPO/$RESULT_DIR/summary.md
+            $REPO/$RESULT_DIR/dispatch_inputs.json
+          retention-days: 30
+          if-no-files-found: warn
+
       - name: Git commit and push results (exclude large .json.gz traces)
         if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
         run: |
@@ -213,6 +243,21 @@ jobs:
         run: |
           ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'
           cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'
+
+      - name: Upload analysis artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mi355x-mxfp4-${{ inputs.config }}-${{ github.run_id }}
+          path: |
+            $REPO/$RESULT_DIR/decode_breakdown*.csv
+            $REPO/$RESULT_DIR/decode_breakdown*.xlsx
+            $REPO/$RESULT_DIR/prefill_breakdown*.xlsx
+            $REPO/$RESULT_DIR/result_profiled_*.json
+            $REPO/$RESULT_DIR/summary.md
+            $REPO/$RESULT_DIR/dispatch_inputs.json
+          retention-days: 30
+          if-no-files-found: warn
 
       - name: Git commit and push results (exclude large .json.gz traces)
         if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')

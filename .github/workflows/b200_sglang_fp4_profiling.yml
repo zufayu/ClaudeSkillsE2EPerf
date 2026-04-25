@@ -118,6 +118,21 @@ jobs:
           bash -c "ls -lh $REPO/$RESULT_DIR/nsys/ 2>/dev/null || echo 'No nsys dir'"
 
       # ===== Commit Results (torch analysis only, no large trace files) =====
+      - name: Upload analysis artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b200-sglang-fp4-${{ inputs.scenario }}-c${{ inputs.concurrency }}-${{ github.run_id }}
+          path: |
+            $REPO/$RESULT_DIR/decode_breakdown*.csv
+            $REPO/$RESULT_DIR/decode_breakdown*.xlsx
+            $REPO/$RESULT_DIR/prefill_breakdown*.xlsx
+            $REPO/$RESULT_DIR/result_profiled_*.json
+            $REPO/$RESULT_DIR/summary.md
+            $REPO/$RESULT_DIR/dispatch_inputs.json
+          retention-days: 30
+          if-no-files-found: warn
+
       - name: Git commit and push results
         if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
         run: |
