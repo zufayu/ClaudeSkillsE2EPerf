@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 120
     env:
       CONTAINER: zufa_sglang
-      REPO: /home/zufayu/ClaudeSkillsE2EPerf
+      REPO: /home/zufa/ClaudeSkillsE2EPerf
     steps:
       - name: Sync repo
         run: cd $REPO && git fetch origin && git reset --hard origin/main
@@ -24,7 +24,7 @@ jobs:
       - name: Run command
         run: |
           if [ "${{ inputs.in_container }}" = "true" ]; then
-            docker exec $CONTAINER bash -c 'cd /home/zufayu/ClaudeSkillsE2EPerf && ${{ inputs.command }}'
+            docker exec $CONTAINER bash -c "cd $REPO && ${{ inputs.command }}"
           else
             cd $REPO && ${{ inputs.command }}
           fi

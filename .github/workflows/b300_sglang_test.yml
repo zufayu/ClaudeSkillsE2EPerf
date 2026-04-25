@@ -8,7 +8,7 @@ jobs:
     env:
       CONTAINER: zufa_sglang
       MODEL_FP4: /models/DeepSeek-R1-0528-NVFP4-v2
-      REPO: /home/zufayu/ClaudeSkillsE2EPerf
+      REPO: /home/zufa/ClaudeSkillsE2EPerf
     steps:
       - name: Sync repo
         run: cd $REPO && git fetch origin && git reset --hard origin/main
