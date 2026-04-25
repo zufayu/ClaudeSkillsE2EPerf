@@ -242,63 +242,28 @@ kill_server() {
 }
 
 # ======================== MI355X Adaptive Parameters ===========================
-# MI355X with ATOM/vLLM is simpler than B200 TRT-LLM:
-#   - No MOE_BACKEND / CUDA graph switching (handled by vLLM internally)
-#   - No piecewise CUDA graphs or delay batching
-#   - KV cache managed by vLLM's --gpu-memory-utilization
-#   - MTP via --speculative-model / --num-speculative-tokens
+# Server flags follow SA InferenceX MI355X+ATOM scripts (single_node/dsr1_*_mi355x_atom*.sh):
+#   - No --gpu-memory-utilization (defer to ATOM default 0.9)
+#   - No --max-num-seqs (defer to ATOM default 512)
+#   - --max-model-len: omit for chat (1k/1k), pass 10240 for reasoning (1k/8k) and summarize (8k/1k)
+# Only ENFORCE_EAGER and MTP_LAYERS are scenario-tuned here; both are independent
+# of the three SA-deferred knobs (eager-mode is a graph-capture toggle, MTP is
+# spec-decoding depth).
 #
 # Arguments: $1=ISL $2=OSL $3=CONC $4=has_mtp $5=quant(bf16|fp8|mxfp4)
 compute_mi355x_params() {
     local isl=$1 osl=$2 conc=$3 has_mtp=$4 quant=${5:-bf16}
 
-    # --- MI355X defaults ---
-    # ATOM default max_num_seqs=512, must be >= cudagraph capture sizes (default max 512)
-    # Do NOT reduce below 512 unless also setting --cudagraph-capture-sizes
-    GPU_MEMORY_UTILIZATION=0.90
     MTP_LAYERS=0
     ENFORCE_EAGER="false"
-    MAX_NUM_SEQS=512
 
     if [[ "$has_mtp" == "true" ]]; then
         MTP_LAYERS=3
     fi
 
-    # Summarize (8K input) needs more KV cache headroom
-    if [[ "$isl" == "8192" ]]; then
-        GPU_MEMORY_UTILIZATION=0.85
-    fi
-
-    # Reasoning (8K output) at high concurrency: reduce memory util
+    # Reasoning (8K output) at high concurrency: skip CUDA graph capture to free ~1-2GB/GPU.
     if [[ "$osl" == "8192" && $conc -gt 64 ]]; then
-        GPU_MEMORY_UTILIZATION=0.85
         ENFORCE_EAGER="true"
-    fi
-
-    # FP8 uses less memory per parameter, can afford slightly higher utilization
-    if [[ "$quant" == "fp8" ]]; then
-        GPU_MEMORY_UTILIZATION=0.92
-        if [[ "$isl" == "8192" ]]; then
-            GPU_MEMORY_UTILIZATION=0.88
-        fi
-        if [[ "$osl" == "8192" && $conc -gt 64 ]]; then
-            GPU_MEMORY_UTILIZATION=0.88
-            ENFORCE_EAGER="true"
-        fi
-    fi
-
-    # MXFP4: MoE weights are FP4 but attention is FP8, so memory footprint
-    # is between FP4 and FP8. CUDA graph capture at TP=8 is tight on MI355X.
-    # Start conservative and enforce eager to skip graph capture (~1-2GB/GPU).
-    if [[ "$quant" == "mxfp4" ]]; then
-        GPU_MEMORY_UTILIZATION=0.90
-        ENFORCE_EAGER="false"
-        if [[ "$isl" == "8192" || "$osl" == "8192" ]]; then
-            GPU_MEMORY_UTILIZATION=0.85
-        fi
-        if [[ "$osl" == "8192" && $conc -gt 32 ]]; then
-            GPU_MEMORY_UTILIZATION=0.80
-        fi
     fi
 }
 
@@ -327,17 +292,19 @@ run_single_point() {
     [[ "$has_mtp" == "true" ]] && tag="${tag}_mtp3"
 
     log "  ---- $tag ----"
-    log "    QUANT=$quant, MTP=$MTP_LAYERS, GPU_MEM_UTIL=$GPU_MEMORY_UTILIZATION"
-    log "    MAX_NUM_SEQS=$MAX_NUM_SEQS, ENFORCE_EAGER=$ENFORCE_EAGER"
+    log "    QUANT=$quant, MTP=$MTP_LAYERS, ENFORCE_EAGER=$ENFORCE_EAGER"
 
     kill_server
 
-    # --- Compute MAX_MODEL_LEN ---
-    local max_model_len
+    # --- Compute MAX_MODEL_LEN (SA InferenceX MI355X+ATOM convention) ---
+    # chat (1k/1k) → omit, defer to ATOM default
+    # reasoning (1k/8k) / summarize (8k/1k) → 10240
+    # explicit --max-model-len always wins
+    local max_model_len=""
     if [[ -n "$MAX_MODEL_LEN_OVERRIDE" ]]; then
         max_model_len="$MAX_MODEL_LEN_OVERRIDE"
-    else
-        max_model_len=$(( isl + osl + 200 ))
+    elif [[ "$isl" != "1024" || "$osl" != "1024" ]]; then
+        max_model_len=10240
     fi
 
     # --- Start ATOM server ---
@@ -347,18 +314,20 @@ run_single_point() {
 
     start_gpu_monitor --output "$gpu_csv"
 
-    log "  Starting ATOM server: TP=$TP, QUANT=$quant, MAX_MODEL_LEN=$max_model_len"
+    log "  Starting ATOM server: TP=$TP, QUANT=$quant, MAX_MODEL_LEN=${max_model_len:-<atom-default>}"
 
     local serve_args=(
         python3 -m atom.entrypoints.openai_server
         --model "$model"
         --server-port "$SERVER_PORT"
         --tensor-parallel-size "$TP"
-        --max-model-len "$max_model_len"
-        --max-num-seqs "$MAX_NUM_SEQS"
-        --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
         --kv_cache_dtype fp8
+        --trust-remote-code
     )
+
+    if [[ -n "$max_model_len" ]]; then
+        serve_args+=(--max-model-len "$max_model_len")
+    fi
 
     # ATOM auto-detects FP8 weights from model config.json quantization_config
     # --kv_cache_dtype fp8: use FP8 KV cache (matches ATOM CI config)
@@ -429,17 +398,18 @@ run_single_point() {
             --request-rate inf
             --ignore-eos
             --save-result
+            --trust-remote-code
             --percentile-metrics "ttft,tpot,itl,e2el"
             --result-dir "$RESULT_DIR"
             --result-filename "${result_filename}.json"
             --metadata
-                "max_model_len=$max_model_len"
-                "gpu_memory_utilization=$GPU_MEMORY_UTILIZATION"
+                "max_model_len=${max_model_len:-atom_default}"
+                "gpu_memory_utilization=atom_default"
                 "enforce_eager=$ENFORCE_EAGER"
                 "kv_cache_dtype=fp8"
                 "tensor_parallel_size=$TP"
                 "expert_parallel=$EXPERT_PARALLEL"
-                "max_num_seqs=$MAX_NUM_SEQS"
+                "max_num_seqs=atom_default"
                 "mtp_layers=$MTP_LAYERS"
                 "random_range_ratio=$RANDOM_RANGE_RATIO"
                 "atom_version=$atom_version"
@@ -447,6 +417,13 @@ run_single_point() {
                 "rocm_version=$rocm_version"
                 "container_image=$CONTAINER_IMAGE"
         )
+
+        # MTP/spec-decoding requires chat-template-formatted prompts so the
+        # speculator sees inputs in its training distribution. Matches ATOM CI
+        # bench_args for DSR1-MTP3 / MXFP4-MTP3 in .github/benchmark/models.json.
+        if [[ $MTP_LAYERS -gt 0 ]]; then
+            bench_cmd+=(--use-chat-template)
+        fi
 
         set -x
         "${bench_cmd[@]}" || log "  WARN: Benchmark failed for $tag"

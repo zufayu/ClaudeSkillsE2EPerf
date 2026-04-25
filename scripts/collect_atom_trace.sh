@@ -53,10 +53,13 @@ TP=4
 RESULT_DIR=""
 TRACE_DIR="/tmp/trace"
 SERVER_PORT=8000
-GPU_MEM_UTIL=0.90
 KV_CACHE_DTYPE="fp8"
-MAX_NUM_SEQS=512
-MAX_MODEL_LEN=""
+# Server-side knobs default empty so we mirror sa_bench_mi355x.sh: defer to ATOM
+# default unless user explicitly overrides via CLI. SA InferenceX MI355X+ATOM
+# scripts (single_node/dsr1_*_mi355x_atom*.sh) do not pass these either.
+GPU_MEM_UTIL=""
+MAX_NUM_SEQS=""
+MAX_MODEL_LEN=""           # empty = SA logic: omit for chat (1k/1k), 10240 otherwise
 PROFILE_NUM_PROMPTS=""      # defaults to CONC*2 (matches ATOM CI regression flow + SA InferenceX)
                             # Old default CONC*10 produced huge traces (~3GB compressed for c=64).
                             # CONC*2 still yields >100 decode steps for stable operator-time averaging.
@@ -67,6 +70,7 @@ EXPERT_PARALLEL="false"
 MODEL_NAME="dsr1"
 QUANT="mxfp4"
 ENV=""
+MTP_LAYERS=0               # >0 enables --method mtp + bench --use-chat-template (mirrors sa_bench_mi355x.sh)
 
 # ======================== Argument Parsing ====================================
 usage() {
@@ -85,14 +89,18 @@ Options:
   --tp N                    Tensor parallelism [default: 4]
   --ep                      Enable expert parallelism (--enable-expert-parallel)
   --port PORT               Server port [default: 8000]
-  --gpu-mem-util FLOAT      GPU memory utilization [default: 0.90]
-  --max-model-len N         Override max model length
+  --gpu-mem-util FLOAT      Override --gpu-memory-utilization [default: ATOM default 0.9, not passed]
+  --max-num-seqs N          Override --max-num-seqs [default: ATOM default 512, not passed]
+  --max-model-len N         Override --max-model-len [default: SA logic — chat omits, else 10240]
   --profile-prompts N       Prompts during profiling [default: conc*2, same as warmup]
                             Use smaller values (e.g. 128) for faster runs with less memory.
                             Must be >= concurrency to maintain steady-state batch size.
   --roctracer-max-events N  Set ROCTRACER_MAX_EVENTS (default 1M; use 10000000 for longer traces)
   --flush-timeout N         Max seconds to wait for trace flush [default: 300]
   --layer N                 Layer index for parse_trace.py [default: 40]
+  --mtp-layers N            MTP/spec-decoding layers [default: 0 = off]. >0 adds
+                            --method mtp --num-speculative-tokens N to server and
+                            --use-chat-template to bench (matches ATOM CI MTP3 + sa_bench).
   -h, --help                Show this help
 
 Trace size estimates (chat scenario, concurrency 64):
@@ -126,6 +134,7 @@ while [[ $# -gt 0 ]]; do
         --result-dir)       RESULT_DIR="$2"; shift 2 ;;
         --port)             SERVER_PORT="$2"; shift 2 ;;
         --gpu-mem-util)     GPU_MEM_UTIL="$2"; shift 2 ;;
+        --max-num-seqs)     MAX_NUM_SEQS="$2"; shift 2 ;;
         --max-model-len)    MAX_MODEL_LEN="$2"; shift 2 ;;
         --profile-prompts)  PROFILE_NUM_PROMPTS="$2"; shift 2 ;;
         --roctracer-max-events) ROCTRACER_MAX_EVENTS="$2"; shift 2 ;;
@@ -135,6 +144,7 @@ while [[ $# -gt 0 ]]; do
         --model-name)       MODEL_NAME="$2"; shift 2 ;;
         --quant)            QUANT="$2"; shift 2 ;;
         --env)              ENV="$2"; shift 2 ;;
+        --mtp-layers)       MTP_LAYERS="$2"; shift 2 ;;
         -h|--help)          usage ;;
         *)                  echo "Unknown arg: $1"; exit 1 ;;
     esac
@@ -161,7 +171,11 @@ WARMUP_NUM_PROMPTS=$(( CONCURRENCY * 2 ))
 # Profile prompts default to benchmark standard: CONC * 10
 [[ -z "$PROFILE_NUM_PROMPTS" ]] && PROFILE_NUM_PROMPTS=$(( CONCURRENCY * 2 ))
 
-# If MAX_MODEL_LEN not set, let ATOM use its default (no --max-model-len passed)
+# SA InferenceX max-model-len convention (single_node/dsr1_*_mi355x_atom*.sh):
+# omit for chat (1024/1024), pass 10240 otherwise. User --max-model-len always wins.
+if [[ -z "$MAX_MODEL_LEN" && ! ( "$ISL" == "1024" && "$OSL" == "1024" ) ]]; then
+    MAX_MODEL_LEN=10240
+fi
 
 # ======================== Utilities ===========================================
 TS() { date '+%Y-%m-%d %H:%M:%S'; }
@@ -367,8 +381,10 @@ log "  Concurrency:   $CONCURRENCY"
 log "  TP:            $TP"
 log "  Warmup:        $WARMUP_NUM_PROMPTS prompts"
 log "  Profile:       $PROFILE_NUM_PROMPTS prompts"
-log "  Max Model Len: $MAX_MODEL_LEN"
-log "  GPU Mem Util:  $GPU_MEM_UTIL"
+log "  Max Model Len: ${MAX_MODEL_LEN:-<atom-default>}"
+log "  GPU Mem Util:  ${GPU_MEM_UTIL:-<atom-default>}"
+log "  Max Num Seqs:  ${MAX_NUM_SEQS:-<atom-default>}"
+log "  MTP Layers:    $MTP_LAYERS"
 log "  Result Dir:    $RESULT_DIR"
 log "  Trace Dir:     $TRACE_DIR"
 log "  ROCTracer Max: ${ROCTRACER_MAX_EVENTS:-default}"
@@ -396,11 +412,39 @@ EP_ARGS=()
 if [[ "$EXPERT_PARALLEL" == "true" ]]; then
     EP_ARGS+=(--enable-expert-parallel)
 fi
-log "Starting ATOM server (TP=$TP, EP=$EXPERT_PARALLEL, profiler enabled)..."
 
-MAX_MODEL_LEN_ARGS=()
+MTP_SERVER_ARGS=()
+BENCH_CHAT_ARGS=()
+if [[ "$MTP_LAYERS" -gt 0 ]]; then
+    MTP_SERVER_ARGS+=(--method mtp --num-speculative-tokens "$MTP_LAYERS")
+    # Spec-decoding acceptance rate is only stable when prompts come through the
+    # chat template (matches ATOM CI bench_args for DSR1-MTP3 in models.json).
+    BENCH_CHAT_ARGS+=(--use-chat-template)
+fi
+
+# Mirror sa_bench_mi355x.sh compute_mi355x_params: skip CUDA graph capture for
+# reasoning-style scenarios (8K OSL, high conc) to free ~1-2GB/GPU.
+EAGER_ARGS=()
+if [[ "$OSL" == "8192" && "$CONCURRENCY" -gt 64 ]]; then
+    EAGER_ARGS+=(--enforce-eager)
+fi
+
+# ROCm-specific env vars (mirror sa_bench_mi355x.sh server lifecycle).
+export NCCL_SOCKET_IFNAME=lo
+export VLLM_USE_TRITON_FLASH_ATTN=0
+
+log "Starting ATOM server (TP=$TP, EP=$EXPERT_PARALLEL, MTP=$MTP_LAYERS, profiler enabled)..."
+
+# Optional server overrides (default: defer to ATOM, mirrors sa_bench_mi355x.sh)
+SERVER_OVERRIDE_ARGS=()
 if [[ -n "$MAX_MODEL_LEN" ]]; then
-    MAX_MODEL_LEN_ARGS+=(--max-model-len "$MAX_MODEL_LEN")
+    SERVER_OVERRIDE_ARGS+=(--max-model-len "$MAX_MODEL_LEN")
+fi
+if [[ -n "$MAX_NUM_SEQS" ]]; then
+    SERVER_OVERRIDE_ARGS+=(--max-num-seqs "$MAX_NUM_SEQS")
+fi
+if [[ -n "$GPU_MEM_UTIL" ]]; then
+    SERVER_OVERRIDE_ARGS+=(--gpu-memory-utilization "$GPU_MEM_UTIL")
 fi
 
 # Provenance header — overwrites server log with image identity & framework
@@ -432,13 +476,14 @@ python3 -m atom.entrypoints.openai_server \
     --model "$MODEL" \
     --server-port "$SERVER_PORT" \
     --tensor-parallel-size "$TP" \
-    "${MAX_MODEL_LEN_ARGS[@]}" \
-    --max-num-seqs "$MAX_NUM_SEQS" \
-    --gpu-memory-utilization "$GPU_MEM_UTIL" \
     --kv_cache_dtype "$KV_CACHE_DTYPE" \
+    --trust-remote-code \
     --torch-profiler-dir "$TRACE_DIR" \
     --mark-trace \
+    "${SERVER_OVERRIDE_ARGS[@]}" \
+    "${EAGER_ARGS[@]}" \
     "${EP_ARGS[@]}" \
+    "${MTP_SERVER_ARGS[@]}" \
     >> "$RESULT_DIR/server_${TAG}.log" 2>&1 &
 SERVER_PID=$!
 log "Server PID: $SERVER_PID"
@@ -480,7 +525,9 @@ python3 -u -m atom.benchmarks.benchmark_serving \
     --num-prompts "$WARMUP_NUM_PROMPTS" \
     --max-concurrency "$CONCURRENCY" \
     --request-rate inf \
-    --ignore-eos >> "$SCRIPT_LOG" 2>&1 || {
+    --ignore-eos \
+    --trust-remote-code \
+    "${BENCH_CHAT_ARGS[@]}" >> "$SCRIPT_LOG" 2>&1 || {
     log "WARNING: Warmup benchmark failed"
 }
 log "Warmup benchmark done."
@@ -512,16 +559,19 @@ python3 -u -m atom.benchmarks.benchmark_serving \
     --request-rate inf \
     --ignore-eos \
     --save-result \
+    --trust-remote-code \
+    "${BENCH_CHAT_ARGS[@]}" \
     --percentile-metrics "ttft,tpot,itl,e2el" \
     --result-dir "$RESULT_DIR" \
     --result-filename "$TRACE_RESULT_FILE" \
     --metadata \
-        "max_model_len=$MAX_MODEL_LEN" \
-        "gpu_memory_utilization=$GPU_MEM_UTIL" \
+        "max_model_len=${MAX_MODEL_LEN:-atom_default}" \
+        "gpu_memory_utilization=${GPU_MEM_UTIL:-atom_default}" \
         "kv_cache_dtype=$KV_CACHE_DTYPE" \
         "tensor_parallel_size=$TP" \
         "expert_parallel=$EXPERT_PARALLEL" \
-        "max_num_seqs=$MAX_NUM_SEQS" \
+        "max_num_seqs=${MAX_NUM_SEQS:-atom_default}" \
+        "mtp_layers=$MTP_LAYERS" \
         "profile_num_prompts=$PROFILE_NUM_PROMPTS" \
         "warmup_num_prompts=$WARMUP_NUM_PROMPTS" >> "$SCRIPT_LOG" 2>&1 || {
     log "WARNING: Profiled benchmark failed"

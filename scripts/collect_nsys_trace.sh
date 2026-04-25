@@ -206,6 +206,7 @@ generate_config_yaml() {
     CONFIG_YAML="$TRACE_DIR/config_${TAG}.yml"
 
     cat > "$CONFIG_YAML" << EOF
+max_batch_size: $CUDA_GRAPH_MAX_BATCH_SIZE
 cuda_graph_config:
     enable_padding: true
     max_batch_size: $CUDA_GRAPH_MAX_BATCH_SIZE

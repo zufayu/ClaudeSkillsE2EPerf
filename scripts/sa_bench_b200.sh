@@ -331,6 +331,7 @@ run_single_point() {
     local config_file="$RESULT_DIR/config_${tag}.yml"
 
     cat > "$config_file" << EOF
+max_batch_size: $CUDA_GRAPH_MAX_BATCH_SIZE
 cuda_graph_config:
     enable_padding: true
     max_batch_size: $CUDA_GRAPH_MAX_BATCH_SIZE
@@ -597,6 +598,7 @@ collect_dar() {
         fi
 
         cat > "$dar_config" << EOF
+max_batch_size: $DAR_CONCURRENCY
 print_iter_log: true
 kv_cache_config:
     dtype: fp8
