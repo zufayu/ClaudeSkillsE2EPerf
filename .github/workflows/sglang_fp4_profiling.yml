@@ -2,6 +2,10 @@ name: "SGLang FP4 Profiling (Templatized)"
 on:
   workflow_dispatch:
     inputs:
+      commit_results:
+        description: 'Commit + push outputs (csv/xlsx/log/json) to main'
+        type: boolean
+        default: false
       platform:
         description: "GPU platform"
         type: choice
@@ -161,8 +165,8 @@ jobs:
             cat $REPO/$RESULT_DIR/allreduce_fusion_dist.csv 2>/dev/null | head -20 || echo 'No allreduce CSV'
           fi
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit and push results
-        if: always()
         run: |
           if [ "$USE_SSH" = "true" ]; then
             ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"

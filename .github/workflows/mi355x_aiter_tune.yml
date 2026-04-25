@@ -2,6 +2,10 @@ name: MI355X aiter GEMM Tune
 on:
   workflow_dispatch:
     inputs:
+      commit_results:
+        description: 'Commit + push outputs (csv/xlsx/log/json) to main'
+        type: boolean
+        default: false
       action:
         description: "What to run"
         type: choice
@@ -157,8 +161,8 @@ jobs:
           echo "=== Comparison ==="
           cat $REPO/$RESULT_DIR/aiter_gemm_comparison.csv 2>/dev/null || echo "No comparison CSV"
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit and push results
-        if: always()
         run: |
           cd $REPO && git config user.email 'ci@github.com' && git config user.name 'MI355X CI'
           cd $REPO && git add -f $RESULT_DIR/*.csv $RESULT_DIR/*.json $RESULT_DIR/*.log 2>/dev/null; git diff --cached --name-only

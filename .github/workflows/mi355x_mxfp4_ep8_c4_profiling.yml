@@ -1,6 +1,11 @@
 name: "MI355X MXFP4 EP8 TP8 c=4 Profiling"
 on:
   workflow_dispatch:
+    inputs:
+      commit_results:
+        description: 'Commit + push outputs (csv/xlsx/log/json) to main'
+        type: boolean
+        default: false
 jobs:
   mxfp4-ep8-tp8-c4-profiling:
     runs-on: [self-hosted, mi355x]
@@ -34,8 +39,8 @@ jobs:
           ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'
           cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit and push results
-        if: always()
         run: |
           cd $REPO
           git config user.email "ci@github.com"

@@ -67,8 +67,8 @@ jobs:
             echo "No trace to analyze"
           fi
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit and push
-        if: always()
         run: |
           ssh $NODE "cd $REPO && git config user.email ci@github.com && git config user.name 'B200 CI'"
           ssh $NODE "cd $REPO && git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; git checkout main 2>/dev/null; git fetch origin main && git reset --hard origin/main; true"

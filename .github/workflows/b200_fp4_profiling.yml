@@ -1,6 +1,11 @@
 name: B200 FP4 Profiling
 on:
   workflow_dispatch:
+    inputs:
+      commit_results:
+        description: 'Commit + push outputs (csv/xlsx/log/json) to main'
+        type: boolean
+        default: false
 jobs:
   fp4-ep8-profiling:
     runs-on: [self-hosted, b200]
@@ -35,8 +40,8 @@ jobs:
           ssh $NODE "ls -la $REPO/$RESULT_DIR/ 2>/dev/null || echo 'No result dir'"
           ssh $NODE "cat $REPO/$RESULT_DIR/summary.md 2>/dev/null || echo 'No summary'"
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit and push results
-        if: always()
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
           ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; for ext in log yml jsonl json md csv xlsx; do git add -f $RESULT_DIR/*.\$ext 2>/dev/null; done; git diff --cached --name-only"

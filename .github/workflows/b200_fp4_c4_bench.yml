@@ -45,8 +45,8 @@ jobs:
             ssh $NODE "python3 -c \"import json; d=json.load(open('$f')); print(f'c={d.get(\\\"max_concurrency\\\",\\\"?\\\")}, Output Tput: {d.get(\\\"output_throughput\\\",0):.1f}, TPOT p50: {d.get(\\\"tpot_p50\\\", d.get(\\\"median_tpot_ms\\\",0)):.1f}ms')\"" 2>/dev/null || echo "parse failed"
           done
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit and push
-        if: always()
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
           ssh $NODE "cd $REPO && for ext in json log md csv; do git add -f ${{ env.RESULT_DIR }}/*.\$ext 2>/dev/null || true; done && git diff --cached --name-only"

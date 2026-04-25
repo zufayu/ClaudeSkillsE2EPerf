@@ -1,6 +1,11 @@
 name: "B200 Re-analyze EP4 Trace (trace_layer_detail)"
 on:
   workflow_dispatch:
+    inputs:
+      commit_results:
+        description: 'Commit + push outputs (csv/xlsx/log/json) to main'
+        type: boolean
+        default: false
 jobs:
   reanalyze:
     runs-on: [self-hosted, b200]
@@ -56,8 +61,8 @@ jobs:
           ssh $NODE "cat $REPO/$RESULT_DIR/decode_breakdown_c4.csv 2>/dev/null || echo 'No CSV'"
           ssh $NODE "cat $REPO/$RESULT_DIR/allreduce_fusion_dist.csv 2>/dev/null | head -20 || echo 'No allreduce CSV'"
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit and push
-        if: always()
         run: |
           ssh $NODE "cd $REPO && git config user.email ci@github.com && git config user.name 'B200 CI'"
           ssh $NODE "cd $REPO && for ext in csv json log md; do git add -f $RESULT_DIR/*.\$ext 2>/dev/null || true; done && git diff --cached --name-only"

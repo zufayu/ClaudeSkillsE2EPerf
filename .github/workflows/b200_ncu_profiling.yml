@@ -2,6 +2,10 @@ name: "B200 NCU Profiling (SGLang FP4 EP8)"
 on:
   workflow_dispatch:
     inputs:
+      commit_results:
+        description: 'Commit + push outputs (csv/xlsx/log/json) to main'
+        type: boolean
+        default: false
       scenario:
         description: "Benchmark scenario"
         required: true
@@ -74,8 +78,8 @@ jobs:
           ssh $NODE "tail -50 $REPO/${{ steps.vars.outputs.result_dir }}/ncu/ncu_decode_${{ inputs.scenario }}_c${{ inputs.concurrency }}.log 2>/dev/null || echo 'No log'"
           ssh $NODE "tail -30 $REPO/${{ steps.vars.outputs.result_dir }}/ncu/decode_region.log 2>/dev/null || echo 'No decode region log'"
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit and push
-        if: always()
         run: |
           ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"

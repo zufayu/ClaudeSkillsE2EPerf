@@ -1,6 +1,11 @@
 name: "B200 SGLang FP4 EP8 TP8 c=4 Profiling"
 on:
   workflow_dispatch:
+    inputs:
+      commit_results:
+        description: 'Commit + push outputs (csv/xlsx/log/json) to main'
+        type: boolean
+        default: false
 jobs:
   sglang-fp4-tp8-ep8-c4-profiling:
     runs-on: [self-hosted, b200]
@@ -61,8 +66,8 @@ jobs:
           ssh $NODE "cat $REPO/$RESULT_DIR/decode_breakdown_c4.csv 2>/dev/null || echo 'No CSV'"
           ssh $NODE "cat $REPO/$RESULT_DIR/allreduce_fusion_dist.csv 2>/dev/null | head -20 || echo 'No allreduce CSV'"
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit and push results
-        if: always()
         run: |
           ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"

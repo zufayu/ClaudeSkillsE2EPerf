@@ -1,6 +1,11 @@
 name: "B200 PDL A/B Test (CUDA_LAUNCH_BLOCKING)"
 on:
   workflow_dispatch:
+    inputs:
+      commit_results:
+        description: 'Commit + push outputs (csv/xlsx/log/json) to main'
+        type: boolean
+        default: false
 jobs:
   pdl-test:
     runs-on: [self-hosted, b200]
@@ -111,8 +116,8 @@ jobs:
               print(f'  Sync overhead (CLB1_wall - baseline_kernel_sum):  {clb1[\"walltime\"] - baseline.get(\"kernel_sum\",0):.1f} us')
           " 2>/dev/null || echo "Comparison script failed"
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit results
-        if: always()
         run: |
           cd $REPO && git config user.email ci@github.com && git config user.name 'B200 CI'
           for ext in csv json log md; do git add -f $RESULT_DIR/*.$ext 2>/dev/null || true; done

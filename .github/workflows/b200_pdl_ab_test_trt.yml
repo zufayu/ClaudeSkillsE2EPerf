@@ -1,6 +1,11 @@
 name: "B200 PDL A/B Test (TRT-LLM)"
 on:
   workflow_dispatch:
+    inputs:
+      commit_results:
+        description: 'Commit + push outputs (csv/xlsx/log/json) to main'
+        type: boolean
+        default: false
 jobs:
   pdl-ab-test:
     runs-on: [self-hosted, b200]
@@ -100,8 +105,8 @@ jobs:
           " 2>/dev/null || echo "  (no JSON found)"
           done
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit results
-        if: always()
         run: |
           cd $REPO && git config user.email ci@github.com && git config user.name 'B200 CI'
           for d in $RESULT_BASELINE $RESULT_NOPDL; do

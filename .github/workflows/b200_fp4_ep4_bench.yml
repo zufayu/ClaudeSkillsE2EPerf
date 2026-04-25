@@ -2,6 +2,10 @@ name: B200 FP4 EP4 TP4 Bench (TRT)
 on:
   workflow_dispatch:
     inputs:
+      commit_results:
+        description: 'Commit + push outputs (csv/xlsx/log/json) to main'
+        type: boolean
+        default: false
       container:
         description: 'TRT-LLM container'
         type: choice
@@ -68,6 +72,7 @@ jobs:
           done
 
       - name: Git commit and push results
+        if: inputs.commit_results == true || inputs.commit_results == 'true'
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
           ssh $NODE "cd $REPO && git add -f ${{ env.RESULT_DIR }}/ && git diff --cached --name-only"

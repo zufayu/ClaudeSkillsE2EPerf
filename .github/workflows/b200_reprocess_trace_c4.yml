@@ -1,6 +1,11 @@
 name: "B200 Reprocess Trace (EP8 c=4)"
 on:
   workflow_dispatch:
+    inputs:
+      commit_results:
+        description: 'Commit + push outputs (csv/xlsx/log/json) to main'
+        type: boolean
+        default: false
 jobs:
   reprocess:
     runs-on: [self-hosted, b200]
@@ -33,8 +38,8 @@ jobs:
         if: always()
         run: ssh $NODE "cat $REPO/$RESULT_DIR/decode_breakdown_c4.csv 2>/dev/null || echo 'No CSV'"
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit and push
-        if: always()
         run: |
           ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"

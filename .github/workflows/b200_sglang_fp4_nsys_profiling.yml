@@ -2,6 +2,11 @@ name: B200 SGLang FP4 Nsys Profiling
 on:
   workflow_dispatch:
 
+    inputs:
+      commit_results:
+        description: 'Commit + push outputs (csv/xlsx/log/json) to main'
+        type: boolean
+        default: false
 jobs:
   sglang-fp4-nsys:
     runs-on: [self-hosted, b200]
@@ -50,8 +55,8 @@ jobs:
             echo "No SQLite file found, skipping deep analysis"
           fi
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit and push results (no .nsys-rep)
-        if: always()
         run: |
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name 'B200 CI'"
           ssh $NODE "cd $REPO && git reset HEAD 2>/dev/null; for ext in log yml jsonl json md csv; do git add -f $RESULT_DIR/*.\$ext 2>/dev/null; done; git diff --cached --name-only"

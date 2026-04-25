@@ -2,6 +2,10 @@ name: "SGLang NCU Profiling (Attach Mode)"
 on:
   workflow_dispatch:
     inputs:
+      commit_results:
+        description: 'Commit + push outputs (csv/xlsx/log/json) to main'
+        type: boolean
+        default: false
       platform:
         description: "GPU platform"
         type: choice
@@ -119,8 +123,8 @@ jobs:
         run: |
           ssh $NODE "head -20 $REPO/$RESULT_DIR/ncu/ncu_details.csv 2>/dev/null || echo 'No CSV'"
 
+        if: always() && (inputs.commit_results == true || inputs.commit_results == 'true')
       - name: Git commit and push results
-        if: always()
         run: |
           ssh $NODE "docker exec $CONTAINER bash -c 'chown -R \$(stat -c %u:%g $REPO/.git) $REPO/results/ 2>/dev/null; true'"
           ssh $NODE "cd $REPO && git config user.email 'ci@github.com' && git config user.name '${{ inputs.platform }} CI'"
