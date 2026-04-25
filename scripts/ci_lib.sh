@@ -258,6 +258,116 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase or
 }
 
 # -----------------------------------------------------------------------------
+# Container recreate (cross-platform, framework-aware)
+# -----------------------------------------------------------------------------
+# Used by recreate_container.yml. Centralized here so that:
+#   1) bench/profile workflows can also recreate before runs (one-stop).
+#   2) Adding a new platform/framework = update one file.
+#
+# See feedback_workflow_consolidation.md and feedback_docker_recreate_not_inplace_update.md.
+
+# Print platform-specific docker/podman run flags.
+# Usage: FLAGS=$(ci_runtime_flags); $RUNTIME run -d --name $C $FLAGS $IMAGE sleep infinity
+ci_runtime_flags() {
+  case "${PLATFORM:-}" in
+    mi355x)
+      # Combined ROCm flags from mi355x_recreate_zufa_atom_baseline.yml (most complete).
+      printf '%s ' \
+        --security-opt seccomp=unconfined \
+        --ipc=host \
+        --network=host \
+        --group-add keep-groups \
+        --cap-add CAP_SYS_PTRACE \
+        --device /dev/kfd \
+        --device /dev/dri \
+        --ulimit nproc=4194304:4194304 \
+        --ulimit nofile=1048576:1048576 \
+        -v /shared:/shared
+      ;;
+    b200)
+      # From setup_b200.yml. SFS path is platform-pinned.
+      printf '%s ' \
+        --gpus all --ipc host \
+        --ulimit memlock=-1 --ulimit stack=67108864 \
+        --shm-size=64g --cap-add=SYS_PTRACE \
+        -v /home:/home -v /mnt:/mnt -v /data:/data \
+        -v /SFS-aGqda6ct:/SFS-aGqda6ct
+      ;;
+    b300)
+      # From b300_env_setup.yml.
+      printf '%s ' \
+        --gpus all --ipc=host --net=host \
+        --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
+        -v /home/zufa:/home/zufa \
+        -v /SFS-aGqda6ct:/SFS-aGqda6ct \
+        -v /home:/home \
+        -w /home/zufa
+      ;;
+    *)
+      echo "ERROR: ci_runtime_flags: unknown PLATFORM='${PLATFORM:-}'" >&2
+      return 1
+      ;;
+  esac
+}
+
+# Resolve (platform, framework, image_tag) → image ref.
+# Edit this table when new images are released.
+# Usage: IMAGE=$(ci_resolve_image atom latest)
+ci_resolve_image() {
+  local framework=$1 image_tag=$2
+  case "${PLATFORM:-}/${framework}/${image_tag}" in
+    mi355x/atom/latest)      echo "docker.io/rocm/atom-dev:latest" ;;
+    mi355x/atom/known-good)  echo "docker.io/rocm/atom-dev:nightly_202604201537" ;;
+    b200/trt/latest)         echo "nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc10" ;;
+    b200/trt/known-good)     echo "nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc10" ;;
+    b200/sglang/latest)      echo "lmsysorg/sglang:v0.5.9-cu130" ;;
+    b200/sglang/known-good)  echo "lmsysorg/sglang:v0.5.9-cu130" ;;
+    b300/trt/latest)         echo "nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc10" ;;
+    b300/trt/known-good)     echo "nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc10" ;;
+    b300/sglang/latest)      echo "lmsysorg/sglang:v0.5.9-cu130" ;;
+    b300/sglang/known-good)  echo "lmsysorg/sglang:v0.5.9-cu130" ;;
+    *)
+      echo "ERROR: ci_resolve_image: no mapping for PLATFORM=${PLATFORM:-} framework=${framework} image_tag=${image_tag}" >&2
+      return 1
+      ;;
+  esac
+}
+
+# Recreate a container: pull (if requested) + rm -f + run -d sleep infinity.
+# Inputs: $1=container name, $2=image ref, $3=pull (true/false, default true).
+# Reads $PLATFORM and $EXEC_MODE from ci_load_platform.
+ci_recreate_container() {
+  local container=$1 image=$2 pull=${3:-true}
+  local runtime
+  case "${EXEC_MODE:-}" in
+    podman)     runtime=podman ;;
+    docker)     runtime=docker ;;
+    ssh+docker) runtime=docker ;;
+    *) echo "ERROR: ci_recreate_container: unknown EXEC_MODE='${EXEC_MODE:-}'" >&2; return 1 ;;
+  esac
+
+  local flags
+  flags=$(ci_runtime_flags) || return 1
+
+  if [[ "$pull" == "true" ]]; then
+    echo "=== Pulling $image ==="
+    ci_exec_host "$runtime pull '$image'"
+  else
+    echo "=== Skipping pull (pull=false) — using locally-cached $image ==="
+  fi
+
+  echo "=== Removing existing container '$container' (if any) ==="
+  ci_exec_host "$runtime rm -f '$container' 2>/dev/null || true"
+
+  echo "=== Creating fresh '$container' from $image ==="
+  ci_exec_host "$runtime run -d --name '$container' $flags '$image' sleep infinity"
+  sleep 3
+
+  echo "=== Verify container is up ==="
+  ci_exec_host "$runtime ps --filter name=^${container}\$ --format '{{.Names}} {{.Status}} {{.Image}}'"
+}
+
+# -----------------------------------------------------------------------------
 # Dry-run mode (for local testing)
 # -----------------------------------------------------------------------------
 

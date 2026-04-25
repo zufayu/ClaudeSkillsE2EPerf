@@ -1,0 +1,120 @@
+name: "Recreate container (cross-platform, framework-aware)"
+# Consolidated replacement for per-platform per-container recreate workflows.
+# See feedback_workflow_consolidation.md.
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Target platform (selects runner + runtime flags)"
+        type: choice
+        options: [mi355x, b200, b300]
+        required: true
+      framework:
+        description: "Framework (drives image map + verification block)"
+        type: choice
+        options: [atom, sglang, trt]
+        required: true
+      container:
+        description: "Container name to (re)create, e.g. zufa_atom, zufa_trt"
+        type: string
+        required: true
+      image_tag:
+        description: "Image selector — latest=pull moving tag; known-good=pinned safe; custom=use custom_image"
+        type: choice
+        options: [latest, known-good, custom]
+        default: latest
+      custom_image:
+        description: "Full image ref (only used when image_tag=custom)"
+        type: string
+        default: ""
+      pull:
+        description: "podman/docker pull before recreate (uncheck for purely local-cached test)"
+        type: boolean
+        default: true
+
+jobs:
+  recreate:
+    runs-on: [self-hosted, "${{ inputs.platform }}"]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image and print plan
+        run: |
+          source scripts/ci_lib.sh
+          ci_load_platform "${{ inputs.platform }}"
+          if [[ "${{ inputs.image_tag }}" == "custom" ]]; then
+            IMAGE="${{ inputs.custom_image }}"
+            if [[ -z "$IMAGE" ]]; then
+              echo "ERROR: image_tag=custom but custom_image is empty"
+              exit 1
+            fi
+          else
+            IMAGE=$(ci_resolve_image "${{ inputs.framework }}" "${{ inputs.image_tag }}")
+          fi
+          echo "PLATFORM=${{ inputs.platform }}"
+          echo "FRAMEWORK=${{ inputs.framework }}"
+          echo "CONTAINER=${{ inputs.container }}"
+          echo "IMAGE=$IMAGE  (selector=${{ inputs.image_tag }})"
+          echo "PULL=${{ inputs.pull }}"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Recreate container
+        run: |
+          source scripts/ci_lib.sh
+          ci_load_platform "${{ inputs.platform }}"
+          export CONTAINER="${{ inputs.container }}"
+          ci_recreate_container "${{ inputs.container }}" "$IMAGE" "${{ inputs.pull }}"
+
+      - name: Generic verification (id + GPU visibility)
+        continue-on-error: true
+        run: |
+          source scripts/ci_lib.sh
+          ci_load_platform "${{ inputs.platform }}"
+          export CONTAINER="${{ inputs.container }}"
+          echo "=== id (uid/gid in container) ==="
+          ci_exec "id"
+          echo "=== GPU visibility ==="
+          case "${{ inputs.platform }}" in
+            mi355x) ci_exec "rocm-smi 2>&1 | head -10 || rocminfo 2>&1 | head -5 || echo 'no rocm-smi/rocminfo'" ;;
+            b200|b300) ci_exec "nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>&1 | head -8 || echo 'no nvidia-smi'" ;;
+          esac
+
+      - name: Framework-specific provenance
+        continue-on-error: true
+        run: |
+          source scripts/ci_lib.sh
+          ci_load_platform "${{ inputs.platform }}"
+          export CONTAINER="${{ inputs.container }}"
+          case "${{ inputs.framework }}" in
+            atom)
+              echo "=== ATOM commit ==="
+              ci_exec "cd /app/ATOM 2>/dev/null && git rev-parse HEAD && git log -1 --pretty=oneline || cd /app/atom 2>/dev/null && git rev-parse HEAD && git log -1 --pretty=oneline || echo 'no /app/ATOM or /app/atom'"
+              echo "=== aiter commit ==="
+              ci_exec "cd /app/aiter-test 2>/dev/null && git rev-parse HEAD || echo 'no /app/aiter-test'"
+              echo "=== ATOM import smoketest ==="
+              ci_exec "python3 -c 'import atom; print(\"ATOM import OK\")' 2>&1 | tail -3"
+              ;;
+            sglang)
+              echo "=== sglang version ==="
+              ci_exec "python3 -c 'import sglang; print(\"sglang\", sglang.__version__)' 2>&1 | tail -3"
+              echo "=== torch version ==="
+              ci_exec "python3 -c 'import torch; print(\"torch\", torch.__version__, \"cuda\", torch.cuda.is_available())' 2>&1 | tail -3"
+              ;;
+            trt)
+              echo "=== tensorrt-llm version ==="
+              ci_exec "python3 -c 'import tensorrt_llm; print(\"trt-llm\", tensorrt_llm.__version__)' 2>&1 | tail -3"
+              echo "=== torch + cuda ==="
+              ci_exec "python3 -c 'import torch; print(\"torch\", torch.__version__, \"cuda\", torch.cuda.is_available())' 2>&1 | tail -3"
+              ;;
+          esac
+
+      - name: Image provenance summary
+        if: always()
+        continue-on-error: true
+        run: |
+          source scripts/ci_lib.sh
+          ci_load_platform "${{ inputs.platform }}"
+          export CONTAINER="${{ inputs.container }}"
+          ci_get_image
+          ci_log_image_provenance
