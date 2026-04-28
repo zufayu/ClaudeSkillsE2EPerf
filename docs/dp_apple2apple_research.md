@@ -1,5 +1,11 @@
 # SA CI DP-attention behavior: B200/B300 vs MI355X
 
+> **SUPERSEDED 2026-04-28** by [`dp_strategy_deep_dive.md`](./dp_strategy_deep_dive.md).
+> Specifically, the claim below that "ATOM decides DP internally based on model/topology" is **wrong** —
+> ATOM has an explicit `--enable-dp-attention` CLI flag (sets `tp_size=1, dp_size=N`); the SA-CI scripts
+> simply never pass it. The `DP_ATTENTION` env var in SA-CI is metadata-only (tags result JSON).
+> Read the new doc for accurate per-framework config-takes-effect mechanics + A/B methodology.
+
 Researched 2026-04-25, source-of-truth = `~/InferenceX` repo (HEAD).
 
 ## TL;DR
