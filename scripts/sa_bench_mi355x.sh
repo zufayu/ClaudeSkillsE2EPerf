@@ -55,6 +55,7 @@ CONC_FILTER=""               # empty = use default sweep; "128" or "4 128 256" =
 MAX_MODEL_LEN_OVERRIDE=""    # optional: override computed max_model_len
 SERVER_PORT=8000             # ATOM API server port (--server-port)
 EXPERT_PARALLEL="false"      # --enable-expert-parallel for ATOM MoE
+DP_ATTENTION="false"         # --enable-dp-attention (flattens TP→DP, weights replicated per rank)
 CONTAINER_IMAGE=""           # original docker/podman image name (passed from host)
 
 while [[ $# -gt 0 ]]; do
@@ -68,6 +69,7 @@ while [[ $# -gt 0 ]]; do
         --result-dir)        RESULT_DIR="$2"; shift 2 ;;
         --tp)                TP="$2"; shift 2 ;;
         --ep)                EXPERT_PARALLEL="true"; shift 1 ;;
+        --dp-attn)           DP_ATTENTION="true"; shift 1 ;;
         --container-image)   CONTAINER_IMAGE="$2"; shift 2 ;;
         --scenario)          SCENARIO_FILTER="$2"; shift 2 ;;
         --concurrency)       CONC_FILTER="$2"; shift 2 ;;
@@ -350,6 +352,10 @@ run_single_point() {
         serve_args+=(--enable-expert-parallel)
     fi
 
+    if [[ "$DP_ATTENTION" == "true" ]]; then
+        serve_args+=(--enable-dp-attention)
+    fi
+
     # ROCm-specific env vars
     export NCCL_SOCKET_IFNAME=lo
     export VLLM_USE_TRITON_FLASH_ATTN=0
@@ -409,6 +415,7 @@ run_single_point() {
                 "kv_cache_dtype=fp8"
                 "tensor_parallel_size=$TP"
                 "expert_parallel=$EXPERT_PARALLEL"
+                "dp_attention=$DP_ATTENTION"
                 "max_num_seqs=atom_default"
                 "mtp_layers=$MTP_LAYERS"
                 "random_range_ratio=$RANDOM_RANGE_RATIO"

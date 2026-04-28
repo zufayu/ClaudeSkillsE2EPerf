@@ -18,6 +18,10 @@ on:
       tp:
         type: string
         default: "8"
+      dp_attn:
+        description: "Enable ATOM --enable-dp-attention (flattens TP→DP, weights replicated per rank)"
+        type: boolean
+        default: false
       scenario:
         type: choice
         options: [chat, reasoning, summarize]
@@ -67,6 +71,7 @@ jobs:
           # sa_bench_mi355x.sh: --model-mxfp4, --configs, --ep is a flag (no value)
           ARGS="--model-${QUANT} $MODEL --configs ${{ inputs.configs }} --scenario ${{ inputs.scenario }} --concurrency ${{ inputs.concurrency }} --tp ${{ inputs.tp }} --container-image $IMAGE --result-dir ./$RESULT_DIR"
           [[ "${{ inputs.ep }}" -gt 1 ]] && ARGS="$ARGS --ep"
+          [[ "${{ inputs.dp_attn }}" == "true" ]] && ARGS="$ARGS --dp-attn"
           ci_exec "cd $REPO && bash scripts/sa_bench_mi355x.sh $ARGS"
 
       - name: Show results
