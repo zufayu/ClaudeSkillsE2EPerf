@@ -31,6 +31,10 @@ on:
         description: "podman/docker pull before recreate (uncheck for purely local-cached test)"
         type: boolean
         default: true
+      node:
+        description: "B200 only: target node hostname (e.g. hungry-hippo-fin-03-4). Required for b200; ignored for mi355x/b300."
+        type: string
+        default: ""
 
 jobs:
   recreate:
@@ -64,6 +68,14 @@ jobs:
           source scripts/ci_lib.sh
           ci_load_platform "${{ inputs.platform }}"
           export CONTAINER="${{ inputs.container }}"
+          if [[ "${{ inputs.platform }}" == "b200" ]]; then
+            if [[ -z "${{ inputs.node }}" ]]; then
+              echo "ERROR: B200 requires 'node' input (ssh+docker mode). Provide hostname like hungry-hippo-fin-03-4."
+              exit 1
+            fi
+            export NODE="${{ inputs.node }}"
+            echo "NODE=$NODE"
+          fi
           ci_recreate_container "${{ inputs.container }}" "$IMAGE" "${{ inputs.pull }}"
 
       - name: Generic verification (id + GPU visibility)
@@ -72,6 +84,7 @@ jobs:
           source scripts/ci_lib.sh
           ci_load_platform "${{ inputs.platform }}"
           export CONTAINER="${{ inputs.container }}"
+          [[ "${{ inputs.platform }}" == "b200" && -n "${{ inputs.node }}" ]] && export NODE="${{ inputs.node }}"
           echo "=== id (uid/gid in container) ==="
           ci_exec "id"
           echo "=== GPU visibility ==="
@@ -86,6 +99,7 @@ jobs:
           source scripts/ci_lib.sh
           ci_load_platform "${{ inputs.platform }}"
           export CONTAINER="${{ inputs.container }}"
+          [[ "${{ inputs.platform }}" == "b200" && -n "${{ inputs.node }}" ]] && export NODE="${{ inputs.node }}"
           case "${{ inputs.framework }}" in
             atom)
               echo "=== ATOM commit ==="
@@ -116,5 +130,6 @@ jobs:
           source scripts/ci_lib.sh
           ci_load_platform "${{ inputs.platform }}"
           export CONTAINER="${{ inputs.container }}"
+          [[ "${{ inputs.platform }}" == "b200" && -n "${{ inputs.node }}" ]] && export NODE="${{ inputs.node }}"
           ci_get_image
           ci_log_image_provenance
