@@ -65,10 +65,10 @@ jobs:
       - name: Run benchmark
         run: |
           source scripts/ci_lib.sh && ci_load_platform b200
-          ARGS="--model-${QUANT} $MODEL --configs ${{ inputs.configs }} --ep-sizes ${{ inputs.ep }} --tp ${{ inputs.tp }} --scenario ${{ inputs.scenario }} --concurrency ${{ inputs.concurrency }} --container-image $IMAGE --result-dir ./$RESULT_DIR"
+          ARGS="--model-${QUANT} $MODEL --configs ${{ inputs.configs }} --ep-sizes ${{ inputs.ep }} --tp ${{ inputs.tp }} --scenario ${{ inputs.scenario }} --concurrency \"${{ inputs.concurrency }}\" --container-image $IMAGE --result-dir ./$RESULT_DIR"
           [[ "${{ inputs.dp }}" != "auto" ]] && ARGS="$ARGS --dp ${{ inputs.dp }}"
           [[ "${{ inputs.tp }}" -lt 8 ]] && ARGS="$ARGS --gpus $(seq -s, 0 $((${{ inputs.tp }}-1)))"
-          ci_exec "cd $REPO && bash scripts/sa_bench_b200.sh $ARGS"
+          ci_exec "cd $REPO && eval bash scripts/sa_bench_b200.sh $ARGS"
 
       - name: Show results
         if: always()
