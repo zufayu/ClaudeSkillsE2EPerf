@@ -1,0 +1,14 @@
+Regression Report - 2026-04-29 05:44:23
+Compared against: HEAD
+Directories: ./results/b300_dsr_fp4_c1_tp2
+
+========================================================================================================================
+  ./results/b300_dsr_fp4_c1_tp2
+========================================================================================================================
+Config                                         Old      New    Diff       Old      New    Diff       Old      New    Diff       Old      New    Diff       Old      New    Diff
+                                          Total Tput Total Tput          Output Tpu Output Tpu          TPOT p50 TPOT p50          TTFT p50 TTFT p50          Interactiv Interactiv        
+------------------------------------------------------------------------------------------------------------------------
+fp4_throughput_chat_ep1_c1                     NEW    211.9               NEW    106.9               NEW      9.3               NEW     70.0               NEW    107.7        
+
+========================================================================================================================
+Total: 0 points compared, 0 flagged (>5.0% diff on any metric)
