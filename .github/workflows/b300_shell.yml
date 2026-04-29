@@ -10,15 +10,19 @@ on:
         description: 'Run inside zufa_sglang container'
         type: boolean
         default: false
+permissions:
+  contents: write
 jobs:
   shell:
     runs-on: [self-hosted, b300]
     timeout-minutes: 90
     steps:
       - name: Run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ inputs.in_container }}" = "true" ]; then
-            docker exec zufa_sglang bash -c '${{ inputs.command }}'
+            docker exec -e GH_TOKEN="$GH_TOKEN" zufa_sglang bash -c '${{ inputs.command }}'
           else
             bash -c '${{ inputs.command }}'
           fi
