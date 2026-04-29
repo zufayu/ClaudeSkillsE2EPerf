@@ -10,6 +10,8 @@ on:
         description: 'Node (empty=local, or hostname like hungry-hippo-fin-03-3)'
         type: string
         default: ''
+permissions:
+  contents: write
 jobs:
   shell:
     runs-on: [self-hosted, b200]
