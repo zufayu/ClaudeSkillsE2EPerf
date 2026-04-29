@@ -40,6 +40,7 @@ DAR_CONCURRENCY=32            # concurrency for DAR measurement
 DAR_WARMUP=5                  # warmup requests for DAR measurement
 GPUS=""                        # empty = all GPUs; "0,1,2,3" = specific GPUs
 CONTAINER_IMAGE=""             # original docker image name (passed from host)
+FWBRINGUP_MODE=false           # true = fw-bringup methodology (no warmup, no num_prompts floor)
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -61,6 +62,7 @@ while [[ $# -gt 0 ]]; do
         --dp)               DP_OVERRIDE="$2"; shift 2 ;;
         --gpus)             GPUS="$2"; shift 2 ;;
         --container-image)  CONTAINER_IMAGE="$2"; shift 2 ;;
+        --fwbringup)        FWBRINGUP_MODE=true; shift ;;
         -h|--help)
             echo "Usage: bash sa_bench_trt.sh --platform <gpu> --model-fp4 <path> [options]"
             echo ""
@@ -79,6 +81,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --scenario SCENARIO     chat|reasoning|summarize|all (default: all)"
             echo "  --concurrency \"C1 C2\"   Concurrency values to run (default: sweep 1 4 8 16 32 64 128 256)"
             echo "  --num-warmups N         Number of warmup requests (default: conc*2, matching SA)"
+            echo "  --fwbringup             Use fw-bringup methodology (no warmup, no num_prompts floor) for cross-comparison with MI450 perf-tracking"
             echo "  --dp true|false         Force DP attention on/off (default: auto, EP>1 → true)"
             echo "  --gpus \"0,1,2,3\"        CUDA_VISIBLE_DEVICES — use subset of GPUs (default: all)"
             echo ""
@@ -324,10 +327,14 @@ EOF
 
     if wait_for_server_ready --port "$PORT" --server-log "$server_log" --server-pid "$SERVER_PID"; then
         local num_prompts=$(( conc * 10 ))
-        [[ $num_prompts -lt 20 ]] && num_prompts=20
+        if [[ "$FWBRINGUP_MODE" != "true" ]]; then
+            [[ $num_prompts -lt 20 ]] && num_prompts=20
+        fi
 
-        # SA InferenceX: --num-warmups "$((2 * max_concurrency))"
-        local warmups="${NUM_WARMUPS:-$(( conc * 2 ))}"
+        # SA InferenceX: --num-warmups "$((2 * max_concurrency))"; fwbringup: 0 (no warmup)
+        local default_warmups=$(( conc * 2 ))
+        [[ "$FWBRINGUP_MODE" == "true" ]] && default_warmups=0
+        local warmups="${NUM_WARMUPS:-$default_warmups}"
 
         # Capture software version
         local trtllm_version
@@ -359,6 +366,7 @@ EOF
                 "random_range_ratio=$RANDOM_RANGE_RATIO"
                 "trtllm_version=$trtllm_version"
                 "container_image=$CONTAINER_IMAGE"
+                "bench_methodology=$([[ $FWBRINGUP_MODE == true ]] && echo fwbringup || echo claudeskills)"
         )
         if [[ -n "$BENCH_SERVING_DIR" ]]; then
             bench_args+=(--bench-serving-dir "$BENCH_SERVING_DIR")
