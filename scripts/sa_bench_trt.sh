@@ -176,8 +176,14 @@ if [[ -f "$ADAPTIVE_FILE" ]]; then
     source "$ADAPTIVE_FILE"
     log "Loaded adaptive config: ${PLATFORM}_trt.sh"
 else
-    source "$SCRIPT_DIR/../configs/adaptive/default_trt.sh"
-    log "WARN: No adaptive config for platform '$PLATFORM', using defaults"
+    # Hard-fail: silent fallback to default_trt.sh has historically swapped
+    # MoE backend out from under users (B300 2026-04-29: 21-41% perf loss
+    # from CUTLASS vs TRTLLM). Force an explicit choice.
+    echo "ERROR: No adaptive config for platform '$PLATFORM'." >&2
+    echo "  Expected: $ADAPTIVE_FILE" >&2
+    echo "  Available: $(ls "$SCRIPT_DIR/../configs/adaptive/" 2>/dev/null | grep _trt.sh | tr '\n' ' ')" >&2
+    echo "  Either add configs/adaptive/${PLATFORM}_trt.sh, or pass --platform <known>." >&2
+    exit 1
 fi
 
 # ======================== Config Runner =======================================
