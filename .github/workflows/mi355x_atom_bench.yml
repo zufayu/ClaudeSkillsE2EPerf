@@ -29,6 +29,14 @@ on:
       concurrency:
         type: string
         default: "64"
+      model_path:
+        description: "Override MODEL path (empty = use platform default $MODEL_MXFP4 = DSR1)"
+        type: string
+        default: ""
+      model_segment:
+        description: "Result-dir model segment (must match model; e.g. 'dsr', 'gptoss120b')"
+        type: string
+        default: "dsr"
       commit_results:
         description: "Commit results to main (false = upload artifact only, no main pollution)"
         type: boolean
@@ -46,10 +54,11 @@ jobs:
           source scripts/ci_lib.sh && ci_load_platform mi355x
           export CONTAINER="${{ inputs.container }}"
           ci_parse_configs "${{ inputs.configs }}"
-          MODEL="$MODEL_MXFP4"
+          MODEL="${{ inputs.model_path }}"
+          [[ -z "$MODEL" ]] && MODEL="$MODEL_MXFP4"
           ci_get_image
           ENV_TAG=$(ci_detect_env_tag atom)
-          RESULT_DIR=$(ci_result_dir "$PLATFORM" "dsr" "$QUANT" "$MTP" "${{ inputs.ep }}" "${{ inputs.tp }}" "$ENV_TAG")
+          RESULT_DIR=$(ci_result_dir "$PLATFORM" "${{ inputs.model_segment }}" "$QUANT" "$MTP" "${{ inputs.ep }}" "${{ inputs.tp }}" "$ENV_TAG")
           for var in CONTAINER MODEL QUANT MTP MODE IMAGE ENV_TAG RESULT_DIR REPO EXEC_MODE CI_USER_NAME CI_USER_EMAIL; do
             echo "$var=${!var}" >> $GITHUB_ENV
           done
