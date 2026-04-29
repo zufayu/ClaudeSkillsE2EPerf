@@ -16,9 +16,11 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -n "${{ inputs.node }}" ]; then
-            ssh ${{ inputs.node }} '${{ inputs.command }}'
+            ssh ${{ inputs.node }} 'export GH_TOKEN='"$GH_TOKEN"'; ${{ inputs.command }}'
           else
             bash -c '${{ inputs.command }}'
           fi
