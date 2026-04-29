@@ -287,7 +287,7 @@ EOF
     fi
 
     # --- Optional env vars ---
-    if [[ -n "$ENABLE_CONFIGURABLE_MOE_FLAG" ]]; then
+    if [[ -n "${ENABLE_CONFIGURABLE_MOE_FLAG:-}" ]]; then
         export ENABLE_CONFIGURABLE_MOE=1
     else
         unset ENABLE_CONFIGURABLE_MOE 2>/dev/null || true
