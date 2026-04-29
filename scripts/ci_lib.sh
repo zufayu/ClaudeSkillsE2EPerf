@@ -249,12 +249,23 @@ ci_commit_results() {
 
   # Stage result files (exclude large trace binaries)
   ci_exec_host "cd $REPO && git reset HEAD 2>/dev/null; true"
-  ci_exec_host "cd $REPO && for ext in json log yml md csv xlsx; do git add -f ${result_dir}/*.\$ext 2>/dev/null; done; true"
+  ci_exec_host "cd $REPO && for ext in json log yml md csv xlsx; do git add -f ${result_dir}/*.\$ext 2>/dev/null || true; done"
   ci_exec_host "cd $REPO && git diff --cached --name-only"
 
   ci_exec_host "cd $REPO && if ! git diff --cached --quiet; then git commit -m '${message}
 
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
+}
+
+# Snapshot result_dir to shared SFS so data survives node reallocation.
+# /home is per-node virtiofs (NOT shared); /SFS-aGqda6ct/dynamo is shared and writable.
+# Keeps last few snapshots; safe to call multiple times in same run.
+ci_snapshot_results() {
+  local result_dir=$1
+  local archive_root="${SFS_ARCHIVE_ROOT:-/SFS-aGqda6ct/dynamo/zufayu_e2e_results}"
+  local run_tag="${GITHUB_RUN_ID:-local}_${GITHUB_RUN_ATTEMPT:-1}"
+  local dest="$archive_root/$run_tag"
+  ci_exec_host "mkdir -p '$dest' && rsync -a --exclude='*.gz' --exclude='*serialized*' '$REPO/$result_dir/' '$dest/' && echo 'Snapshot saved: $dest' && ls -lt '$dest' | head -10"
 }
 
 # -----------------------------------------------------------------------------

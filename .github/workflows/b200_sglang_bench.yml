@@ -79,6 +79,12 @@ jobs:
           source scripts/ci_lib.sh && ci_load_platform b200
           ci_fix_ownership "$RESULT_DIR" || true
 
+      - name: Snapshot results to shared SFS (survives node reallocation)
+        if: always()
+        run: |
+          source scripts/ci_lib.sh && ci_load_platform b200
+          ci_snapshot_results "$RESULT_DIR" || true
+
       - name: Commit results
         if: always()
         run: |
