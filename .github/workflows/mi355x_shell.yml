@@ -14,17 +14,21 @@ on:
         description: 'Run on host instead of container'
         type: boolean
         default: false
+permissions:
+  contents: write
 jobs:
   shell:
     runs-on: [self-hosted, mi355x]
     timeout-minutes: 120
     steps:
       - name: Run command
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ inputs.on_host }}" = "true" ]; then
             echo "=== Running on host ==="
             bash -c '${{ inputs.command }}'
           else
             echo "=== Running in ${{ inputs.container }} ==="
-            podman exec ${{ inputs.container }} bash -c '${{ inputs.command }}'
+            podman exec -e GH_TOKEN="$GH_TOKEN" ${{ inputs.container }} bash -c '${{ inputs.command }}'
           fi
