@@ -1,0 +1,296 @@
+[aiter] import [module_aiter_core] under /app/aiter-test/aiter/jit/module_aiter_core.so
+[atom 08:32:10] Loading tokenizer from /shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged...
+[atom 08:32:11] Initializing engine with model /shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged...
+[atom 08:32:11] Engine kwargs: {'trust_remote_code': True, 'tensor_parallel_size': 1, 'data_parallel_size': 1, 'enforce_eager': False, 'enable_prefix_caching': False, 'port': 8006, 'kv_cache_dtype': 'fp8', 'max_model_len': None, 'max_num_batched_tokens': 16384, 'scheduler_delay_factor': 0.0, 'max_num_seqs': 512, 'gpu_memory_utilization': 0.9, 'load_dummy': False, 'enable_expert_parallel': False, 'torch_profiler_dir': None, 'enable_dp_attention': False, 'mark_trace': False, 'kv_cache_block_size': 16, 'compilation_config': CompilationConfig(level=3, use_cudagraph=True, local_cache_dir=None, cudagraph_capture_sizes=[1, 2, 4, 8, 16, 32, 48, 64, 128, 256], cuda_graph_sizes=[512], debug_dump_path='', traced_files=set(), cache_dir='', use_inductor=True, cudagraph_mode=None, compilation_time=0.0, splitting_ops=None, cudagraph_copy_inputs=False, inductor_compile_config={}, compile_sizes=None, static_forward_context={}), 'speculative_config': None}
+`torch_dtype` is deprecated! Use `dtype` instead!
+[atom 08:32:11] Engine Core Mgr: Creating EngineCore for DP rank 0/1
+[atom 08:32:11] Creating EngineCore process: DP rank 0, will use GPUs 0 to 0
+[atom 08:32:11] Engine Core Mgr: Starting EngineCore for DP rank 0/1
+[aiter] import [module_aiter_core] under /app/aiter-test/aiter/jit/module_aiter_core.so
+[aiter] message queue communication handle: Handle(local_reader_ranks=[0], buffer_handle=(1, 16777216, 10, 'psm_bbbb9258'), local_subscribe_addr='ipc:///tmp/7aee1a3b-0c5f-41c2-8182-af36c5504f1c', remote_subscribe_addr=None, remote_addr_ipv6=False)
+[aiter] import [module_aiter_core] under /app/aiter-test/aiter/jit/module_aiter_core.so
+[aiter] merge tuned file under model_configs/ and configs/ /app/aiter-test/aiter/configs/bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/dsv3_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/glm5_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/gptoss_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/kimik2_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/llama405B_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/llama70B_bf16_tuned_gemm.csv:/app/aiter-test/aiter/configs/model_configs/qwen32B_bf16_tuned_gemm.csv
+[atom 08:32:19] Use MLAAttentionImplDecoratorForPluginMode to decorate MLAAttention
+[atom 08:32:19] Use MLASparseAttentionImplDecoratorForPluginMode to decorate MLAAttention
+[atom 08:32:19] Use PagedAttentionImplDecoratorForPluginMode to decorate PagedAttentionImpl
+[atom 08:32:19] Create lazy wrapper for FusedMoE to change the naming
+[atom 08:32:19] ModelRunner rank=0, dp_rank_local=0, local_device_rank=0, device=cuda:0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[aiter] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+[atom 08:32:20] disable_mmap: True
+Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:   0%|          | 0/15 [00:00<?, ?it/s]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:   7%|▋         | 1/15 [00:02<00:29,  2.12s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:  13%|█▎        | 2/15 [00:04<00:27,  2.10s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:  20%|██        | 3/15 [00:08<00:35,  2.99s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:  27%|██▋       | 4/15 [00:10<00:28,  2.58s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:  33%|███▎      | 5/15 [00:14<00:30,  3.07s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:  40%|████      | 6/15 [00:17<00:28,  3.21s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:  47%|████▋     | 7/15 [00:21<00:27,  3.40s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:  53%|█████▎    | 8/15 [00:24<00:23,  3.31s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:  60%|██████    | 9/15 [00:26<00:17,  2.90s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:  67%|██████▋   | 10/15 [00:29<00:14,  2.87s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:  73%|███████▎  | 11/15 [00:31<00:10,  2.66s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:  80%|████████  | 12/15 [00:34<00:07,  2.65s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:  87%|████████▋ | 13/15 [00:36<00:05,  2.70s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]:  93%|█████████▎| 14/15 [00:39<00:02,  2.75s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]: 100%|██████████| 15/15 [00:42<00:00,  2.75s/it]Loading safetensors shards[/shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged]: 100%|██████████| 15/15 [00:42<00:00,  2.84s/it]
+[atom 08:33:03] Model load done: /shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged
+[atom 08:33:03] Model Runner0/1: DP size=1 too large, warmup_max_tokens=16384 < max_model_len=131072. Using 1 seq with length 16384 for warmup.
+[atom 08:33:05] Using cache directory: /root/.cache/atom/torch_compile_cache/5afcaf671f/rank_0/backbone for vLLM's torch.compile
+[atom 08:33:05] Dynamo bytecode transform time: 2.17 s
+[atom 08:33:06] Cache the graph for dynamic shape for later use
+[atom 08:33:12] Compiling a graph for dynamic shape takes 6.37 s
+[atom 08:33:12] Computation graph saved to /root/.cache/atom/torch_compile_cache/5afcaf671f/rank_0/backbone/computation_graph.py
+[aiter] import [module_rmsnorm_quant] under /app/aiter-test/aiter/jit/module_rmsnorm_quant.so
+[aiter] shape is M:16384, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:16384, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:16384, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] import [module_moe_asm] under /app/aiter-test/aiter/jit/module_moe_asm.so
+[aiter] merge tuned file under model_configs/ and configs/ /app/aiter-test/aiter/configs/tuned_fmoe.csv:/app/aiter-test/aiter/configs/model_configs/a8w8_blockscale_tuned_fmoe_ds_v3.csv:/app/aiter-test/aiter/configs/model_configs/a8w8_blockscale_tuned_fmoe_glm5.csv:/app/aiter-test/aiter/configs/model_configs/a8w8_blockscale_tuned_fmoe_minimax-m2_5.csv:/app/aiter-test/aiter/configs/model_configs/a8w8_blockscale_tuned_fmoe_qwen3_235b.csv:/app/aiter-test/aiter/configs/model_configs/dsv3_fp4_tuned_fmoe.csv:/app/aiter-test/aiter/configs/model_configs/kimik2_fp4_tuned_fmoe.csv
+[aiter] run_1stage = False, ksplit = 0 q_type = QuantType.per_1x32 block_m = 128 use_nt = False, estimated_m_per_expert = 512
+[aiter] [fused_moe] using 2stage default for (256, 16384, 3072, 3072, 128, 4, 'ActivationType.Swiglu', 'torch.bfloat16', 'torch.float8_e4m3fn', 'torch.float4_e2m1fn_x2', 'QuantType.per_1x32', True, False) 
+[aiter] import [module_moe_sorting] under /app/aiter-test/aiter/jit/module_moe_sorting.so
+[aiter] import [module_moe_cktile2stages] under /app/aiter-test/aiter/jit/module_moe_cktile2stages.so
+[aiter] shape is M:1, N:201088, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=False, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] import [module_sample] under /app/aiter-test/aiter/jit/module_sample.so
+[atom 08:33:13] Model Runner0/1: warmup_model 10.75 seconds with 1 reqs 16384 tokens
+[atom 08:33:13] Model warmup done: /shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged
+[atom 08:33:13] Memory budget: total_gpu=287.98GB, free=216.20GB, utilization=0.9, budget=259.19GB, peak_torch=70.18GB, cudagraph_est=0.26GB, safety=5.76GB, available_for_kv=182.99GB, block_bytes=626688, num_kvcache_blocks=313526
+[atom 08:33:13] Binding KV cache for target model starting at layer_id=0
+/opt/venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+[rank0]:[W429 08:33:13.297158930 ProcessGroupNCCL.cpp:5140] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+  0%|          | 0/10 [00:00<?, ?it/s]Capturing bs=256, max_q_len=1:   0%|          | 0/10 [00:00<?, ?it/s][aiter] shape is M:256, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:256, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] run_1stage = False, ksplit = 0 q_type = QuantType.per_1x32 block_m = 128 use_nt = True, estimated_m_per_expert = 8
+[aiter] [fused_moe] using 2stage default for (256, 256, 3072, 3072, 128, 4, 'ActivationType.Swiglu', 'torch.bfloat16', 'torch.bfloat16', 'torch.float4_e2m1fn_x2', 'QuantType.per_1x32', True, False) 
+[aiter] shape is M:256, N:201088, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=False, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+Capturing bs=256, max_q_len=1:  10%|█         | 1/10 [00:00<00:08,  1.01it/s]Capturing bs=128, max_q_len=1:  10%|█         | 1/10 [00:00<00:08,  1.01it/s][aiter] run_1stage = False, ksplit = 0 q_type = QuantType.per_1x32 block_m = 64 use_nt = True, estimated_m_per_expert = 4
+[aiter] [fused_moe] using 2stage default for (256, 128, 3072, 3072, 128, 4, 'ActivationType.Swiglu', 'torch.bfloat16', 'torch.bfloat16', 'torch.float4_e2m1fn_x2', 'QuantType.per_1x32', True, False) 
+[aiter] shape is M:128, N:201088, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=False, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+Capturing bs=64, max_q_len=1:  10%|█         | 1/10 [00:01<00:08,  1.01it/s] [aiter] run_1stage = False, ksplit = 0 q_type = QuantType.per_1x32 block_m = 32 use_nt = True, estimated_m_per_expert = 2
+[aiter] [fused_moe] using 2stage default for (256, 64, 3072, 3072, 128, 4, 'ActivationType.Swiglu', 'torch.bfloat16', 'torch.bfloat16', 'torch.float4_e2m1fn_x2', 'QuantType.per_1x32', True, False) 
+[aiter] shape is M:64, N:201088, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=False, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+Capturing bs=48, max_q_len=1:  10%|█         | 1/10 [00:01<00:08,  1.01it/s][aiter] shape is M:48, N:201088, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=False, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+Capturing bs=48, max_q_len=1:  40%|████      | 4/10 [00:01<00:01,  3.02it/s]Capturing bs=32, max_q_len=1:  40%|████      | 4/10 [00:01<00:01,  3.02it/s][aiter] run_1stage = False, ksplit = 0 q_type = QuantType.per_1x32 block_m = 32 use_nt = True, estimated_m_per_expert = 1
+[aiter] [fused_moe] using 2stage default for (256, 32, 3072, 3072, 128, 4, 'ActivationType.Swiglu', 'torch.bfloat16', 'torch.bfloat16', 'torch.float4_e2m1fn_x2', 'QuantType.per_1x32', True, False) 
+[aiter] shape is M:32, N:201088, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=False, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+Capturing bs=16, max_q_len=1:  40%|████      | 4/10 [00:01<00:01,  3.02it/s][aiter] run_1stage = False, ksplit = 0 q_type = QuantType.per_1x32 block_m = 32 use_nt = True, estimated_m_per_expert = 0
+[aiter] [fused_moe] using 2stage default for (256, 16, 3072, 3072, 128, 4, 'ActivationType.Swiglu', 'torch.bfloat16', 'torch.bfloat16', 'torch.float4_e2m1fn_x2', 'QuantType.per_1x32', True, False) 
+[aiter] shape is M:16, N:201088, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=False, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+Capturing bs=16, max_q_len=1:  60%|██████    | 6/10 [00:01<00:00,  4.24it/s]Capturing bs=8, max_q_len=1:  60%|██████    | 6/10 [00:01<00:00,  4.24it/s] [aiter] run_1stage = False, ksplit = 0 q_type = QuantType.per_1x32 block_m = 32 use_nt = True, estimated_m_per_expert = 0
+[aiter] [fused_moe] using 2stage default for (256, 8, 3072, 3072, 128, 4, 'ActivationType.Swiglu', 'torch.bfloat16', 'torch.bfloat16', 'torch.float4_e2m1fn_x2', 'QuantType.per_1x32', True, False) 
+[aiter] shape is M:8, N:201088, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=False, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+Capturing bs=8, max_q_len=1:  70%|███████   | 7/10 [00:02<00:00,  3.78it/s]Capturing bs=4, max_q_len=1:  70%|███████   | 7/10 [00:02<00:00,  3.78it/s][aiter] run_1stage = False, ksplit = 0 q_type = QuantType.per_1x32 block_m = 32 use_nt = True, estimated_m_per_expert = 0
+[aiter] [fused_moe] using 2stage default for (256, 4, 3072, 3072, 128, 4, 'ActivationType.Swiglu', 'torch.bfloat16', 'torch.bfloat16', 'torch.float4_e2m1fn_x2', 'QuantType.per_1x32', True, False) 
+[aiter] shape is M:4, N:201088, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=False, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+Capturing bs=4, max_q_len=1:  80%|████████  | 8/10 [00:02<00:00,  3.18it/s]Capturing bs=2, max_q_len=1:  80%|████████  | 8/10 [00:02<00:00,  3.18it/s][aiter] run_1stage = False, ksplit = 2 q_type = QuantType.per_1x32 block_m = 32 use_nt = True, estimated_m_per_expert = 0
+[aiter] [fused_moe] using 2stage default for (256, 2, 3072, 3072, 128, 4, 'ActivationType.Swiglu', 'torch.bfloat16', 'torch.bfloat16', 'torch.float4_e2m1fn_x2', 'QuantType.per_1x32', True, False) 
+[aiter] import [module_activation] under /app/aiter-test/aiter/jit/module_activation.so
+[aiter] shape is M:2, N:201088, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=False, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+Capturing bs=1, max_q_len=1:  80%|████████  | 8/10 [00:02<00:00,  3.18it/s][aiter] run_1stage = False, ksplit = 3 q_type = QuantType.per_1x32 block_m = 32 use_nt = True, estimated_m_per_expert = 0
+[aiter] [fused_moe] using 2stage default for (256, 1, 3072, 3072, 128, 4, 'ActivationType.Swiglu', 'torch.bfloat16', 'torch.bfloat16', 'torch.float4_e2m1fn_x2', 'QuantType.per_1x32', True, False) 
+Capturing bs=1, max_q_len=1: 100%|██████████| 10/10 [00:03<00:00,  3.31it/s]Capturing bs=1, max_q_len=1: 100%|██████████| 10/10 [00:03<00:00,  3.19it/s]
+[atom 08:33:17] Post-init memory: actual=255.81GB (88.8%), target=259.19GB (90%)
+[atom 08:33:17] Engine Core: cudagraph capture[1, 2, 4, 8, 16, 32, 48, 64, 128, 256] cost: 3.14 seconds
+[atom 08:33:17] Engine Core: load model runner success
+[atom 08:33:18] Engine Core: EngineCore fully initialized and ready
+[atom 08:33:18] Engine Core Mgr: DP rank 0 is fully initialized and ready
+[atom 08:33:18] Engine Core Mgr: All EngineCores are fully initialized and ready
+[atom 08:33:18] Engine Core Mgr: All 1 EngineCores initialized and ready
+[atom 08:33:18] LLMEngine init with 1 data parallel ranks
+[atom 08:33:18] Starting server on 0.0.0.0:8000...
+INFO:     Started server process [132221]
+INFO:     Waiting for application startup.
+[atom 08:33:18] Server started successfully and ready to accept requests
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:50686 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50702 - "GET /v1/models HTTP/1.1" 200 OK
+[atom 08:33:36] Request 0 arrived, input tokens: 991, pending requests: 1 
+[atom 08:33:36] API: Created request_id=cmpl-d9df48b171d24183bb09a27bf9e15149, seq_id=0
+INFO:     127.0.0.1:43276 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:33:36] Engine Core: put 1 reqs to scheduler
+[atom 08:33:36] Scheduled prefill batch: 1 reqs, 991 token_nums: [991], req_ids: (0,)
+[aiter] shape is M:991, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] import [mha_varlen_fwd_bf16_nlogits_nbias_mask_nlse_ndropout_nskip_nqscale] under /app/aiter-test/aiter/jit/mha_varlen_fwd_bf16_nlogits_nbias_mask_nlse_ndropout_nskip_nqscale.so
+[aiter] shape is M:991, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:991, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] run_1stage = False, ksplit = 0 q_type = QuantType.per_1x32 block_m = 128 use_nt = True, estimated_m_per_expert = 32
+[aiter] [fused_moe] using 2stage default for (256, 1024, 3072, 3072, 128, 4, 'ActivationType.Swiglu', 'torch.bfloat16', 'torch.float8_e4m3fn', 'torch.float4_e2m1fn_x2', 'QuantType.per_1x32', True, False) 
+[atom 08:33:40] Request 1 arrived, input tokens: 991, pending requests: 1 
+[atom 08:33:40] API: Created request_id=cmpl-87574391c6c24433b959defff59f12c8, seq_id=1
+INFO:     127.0.0.1:43288 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:33:40] Engine Core: output send 1 reqs
+[atom 08:33:40] Engine Core: put 1 reqs to scheduler
+[atom 08:33:40] Scheduled prefill batch: 1 reqs, 991 token_nums: [991], req_ids: (1,)
+[atom 08:33:43] Engine Core: output send 1 reqs
+[atom 08:33:43] Request 2 arrived, input tokens: 991, pending requests: 1 
+[atom 08:33:43] API: Created request_id=cmpl-f57995d60ccc410aa2c688eaff4b47cb, seq_id=2
+INFO:     127.0.0.1:46410 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:33:43] Engine Core: put 1 reqs to scheduler
+[atom 08:33:43] Scheduled prefill batch: 1 reqs, 991 token_nums: [991], req_ids: (2,)
+[atom 08:33:46] Engine Core: output send 1 reqs
+[atom 08:33:46] Request 3 arrived, input tokens: 866, pending requests: 1 
+[atom 08:33:46] API: Created request_id=cmpl-be29d7214e314236afc07dd9b42b60db, seq_id=3
+INFO:     127.0.0.1:46414 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:33:47] Engine Core: put 1 reqs to scheduler
+[atom 08:33:47] Scheduled prefill batch: 1 reqs, 866 token_nums: [866], req_ids: (3,)
+[aiter] shape is M:866, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:866, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:866, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:33:50] Engine Core: output send 1 reqs
+[atom 08:33:50] Request 4 arrived, input tokens: 936, pending requests: 1 
+[atom 08:33:50] API: Created request_id=cmpl-e1236f8cd7e2475b8c47194c60d08497, seq_id=4
+INFO:     127.0.0.1:46428 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:33:50] Engine Core: put 1 reqs to scheduler
+[atom 08:33:50] Scheduled prefill batch: 1 reqs, 936 token_nums: [936], req_ids: (4,)
+[aiter] shape is M:936, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:936, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:936, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:33:53] Engine Core: output send 1 reqs
+[atom 08:33:53] Request 5 arrived, input tokens: 1011, pending requests: 1 
+[atom 08:33:53] API: Created request_id=cmpl-a5d0b3d8e96f482c854dedbfd4297438, seq_id=5
+INFO:     127.0.0.1:54164 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:33:53] Engine Core: put 1 reqs to scheduler
+[atom 08:33:53] Scheduled prefill batch: 1 reqs, 1011 token_nums: [1011], req_ids: (5,)
+[aiter] shape is M:1011, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:1011, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:1011, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:33:57] Engine Core: output send 1 reqs
+[atom 08:33:57] Request 6 arrived, input tokens: 886, pending requests: 1 
+[atom 08:33:57] API: Created request_id=cmpl-136b3f7a4e8141bcb3e068c6049c3336, seq_id=6
+INFO:     127.0.0.1:54166 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:33:57] Engine Core: put 1 reqs to scheduler
+[atom 08:33:57] Scheduled prefill batch: 1 reqs, 886 token_nums: [886], req_ids: (6,)
+[aiter] shape is M:886, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:886, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:886, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:00] Engine Core: output send 1 reqs
+[atom 08:34:00] Request 7 arrived, input tokens: 1014, pending requests: 1 
+[atom 08:34:00] API: Created request_id=cmpl-c6e1c12908114c689d70542c4b70fa10, seq_id=7
+INFO:     127.0.0.1:54178 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:00] Engine Core: put 1 reqs to scheduler
+[atom 08:34:00] Scheduled prefill batch: 1 reqs, 1014 token_nums: [1014], req_ids: (7,)
+[aiter] shape is M:1014, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:1014, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:1014, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:03] Engine Core: output send 1 reqs
+[atom 08:34:03] Request 8 arrived, input tokens: 922, pending requests: 1 
+[atom 08:34:03] API: Created request_id=cmpl-cbde24d749494f10a3531fe089cc9b94, seq_id=8
+INFO:     127.0.0.1:42188 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:03] Engine Core: put 1 reqs to scheduler
+[atom 08:34:03] Scheduled prefill batch: 1 reqs, 922 token_nums: [922], req_ids: (8,)
+[aiter] shape is M:922, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:922, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:922, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:07] Engine Core: output send 1 reqs
+[atom 08:34:07] Request 9 arrived, input tokens: 828, pending requests: 1 
+[atom 08:34:07] API: Created request_id=cmpl-b531dd192c2d4aa28f545f6e0ae54868, seq_id=9
+INFO:     127.0.0.1:42196 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:07] Engine Core: put 1 reqs to scheduler
+[atom 08:34:07] Scheduled prefill batch: 1 reqs, 828 token_nums: [828], req_ids: (9,)
+[aiter] shape is M:828, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:828, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:828, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:10] Request 10 arrived, input tokens: 840, pending requests: 1 
+[atom 08:34:10] API: Created request_id=cmpl-c80ef268d4d34479ad8800c7205fa03e, seq_id=10
+INFO:     127.0.0.1:42200 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:10] Engine Core: output send 1 reqs
+[atom 08:34:10] Engine Core: put 1 reqs to scheduler
+[atom 08:34:10] Scheduled prefill batch: 1 reqs, 840 token_nums: [840], req_ids: (10,)
+[aiter] shape is M:840, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:840, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:840, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:14] Request 11 arrived, input tokens: 855, pending requests: 1 
+[atom 08:34:14] API: Created request_id=cmpl-0224e2052dfd4fb5ac4ef2b6103a951c, seq_id=11
+[atom 08:34:14] Engine Core: output send 1 reqs
+INFO:     127.0.0.1:44886 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:14] Engine Core: put 1 reqs to scheduler
+[atom 08:34:14] Scheduled prefill batch: 1 reqs, 855 token_nums: [855], req_ids: (11,)
+[aiter] shape is M:855, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:855, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:855, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:18] Engine Core: output send 1 reqs
+[atom 08:34:18] Request 12 arrived, input tokens: 906, pending requests: 1 
+[atom 08:34:18] API: Created request_id=cmpl-eef5501b73064f5586843e5584ce46b2, seq_id=12
+INFO:     127.0.0.1:44896 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:18] Engine Core: put 1 reqs to scheduler
+[atom 08:34:18] Scheduled prefill batch: 1 reqs, 906 token_nums: [906], req_ids: (12,)
+[aiter] shape is M:906, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:906, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:906, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:21] Engine Core: output send 1 reqs
+[atom 08:34:21] Request 13 arrived, input tokens: 889, pending requests: 1 
+[atom 08:34:21] API: Created request_id=cmpl-520baaf7a12e423e85c1d8ae76470534, seq_id=13
+INFO:     127.0.0.1:44910 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:21] Engine Core: put 1 reqs to scheduler
+[atom 08:34:21] Scheduled prefill batch: 1 reqs, 889 token_nums: [889], req_ids: (13,)
+[aiter] shape is M:889, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:889, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:889, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:25] Request 14 arrived, input tokens: 907, pending requests: 1 
+[atom 08:34:25] API: Created request_id=cmpl-e9d27d6a9da6424e998e98305764e871, seq_id=14
+[atom 08:34:25] Engine Core: output send 1 reqs
+INFO:     127.0.0.1:54008 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:25] Engine Core: put 1 reqs to scheduler
+[atom 08:34:25] Scheduled prefill batch: 1 reqs, 907 token_nums: [907], req_ids: (14,)
+[aiter] shape is M:907, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:907, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:907, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:29] Request 15 arrived, input tokens: 959, pending requests: 1 
+[atom 08:34:29] API: Created request_id=cmpl-73be08d23a4b447bb5a990a27c3b29e8, seq_id=15
+[atom 08:34:29] Engine Core: output send 1 reqs
+INFO:     127.0.0.1:54016 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:29] Engine Core: put 1 reqs to scheduler
+[atom 08:34:29] Scheduled prefill batch: 1 reqs, 959 token_nums: [959], req_ids: (15,)
+[aiter] shape is M:959, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:959, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:959, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:32] Engine Core: output send 1 reqs
+[atom 08:34:32] Request 16 arrived, input tokens: 877, pending requests: 1 
+[atom 08:34:32] API: Created request_id=cmpl-61d48185b5e6422bb2568f749395c318, seq_id=16
+INFO:     127.0.0.1:54022 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:32] Engine Core: put 1 reqs to scheduler
+[atom 08:34:32] Scheduled prefill batch: 1 reqs, 877 token_nums: [877], req_ids: (16,)
+[aiter] shape is M:877, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:877, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:877, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:36] Engine Core: output send 1 reqs
+[atom 08:34:36] Request 17 arrived, input tokens: 1012, pending requests: 1 
+[atom 08:34:36] API: Created request_id=cmpl-75bad1ff8cf9460b864b530c6970cf89, seq_id=17
+INFO:     127.0.0.1:46910 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:36] Engine Core: put 1 reqs to scheduler
+[atom 08:34:36] Scheduled prefill batch: 1 reqs, 1012 token_nums: [1012], req_ids: (17,)
+[aiter] shape is M:1012, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:1012, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:1012, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:39] Engine Core: output send 1 reqs
+[atom 08:34:39] Request 18 arrived, input tokens: 858, pending requests: 1 
+[atom 08:34:39] API: Created request_id=cmpl-a54aca3dbeb64cc88674478ecd026f91, seq_id=18
+INFO:     127.0.0.1:46912 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:39] Engine Core: put 1 reqs to scheduler
+[atom 08:34:39] Scheduled prefill batch: 1 reqs, 858 token_nums: [858], req_ids: (18,)
+[aiter] shape is M:858, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:858, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:858, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:43] Engine Core: output send 1 reqs
+[atom 08:34:43] Request 19 arrived, input tokens: 906, pending requests: 1 
+[atom 08:34:43] API: Created request_id=cmpl-6c025eb3f7e04c11b2031cf556a799a6, seq_id=19
+INFO:     127.0.0.1:46918 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:43] Engine Core: put 1 reqs to scheduler
+[atom 08:34:43] Scheduled prefill batch: 1 reqs, 906 token_nums: [906], req_ids: (19,)
+[atom 08:34:46] Engine Core: output send 1 reqs
+[atom 08:34:46] Request 20 arrived, input tokens: 993, pending requests: 1 
+[atom 08:34:46] API: Created request_id=cmpl-b18bcd05018b42e2b2a75f47c4bfa825, seq_id=20
+INFO:     127.0.0.1:54488 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:46] Engine Core: put 1 reqs to scheduler
+[atom 08:34:46] Scheduled prefill batch: 1 reqs, 993 token_nums: [993], req_ids: (20,)
+[aiter] shape is M:993, N:5120, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:993, N:2880, K:4096 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[aiter] shape is M:993, N:128, K:2880 dtype='torch.bfloat16' otype='torch.bfloat16' bias=True, scaleAB=False, bpreshuffle=False, not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default config! using torch solution:0
+[atom 08:34:50] Engine Core: output send 1 reqs
+[atom 08:34:50] Request 21 arrived, input tokens: 907, pending requests: 1 
+[atom 08:34:50] API: Created request_id=cmpl-e787874e318a4c9daf60067591b5ecba, seq_id=21
+INFO:     127.0.0.1:54504 - "POST /v1/completions HTTP/1.1" 200 OK
+[atom 08:34:50] Engine Core: put 1 reqs to scheduler
+[atom 08:34:50] Scheduled prefill batch: 1 reqs, 907 token_nums: [907], req_ids: (21,)
+[atom 08:34:54] Engine Core: output send 1 reqs
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+[atom 08:34:54] Server shutting down, releasing resources...
+[atom 08:34:54] Engine Core Mgr: Shutting down all 1 EngineCores
+[atom 08:34:58] AsyncIOProcManager(ModelRunner): shutdown all runners...
+[atom 08:34:58] AsyncIOProcManager(ModelRunner): All runners are shutdown.
+[atom 08:34:59] Engine Core Mgr: All EngineCores shut down
+INFO:     Application shutdown complete.
+INFO:     Finished server process [132221]
