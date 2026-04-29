@@ -99,10 +99,12 @@ ci_sync() {
   # Clean any leftover rebase state from a prior interrupted ci_commit_results
   # — `git pull --rebase` writes .git/rebase-merge and refuses to retry until
   # cleared, so any subsequent workflow gets stuck at fatal "rebase in progress".
-  # NOTE: use { ; } group, not ( ; ) subshell — bash 5 hits
+  # NOTE: each call must end in || true. bash 5 hits
   # `pop_var_context: head of shell_variables not a function context`
-  # when eval'ing a subshell from inside a function.
-  ci_exec_host "cd $REPO && { git rebase --abort 2>/dev/null; rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null; true; }"
+  # when a non-zero exit (e.g. `git rebase --abort` with nothing to abort)
+  # bubbles out of an eval inside a function under set -e.
+  ci_exec_host "cd $REPO && git rebase --abort 2>/dev/null || true"
+  ci_exec_host "cd $REPO && rm -rf .git/rebase-merge .git/rebase-apply 2>/dev/null || true"
   ci_exec_host "cd $REPO && git fetch origin && git checkout -B main origin/main"
   ci_exec_host "cd $REPO && git log --oneline -3"
 }
