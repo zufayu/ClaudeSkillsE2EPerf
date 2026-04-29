@@ -234,10 +234,19 @@ ci_parse_configs() {
 }
 
 # Generate result directory path
+# Args: platform model quant mtp ep tp env_tag [suffix]
+#   model: short id (e.g. dsr, gptoss120b) — use the canonical project shorthand.
 ci_result_dir() {
-  local platform=$1 quant=$2 mtp=$3 ep=$4 tp=$5 env_tag=$6 suffix=${7:-}
-  echo "results/${platform}_dsr_${quant}/${platform}_dsr_${quant}_${mtp}_ep${ep}_tp${tp}_${env_tag}${suffix}"
+  local platform=$1 model=$2 quant=$3 mtp=$4 ep=$5 tp=$6 env_tag=$7 suffix=${8:-}
+  local d="results/${platform}_${model}_${quant}/${platform}_${model}_${quant}_${mtp}_ep${ep}_tp${tp}_${env_tag}${suffix}"
+  validate_result_dir "$d" >/dev/null || { echo "BUG: ci_result_dir produced non-compliant path: $d" >&2; return 1; }
+  echo "$d"
 }
+
+# Source shared naming validator (defines validate_result_dir)
+_CI_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=result_dir_validate.sh
+source "$_CI_LIB_DIR/result_dir_validate.sh"
 
 # -----------------------------------------------------------------------------
 # Result commit

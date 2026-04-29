@@ -36,6 +36,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/result_dir_validate.sh"
 
 # ======================== Defaults ============================================
 MODEL=""
@@ -154,6 +155,7 @@ done
 
 [[ -z "$MODEL" ]] && { echo "ERROR: --model is required"; usage; }
 [[ -z "$RESULT_DIR" ]] && { echo "ERROR: --result-dir is required"; usage; }
+validate_result_dir "$RESULT_DIR" || exit 1
 
 # ======================== Setup ===============================================
 

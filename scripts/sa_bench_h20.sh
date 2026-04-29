@@ -32,6 +32,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/benchmark_lib.sh"
+source "$SCRIPT_DIR/result_dir_validate.sh"
 
 # ======================== Argument Parsing ====================================
 MODEL=""
@@ -85,6 +86,7 @@ if [[ -z "$MODEL" ]]; then
     exit 1
 fi
 
+validate_result_dir "$RESULT_DIR" || exit 1
 mkdir -p "$RESULT_DIR"
 
 # ======================== ISL/OSL Test Matrix =================================

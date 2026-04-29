@@ -86,7 +86,7 @@ jobs:
           MODEL="$MODEL_FP4"
           ci_get_image
           ENV_TAG=$(ci_detect_env_tag sglang)
-          RESULT_DIR=$(ci_result_dir "$PLATFORM" "$QUANT" "$MTP" "${{ inputs.ep }}" "${{ inputs.tp }}" "$ENV_TAG" "_profiling")
+          RESULT_DIR=$(ci_result_dir "$PLATFORM" "dsr" "$QUANT" "$MTP" "${{ inputs.ep }}" "${{ inputs.tp }}" "$ENV_TAG" "_profiling")
           for var in CONTAINER MODEL QUANT MTP MODE IMAGE ENV_TAG RESULT_DIR REPO EXEC_MODE PLATFORM CI_USER_NAME CI_USER_EMAIL; do
             echo "$var=${!var}" >> $GITHUB_ENV
           done

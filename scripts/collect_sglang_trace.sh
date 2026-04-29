@@ -27,6 +27,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/benchmark_lib.sh"
+source "$SCRIPT_DIR/result_dir_validate.sh"
 
 # ======================== Defaults ============================================
 
@@ -203,6 +204,7 @@ log "  Result Dir:  $RESULT_DIR"
 log "  Tag:         $TAG"
 log "============================================================"
 
+validate_result_dir "$RESULT_DIR" || exit 1
 mkdir -p "$RESULT_DIR"
 
 # ======================== Version Capture =====================================

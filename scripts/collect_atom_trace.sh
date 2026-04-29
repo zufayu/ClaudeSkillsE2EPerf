@@ -44,6 +44,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/result_dir_validate.sh"
 
 # ======================== Defaults ============================================
 MODEL=""
@@ -392,6 +393,7 @@ log "  Tag:           $TAG"
 log "============================================================"
 
 # Log file (don't use exec+tee — it buffers Python's tqdm/asyncio and hangs)
+validate_result_dir "$RESULT_DIR" || exit 1
 mkdir -p "$RESULT_DIR"
 SCRIPT_LOG="$RESULT_DIR/${TAG}.log"
 log "Log file: $SCRIPT_LOG"

@@ -37,6 +37,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/benchmark_lib.sh"
+source "$SCRIPT_DIR/result_dir_validate.sh"
 
 # ======================== Argument Parsing ====================================
 MODEL_FP4=""
@@ -143,6 +144,7 @@ case "$CONFIGS" in
         ;;
 esac
 
+validate_result_dir "$RESULT_DIR" || exit 1
 mkdir -p "$RESULT_DIR"
 
 # ======================== ISL/OSL Test Matrix =================================
