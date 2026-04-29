@@ -37,6 +37,10 @@ on:
         description: "Result-dir model segment (must match model; e.g. 'dsr', 'gptoss120b')"
         type: string
         default: "dsr"
+      fwbringup:
+        description: "Use fw-bringup methodology (no warmup, no num_prompts floor) — for cross-comparison with MI450"
+        type: boolean
+        default: false
       commit_results:
         description: "Commit results to main (false = upload artifact only, no main pollution)"
         type: boolean
@@ -58,7 +62,9 @@ jobs:
           [[ -z "$MODEL" ]] && MODEL="$MODEL_MXFP4"
           ci_get_image
           ENV_TAG=$(ci_detect_env_tag atom)
-          RESULT_DIR=$(ci_result_dir "$PLATFORM" "${{ inputs.model_segment }}" "$QUANT" "$MTP" "${{ inputs.ep }}" "${{ inputs.tp }}" "$ENV_TAG")
+          DIR_SUFFIX=""
+          [[ "${{ inputs.fwbringup }}" == "true" ]] && DIR_SUFFIX="_fwbringup"
+          RESULT_DIR=$(ci_result_dir "$PLATFORM" "${{ inputs.model_segment }}" "$QUANT" "$MTP" "${{ inputs.ep }}" "${{ inputs.tp }}" "$ENV_TAG" "$DIR_SUFFIX")
           for var in CONTAINER MODEL QUANT MTP MODE IMAGE ENV_TAG RESULT_DIR REPO EXEC_MODE CI_USER_NAME CI_USER_EMAIL; do
             echo "$var=${!var}" >> $GITHUB_ENV
           done
@@ -81,6 +87,7 @@ jobs:
           ARGS="--model-${QUANT} $MODEL --configs ${{ inputs.configs }} --scenario ${{ inputs.scenario }} --concurrency '${{ inputs.concurrency }}' --tp ${{ inputs.tp }} --container-image $IMAGE --result-dir ./$RESULT_DIR"
           [[ "${{ inputs.ep }}" -gt 1 ]] && ARGS="$ARGS --ep"
           [[ "${{ inputs.dp_attn }}" == "true" ]] && ARGS="$ARGS --dp-attn"
+          [[ "${{ inputs.fwbringup }}" == "true" ]] && ARGS="$ARGS --fwbringup"
           ci_exec "cd $REPO && bash scripts/sa_bench_mi355x.sh $ARGS"
 
       - name: Show results

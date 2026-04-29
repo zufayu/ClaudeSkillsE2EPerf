@@ -58,6 +58,7 @@ SERVER_PORT=8000             # ATOM API server port (--server-port)
 EXPERT_PARALLEL="false"      # --enable-expert-parallel for ATOM MoE
 DP_ATTENTION="false"         # --enable-dp-attention (flattens TP→DP, weights replicated per rank)
 CONTAINER_IMAGE=""           # original docker/podman image name (passed from host)
+FWBRINGUP_MODE=false         # true = fw-bringup methodology (skip warmup, no num_prompts floor)
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -75,6 +76,7 @@ while [[ $# -gt 0 ]]; do
         --scenario)          SCENARIO_FILTER="$2"; shift 2 ;;
         --concurrency)       CONC_FILTER="$2"; shift 2 ;;
         --max-model-len)     MAX_MODEL_LEN_OVERRIDE="$2"; shift 2 ;;
+        --fwbringup)         FWBRINGUP_MODE=true; shift 1 ;;
         -h|--help)
             echo "Usage: bash sa_bench_mi355x.sh --model <path> [options]"
             echo ""
@@ -89,6 +91,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --tp N                  Tensor parallelism (default: 8)"
             echo "  --ep                    Enable expert parallelism (--enable-expert-parallel)"
             echo "  --max-model-len N       Override max model length"
+            echo "  --fwbringup             Use fw-bringup methodology (no warmup, no num_prompts floor) for cross-comparison with MI450 perf-tracking"
             echo ""
             echo "Filtering (run a subset):"
             echo "  --scenario SCENARIO     chat|reasoning|summarize|all (default: all)"
@@ -380,8 +383,12 @@ run_single_point() {
         fi
 
         local num_prompts=$(( conc * 10 ))
-        [[ $num_prompts -lt 20 ]] && num_prompts=20
-        local num_warmups=$(( conc * 2 ))
+        if [[ "$FWBRINGUP_MODE" != "true" ]]; then
+            [[ $num_prompts -lt 20 ]] && num_prompts=20
+        fi
+        local default_warmups=$(( conc * 2 ))
+        [[ "$FWBRINGUP_MODE" == "true" ]] && default_warmups=0
+        local num_warmups="${NUM_WARMUPS:-$default_warmups}"
 
         log "  Running benchmark: ISL=$isl, OSL=$osl, CONC=$conc, NUM_PROMPTS=$num_prompts, WARMUPS=$num_warmups"
 
@@ -425,6 +432,7 @@ run_single_point() {
                 "aiter_version=$aiter_version"
                 "rocm_version=$rocm_version"
                 "container_image=$CONTAINER_IMAGE"
+                "bench_methodology=$([[ $FWBRINGUP_MODE == true ]] && echo fwbringup || echo claudeskills)"
         )
 
         # MTP/spec-decoding requires chat-template-formatted prompts so the
