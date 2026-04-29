@@ -93,8 +93,10 @@ ci_inspect() {
 # -----------------------------------------------------------------------------
 
 # Sync repo to origin/main (hard reset — the only reliable strategy)
+# `checkout -B main` ensures we stay on main branch (not detached HEAD), so
+# subsequent commits via ci_commit_results land on main and can be pushed.
 ci_sync() {
-  ci_exec_host "cd $REPO && git fetch origin && git reset --hard origin/main"
+  ci_exec_host "cd $REPO && git fetch origin && git checkout -B main origin/main"
   ci_exec_host "cd $REPO && git log --oneline -3"
 }
 
@@ -247,14 +249,18 @@ ci_commit_results() {
 
   ci_exec_host "cd $REPO && git config user.email '$CI_USER_EMAIL' && git config user.name '$CI_USER_NAME'"
 
-  # Stage result files (exclude large trace binaries)
+  # Stage result files (exclude large trace binaries). Stash any tracked-but-unstaged
+  # modifications first so `git pull --rebase` doesn't refuse with "unstaged changes"
+  # — bench writes summary.md / regression_report.txt which are tracked.
   ci_exec_host "cd $REPO && git reset HEAD 2>/dev/null; true"
-  ci_exec_host "cd $REPO && for ext in json log yml md csv xlsx; do git add -f ${result_dir}/*.\$ext 2>/dev/null || true; done"
+  ci_exec_host "cd $REPO && git stash push --keep-index -m 'ci-pre-commit-stash' -- ${result_dir} 2>/dev/null || true"
+  ci_exec_host "cd $REPO && for ext in json log yml md csv xlsx txt; do git add -f ${result_dir}/*.\$ext 2>/dev/null || true; done"
   ci_exec_host "cd $REPO && git diff --cached --name-only"
 
   ci_exec_host "cd $REPO && if ! git diff --cached --quiet; then git commit -m '${message}
 
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git pull --rebase origin main && git push; else echo 'Nothing to commit'; fi"
+  ci_exec_host "cd $REPO && git stash drop 2>/dev/null || true"
 }
 
 # Snapshot result_dir to shared SFS so data survives node reallocation.
