@@ -187,8 +187,14 @@ if [[ -f "$_ADAPTIVE" ]]; then
     source "$_ADAPTIVE"
     log "Loaded adaptive config: ${PLATFORM}_trt.sh"
 else
-    source "$SCRIPT_DIR/../configs/adaptive/default_trt.sh"
-    log "WARN: No adaptive config for '$PLATFORM', using defaults"
+    # Hard-fail: silent fallback to default_trt.sh swaps the MoE backend
+    # under you. For trace collection this is worse than for bench — the
+    # resulting nsys trace would profile a different kernel than production.
+    echo "ERROR: No adaptive config for platform '$PLATFORM'." >&2
+    echo "  Expected: $_ADAPTIVE" >&2
+    echo "  Available: $(ls "$SCRIPT_DIR/../configs/adaptive/" 2>/dev/null | grep _trt.sh | tr '\n' ' ')" >&2
+    echo "  Either add configs/adaptive/${PLATFORM}_trt.sh, or set PLATFORM to a known one." >&2
+    exit 1
 fi
 
 # ======================== Generate Config YAML ================================
