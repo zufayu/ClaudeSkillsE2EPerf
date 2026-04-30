@@ -276,6 +276,36 @@ def classify_layer(layer_kernels):
     return result
 
 
+def parse_layer_spec(spec):
+    """Parse --layers arg into a sorted list of int indices.
+
+    Forms:
+      'lo-hi'           -> [lo, lo+1, ..., hi]   (inclusive both ends)
+      'lo-hi:even'      -> even indices in lo..hi
+      'lo-hi:odd'       -> odd indices in lo..hi
+      'i,j,k,...'       -> exactly those indices
+    """
+    spec = spec.strip()
+    if "," in spec:
+        idxs = [int(x) for x in spec.split(",") if x.strip()]
+    else:
+        parity = None
+        if ":" in spec:
+            spec, parity = spec.split(":", 1)
+            parity = parity.strip().lower()
+            if parity not in ("even", "odd"):
+                raise ValueError(f"--layers parity must be 'even' or 'odd', got {parity!r}")
+        lo, hi = map(int, spec.split("-"))
+        idxs = list(range(lo, hi + 1))
+        if parity == "even":
+            idxs = [i for i in idxs if i % 2 == 0]
+        elif parity == "odd":
+            idxs = [i for i in idxs if i % 2 == 1]
+    if not idxs:
+        raise ValueError(f"--layers {spec!r} resolved to empty set")
+    return sorted(set(idxs))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Decode kernel breakdown from ATOM trace")
     parser.add_argument("trace", help="Path to trace JSON or JSON.GZ")
@@ -290,10 +320,14 @@ def main():
                         help="DEPRECATED. Old single-decode picker. Ignored when "
                              "--skip-warmup / --max-steps are used.")
     parser.add_argument("--layers", type=str, default="10-40",
-                        help="Layer index range to keep, lo-hi (exclusive upper). "
-                             "Default 10-40 = 30 layers (steady middle, common for "
-                             "60+ layer models like DSR1/Llama70B). For smaller models "
-                             "(Llama 7B 32 layers, Mistral 7B 32 layers), use e.g. 5-25.")
+                        help="Layer index selection. Forms: 'lo-hi' (inclusive range), "
+                             "'lo-hi:even' or 'lo-hi:odd' (parity filter — useful for "
+                             "GPT-OSS-style models that alternate sliding-window vs "
+                             "full-context attention 1:1 by layer parity), or a comma "
+                             "list 'i,j,k,...'. Default 10-40 = 30 layers (steady "
+                             "middle, common for 60+ layer models like DSR1/Llama70B). "
+                             "For smaller models (Llama 7B 32 layers, Mistral 7B 32 "
+                             "layers), use e.g. 5-25.")
     parser.add_argument("--anchor-min", type=int, default=20,
                         help="Min plausible per-decode layer count (for structural "
                              "anchor detection). Default 20 covers smallest open models.")
@@ -317,7 +351,10 @@ def main():
         suffix = m.group(1) if m else f"c{args.target_bs}"
         args.output = f"decode_breakdown_{suffix}.xlsx"
 
-    layer_start, layer_end = map(int, args.layers.split("-"))
+    layer_indices = parse_layer_spec(args.layers)
+    layer_start = layer_indices[0]
+    layer_end = layer_indices[-1]
+    layer_set = set(layer_indices)
     evts = load_trace(args.trace)
 
     decodes = select_decodes(evts, args.target_bs, args.skip_warmup, args.max_steps)
@@ -372,9 +409,9 @@ def main():
             if any(any(p in n for p in ["bf16gemm", "grouped_topk", "kernel_moe"])
                    for n in first_names):
                 layers = layers[1:]
-        # Trim to requested layer range
-        decode_layer_end = min(layer_end, len(layers) - 1)
-        selected = layers[layer_start:decode_layer_end + 1]
+        # Pick exactly the requested indices (supports range, parity, list)
+        n_layers = len(layers)
+        selected = [layers[i] for i in layer_indices if 0 <= i < n_layers]
         for l in selected:
             all_classified.append(classify_layer(l))
         total_dur_ms += dur / 1000
@@ -427,7 +464,7 @@ def main():
     n_layers = n_layers_total  # for back-compat below
 
     print(f"\n{'='*60}")
-    print(f"LAYER {layer_start}-{layer_end} ANALYSIS "
+    print(f"LAYER {args.layers} ANALYSIS "
           f"({n_layers_total} layer samples × {n_decodes} decodes)")
     print(f"{'='*60}")
     print(f"  Representative layer: {len(rep_layer)} kernels")
