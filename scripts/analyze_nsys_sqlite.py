@@ -36,7 +36,7 @@ import csv as csv_mod
 import os
 import sqlite3
 import sys
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 
 
 def connect(db_path):
@@ -342,29 +342,96 @@ def classify_kernel_short(name):
     return 'Other'
 
 
+def _compute_kernel_overlaps(kernels):
+    """For each kernel, compute (overlap_us_with_next_same_stream, exclusive_us).
+
+    overlap_us = max(0, this.end - next.start) where next is the soonest kernel
+    on the same stream that starts after this one. Captures PDL signature:
+    next kernel's prologue overlaps with this one's tail on the same stream.
+
+    exclusive_us = duration - overlap_us (clamped to 0): how much of this
+    kernel's wall time is NOT shared with its successor on the same stream.
+
+    Returns list of (overlap_us, exclusive_us) parallel to input.
+    """
+    by_stream = defaultdict(list)
+    for idx, k in enumerate(kernels):
+        by_stream[k[5]].append((k[1], idx))  # (start_ns, idx)
+    for sid in by_stream:
+        by_stream[sid].sort()
+
+    out = [(0.0, 0.0)] * len(kernels)
+    for sid, lst in by_stream.items():
+        for i in range(len(lst)):
+            cur_idx = lst[i][1]
+            cur_end = kernels[cur_idx][2]
+            cur_dur = kernels[cur_idx][3]
+            if i + 1 < len(lst):
+                next_start = lst[i + 1][0]
+                overlap_ns = max(0, cur_end - next_start)
+            else:
+                overlap_ns = 0
+            overlap_us = overlap_ns / 1000.0
+            exclusive_us = max(0.0, cur_dur - overlap_us)
+            out[cur_idx] = (overlap_us, exclusive_us)
+    return out
+
+
+def _critical_path_us(kernels):
+    """Union-of-intervals across all streams = GPU-busy span (us).
+
+    sum of (end-start) of merged intervals. Approximates the wall-clock
+    floor under perfect launch latency; gap to step wall = host/launch overhead.
+    """
+    if not kernels:
+        return 0.0
+    intervals = sorted([(k[1], k[2]) for k in kernels])
+    merged_ns = 0
+    cur_start, cur_end = intervals[0]
+    for s, e in intervals[1:]:
+        if s <= cur_end:
+            cur_end = max(cur_end, e)
+        else:
+            merged_ns += cur_end - cur_start
+            cur_start, cur_end = s, e
+    merged_ns += cur_end - cur_start
+    return merged_ns / 1000.0
+
+
 def analyze_step_kernels(conn, steps, device_id=None, top_n=30):
-    """Analyze kernel breakdown across decode steps."""
+    """Analyze kernel breakdown across decode steps with PDL/overlap metrics."""
     all_kernel_stats = defaultdict(lambda: {
-        'count': 0, 'total_us': 0.0, 'category': '', 'steps_seen': 0
+        'count': 0, 'total_us': 0.0, 'category': '', 'steps_seen': 0,
+        'total_exclusive_us': 0.0, 'total_overlap_us': 0.0,
+        'pdl_invocations': 0, 'streams': Counter(),
     })
     step_wall_times = []
     step_kernel_sums = []
+    step_critical_paths = []
     n_steps = len(steps)
 
     for i, (text, start_ns, end_ns, dur_ms) in enumerate(steps):
         kernels = get_kernels_in_range(conn, start_ns, end_ns, device_id)
         step_total_us = sum(k[3] for k in kernels)
         step_kernel_sums.append(step_total_us)
-        step_wall_times.append(dur_ms * 1000)  # ms to us
+        step_wall_times.append(dur_ms * 1000)
+        step_critical_paths.append(_critical_path_us(kernels))
 
+        overlaps = _compute_kernel_overlaps(kernels)
         seen_this_step = set()
-        for kname, kstart, kend, kdur, kdev, kstream, kgrid, kblock in kernels:
+        for (kname, kstart, kend, kdur, kdev, kstream, kgrid, kblock), (ov_us, ex_us) in zip(kernels, overlaps):
             cat = classify_kernel_short(kname)
-            all_kernel_stats[kname]['count'] += 1
-            all_kernel_stats[kname]['total_us'] += kdur
-            all_kernel_stats[kname]['category'] = cat
+            stats = all_kernel_stats[kname]
+            stats['count'] += 1
+            stats['total_us'] += kdur
+            stats['category'] = cat
+            stats['total_exclusive_us'] += ex_us
+            stats['total_overlap_us'] += ov_us
+            if ov_us > 0:
+                stats['pdl_invocations'] += 1
+            stats['streams'][kstream] += 1
             if kname not in seen_this_step:
-                all_kernel_stats[kname]['steps_seen'] += 1
+                stats['steps_seen'] += 1
                 seen_this_step.add(kname)
 
     # Print per-category breakdown
@@ -391,10 +458,18 @@ def analyze_step_kernels(conn, steps, device_id=None, top_n=30):
 
     avg_kernel_sum = sum(step_kernel_sums) / n_steps if n_steps else 0
     avg_wall = sum(step_wall_times) / n_steps if n_steps else 0
-    print(f"\n  Avg kernel sum/step: {avg_kernel_sum:.1f}μs ({avg_kernel_sum/1000:.2f}ms)")
+    avg_critical = sum(step_critical_paths) / n_steps if n_steps else 0
+    print(f"\n  Avg kernel sum/step:        {avg_kernel_sum:.1f}μs ({avg_kernel_sum/1000:.2f}ms) "
+          f"← naive sum (PDL-blind, double-counts overlap)")
+    print(f"  Avg critical-path/step:     {avg_critical:.1f}μs ({avg_critical/1000:.2f}ms) "
+          f"← union-of-intervals across streams (real GPU-busy span)")
     if avg_wall > 0:
-        print(f"  Avg wall-clock/step: {avg_wall:.1f}μs ({avg_wall/1000:.2f}ms)")
-        print(f"  GPU utilization: {100*avg_kernel_sum/avg_wall:.1f}% (kernel_sum/wall)")
+        print(f"  Avg wall-clock/step:        {avg_wall:.1f}μs ({avg_wall/1000:.2f}ms)")
+        print(f"  PDL/overlap savings:        {avg_kernel_sum-avg_critical:.1f}μs "
+              f"({100*(avg_kernel_sum-avg_critical)/avg_kernel_sum if avg_kernel_sum>0 else 0:.1f}% of naive sum)")
+        print(f"  Host/launch overhead:       {avg_wall-avg_critical:.1f}μs "
+              f"({100*(avg_wall-avg_critical)/avg_wall:.1f}% of wall) ← gap = scheduler/CPU")
+        print(f"  GPU utilization:            {100*avg_critical/avg_wall:.1f}% (critical_path/wall)")
 
     # Top kernels
     print(f"\n{'='*80}")
@@ -503,21 +578,42 @@ def top_kernels_global(conn, device_id=None, limit=20):
 
 
 def write_csv(all_kernel_stats, n_steps, csv_path):
-    """Write kernel breakdown to CSV."""
+    """Write kernel breakdown to CSV (with PDL/overlap columns)."""
     with open(csv_path, 'w', newline='') as f:
         writer = csv_mod.writer(f)
-        writer.writerow(['rank', 'name', 'category', 'count', 'total_ms', 'pct', 'avg_us', 'steps_seen'])
+        writer.writerow([
+            'rank', 'name', 'category', 'count', 'total_ms', 'pct', 'avg_us', 'steps_seen',
+            'avg_exclusive_us', 'avg_overlap_us_with_next', 'overlap_pct',
+            'pdl_active_pct', 'stream_id', 'stream_share_pct',
+        ])
         total_us = sum(s['total_us'] for s in all_kernel_stats.values())
         sorted_k = sorted(all_kernel_stats.items(), key=lambda x: x[1]['total_us'], reverse=True)
         for rank, (name, stats) in enumerate(sorted_k, 1):
+            cnt = stats['count']
             pct = 100 * stats['total_us'] / total_us if total_us > 0 else 0
+            avg_us = stats['total_us'] / cnt if cnt > 0 else 0
+            avg_excl = stats['total_exclusive_us'] / cnt if cnt > 0 else 0
+            avg_overlap = stats['total_overlap_us'] / cnt if cnt > 0 else 0
+            overlap_pct = 100 * stats['total_overlap_us'] / stats['total_us'] if stats['total_us'] > 0 else 0
+            pdl_pct = 100 * stats['pdl_invocations'] / cnt if cnt > 0 else 0
+            if stats['streams']:
+                top_stream, top_count = stats['streams'].most_common(1)[0]
+                stream_share = 100 * top_count / cnt if cnt > 0 else 0
+            else:
+                top_stream, stream_share = '', 0
             writer.writerow([
                 rank, name, stats['category'],
-                stats['count'],
+                cnt,
                 round(stats['total_us'] / 1000, 3),
                 round(pct, 2),
-                round(stats['total_us'] / stats['count'] if stats['count'] > 0 else 0, 3),
+                round(avg_us, 3),
                 stats['steps_seen'],
+                round(avg_excl, 3),
+                round(avg_overlap, 3),
+                round(overlap_pct, 2),
+                round(pdl_pct, 2),
+                top_stream,
+                round(stream_share, 2),
             ])
     print(f"\nCSV written: {csv_path}")
 

@@ -1,13 +1,13 @@
-rank,name,category,count,total_ms,pct,avg_us,steps_seen
-1,bmm_MxE4m3_MxE2m1MxE4m3_Fp32_bA32_bB32_bC32_t128x8x256u2_s6_et128x8_m128x8x32_c1x1x1_16dp256b_rM_TN_transOut_schPd2x1x2x3_biasM_bN_tma_ldgstsSf_rgTma_clmp_swiGlu_dynB_sm100f,MoE/Expert (gate_up),73,4.226,38.88,57.895,20
-2,bmm_Bfloat16_MxE2m1MxE4m3_Fp32_bA32_bB32_t128x8x256_s6_et128x8_m128x8x32_c1x1x1_16dp256b_rM_TN_transOut_schPd2x1x2x3_biasM_bN_rgTma_clmp_dynB_sm100f,MoE/Expert (down),75,2.406,22.14,32.086,20
-3,nvjet_sm103_tst_32x64_64x16_4x1_v_bz_bias_TNN,GEMM/MatMul,81,0.729,6.7,8.997,20
-4,nvjet_sm103_tst_64x16_64x16_4x1_2cta_v_bz_bias_TNT,GEMM/MatMul,82,0.608,5.6,7.418,20
-5,FusedAddRMSNormKernel,Normalization,162,0.483,4.45,2.984,20
-6,finalizeKernel,Other,79,0.473,4.35,5.984,20
-7,fmhaSm100fKernel_QkvE4m3OBfloat16H64PagedKvCausalP32VarSeqQ8Kv128PersistentSwapsAbForGen,Attention,43,0.397,3.65,9.237,20
-8,routingIndicesDynBlockKernel,MoE/Router,82,0.353,3.24,4.301,20
-9,applyBiasRopeUpdateKVCacheV2,RoPE,82,0.35,3.22,4.274,20
-10,quantize_with_block_size,Quantization,82,0.319,2.93,3.886,20
-11,tinygemm_kernel,GEMM/MatMul,82,0.287,2.64,3.504,20
-12,fmhaSm100fKernel_QkvE4m3OBfloat16H64PagedKvSlidingOrChunkedCausalP32VarSeqQ8Kv128PersistentSwapsAbForGen,Attention,38,0.237,2.18,6.247,20
+rank,name,category,count,total_ms,pct,avg_us,steps_seen,avg_exclusive_us,avg_overlap_us_with_next,overlap_pct,pdl_active_pct,stream_id,stream_share_pct
+1,bmm_MxE4m3_MxE2m1MxE4m3_Fp32_bA32_bB32_bC32_t128x8x256u2_s6_et128x8_m128x8x32_c1x1x1_16dp256b_rM_TN_transOut_schPd2x1x2x3_biasM_bN_tma_ldgstsSf_rgTma_clmp_swiGlu_dynB_sm100f,MoE/Expert (gate_up),73,4.226,38.88,57.895,20,54.283,3.612,6.24,91.78,7142,100.0
+2,bmm_Bfloat16_MxE2m1MxE4m3_Fp32_bA32_bB32_t128x8x256_s6_et128x8_m128x8x32_c1x1x1_16dp256b_rM_TN_transOut_schPd2x1x2x3_biasM_bN_rgTma_clmp_dynB_sm100f,MoE/Expert (down),75,2.406,22.14,32.086,20,28.508,3.578,11.15,100.0,7142,100.0
+3,nvjet_sm103_tst_32x64_64x16_4x1_v_bz_bias_TNN,GEMM/MatMul,81,0.729,6.7,8.997,20,7.934,1.063,11.81,100.0,7142,100.0
+4,nvjet_sm103_tst_64x16_64x16_4x1_2cta_v_bz_bias_TNT,GEMM/MatMul,82,0.608,5.6,7.418,20,6.446,0.972,13.1,100.0,7142,100.0
+5,FusedAddRMSNormKernel,Normalization,162,0.483,4.45,2.984,20,2.704,0.28,9.38,100.0,7142,100.0
+6,finalizeKernel,Other,79,0.473,4.35,5.984,20,5.788,0.196,3.28,98.73,7142,100.0
+7,fmhaSm100fKernel_QkvE4m3OBfloat16H64PagedKvCausalP32VarSeqQ8Kv128PersistentSwapsAbForGen,Attention,43,0.397,3.65,9.237,20,8.781,0.455,4.93,100.0,7142,100.0
+8,routingIndicesDynBlockKernel,MoE/Router,82,0.353,3.24,4.301,20,4.124,0.176,4.1,89.02,7142,100.0
+9,applyBiasRopeUpdateKVCacheV2,RoPE,82,0.35,3.22,4.274,20,3.662,0.612,14.31,96.34,7142,100.0
+10,quantize_with_block_size,Quantization,82,0.319,2.93,3.886,20,3.886,0.0,0.0,0.0,7142,100.0
+11,tinygemm_kernel,GEMM/MatMul,82,0.287,2.64,3.504,20,1.843,1.662,47.42,100.0,7142,100.0
+12,fmhaSm100fKernel_QkvE4m3OBfloat16H64PagedKvSlidingOrChunkedCausalP32VarSeqQ8Kv128PersistentSwapsAbForGen,Attention,38,0.237,2.18,6.247,20,5.806,0.441,7.06,100.0,7142,100.0
