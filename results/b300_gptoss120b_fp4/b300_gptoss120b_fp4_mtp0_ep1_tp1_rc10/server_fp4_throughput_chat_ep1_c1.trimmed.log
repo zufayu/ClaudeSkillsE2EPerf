@@ -1,4 +1,4 @@
-=== Trimmed: 20756 -> 22 lines ===
+=== Trimmed: 20755 -> 22 lines ===
 === Source: server_fp4_throughput_chat_ep1_c1.log ===
 
 ======================================================================
@@ -7,7 +7,7 @@ REPRODUCE INFO (from result JSON)
 Docker Image: unknown-docker
 
 Server Command:
-  PYTHONNOUSERSITE=1 mpirun -n 1 --oversubscribe --allow-run-as-root trtllm-serve /models/gpt-oss-120b --port=8890 --trust_remote_code --backend=pytorch --max_seq_len=8192 --max_num_tokens=8192 --tp_size=1 --ep_size=1 --extra_llm_api_options=./results/b300_gptoss120b_tp1_c1/config_fp4_throughput_chat_ep1_c1.yml
+  PYTHONNOUSERSITE=1 mpirun -n 1 --oversubscribe --allow-run-as-root trtllm-serve /models/gpt-oss-120b --port=8890 --trust_remote_code --backend=pytorch --max_seq_len=8192 --max_num_tokens=8192 --tp_size=1 --ep_size=1 --extra_llm_api_options=./results/b300_gptoss120b_fp4/b300_gptoss120b_fp4_mtp0_ep1_tp1_rc10/config_fp4_throughput_chat_ep1_c1.yml
 
 Extra LLM API Config (YAML):
   cuda_graph_config:
@@ -21,14 +21,14 @@ Extra LLM API Config (YAML):
       enable_block_reuse: false
   stream_interval: 10
   moe_config:
-      backend: CUTLASS
+      backend: TRTLLM
 
 Benchmark Command:
-  benchmark_serving.py --model /models/gpt-oss-120b --port 8890 --backend openai --input-len 1024 --output-len 1024 --random-range-ratio 0.8 --num-prompts 20 --max-concurrency 1 --num-warmups 2 --result-filename result_fp4_throughput_chat_ep1_c1 --result-dir ./results/b300_gptoss120b_tp1_c1 --metadata max_model_len=8192 kv_cache_dtype=fp8 kv_cache_free_mem_fraction=0.8 tensor_parallel_size=1 gpu_count=8 ep_size=1 dp_attention=false moe_backend=CUTLASS mtp_layers=0 piecewise_cuda_graphs=false random_range_ratio=0.8 trtllm_version=🚨 Config not found for parakeet. You can manually add it to HARDCODED_CONFIG_FOR_MODELS in utils/auto_docstring.py
+  benchmark_serving.py --model /models/gpt-oss-120b --port 8890 --backend openai --input-len 1024 --output-len 1024 --random-range-ratio 0.8 --num-prompts 20 --max-concurrency 1 --num-warmups 2 --result-filename result_fp4_throughput_chat_ep1_c1 --result-dir ./results/b300_gptoss120b_fp4/b300_gptoss120b_fp4_mtp0_ep1_tp1_rc10 --metadata max_model_len=8192 kv_cache_dtype=fp8 kv_cache_free_mem_fraction=0.8 tensor_parallel_size=1 gpu_count=1 ep_size=1 dp_attention=false moe_backend=TRTLLM mtp_layers=0 piecewise_cuda_graphs=false random_range_ratio=0.8 trtllm_version=🚨 Config not found for parakeet. You can manually add it to HARDCODED_CONFIG_FOR_MODELS in utils/auto_docstring.py
 🚨 Config not found for parakeet. You can manually add it to HARDCODED_CONFIG_FOR_MODELS in utils/auto_docstring.py
 🚨 Config not found for parakeet. You can manually add it to HARDCODED_CONFIG_FOR_MODELS in utils/auto_docstring.py
 [TensorRT-LLM] TensorRT LLM version: 1.3.0rc10
-1.3.0rc10 container_image=
+1.3.0rc10 container_image= bench_methodology=claudeskills
 
 Key Config:
   model_id: /models/gpt-oss-120b
@@ -36,16 +36,16 @@ Key Config:
   tensor_parallel_size: 1
   ep_size: 1
   dp_attention: false
-  moe_backend: CUTLASS
+  moe_backend: TRTLLM
   mtp_layers: 0
   piecewise_cuda_graphs: false
   kv_cache_free_mem_fraction: 0.8
   max_concurrency: 1
   num_prompts: 20
 
-RESULT: OK - 20/20 completed, output_throughput=304.7 tok/s
-  median_ttft_ms: 22.622907505137846
-  median_tpot_ms: 3.260412841634499
+RESULT: OK - 20/20 completed, output_throughput=430.8 tok/s
+  median_ttft_ms: 21.27621555700898
+  median_tpot_ms: 2.299894702302018
 ======================================================================
 
 [SERVER RUNTIME]
@@ -74,7 +74,7 @@ RESULT: OK - 20/20 completed, output_throughput=304.7 tok/s
     load_format=<LoadFormat.AUTO: 0>
     enable_lora=False
     lora_config=None
-    kv_cache_config=KvCacheConfig(enable_block_reuse=False, max_tokens=4691006, max_attention_window=None, sink_token_length=None, free_gpu_memory_fraction=0.8, host_cache_size=None, onboard_blocks=True, cross_kv_cache_fraction=None, secondary_offload_min_priority=None, event_buffer_max_size=0, attention_dp_events_gather_period_ms=5, enable_partial_reuse=True, copy_on_partial_reuse=True, use_uvm=False, max_gpu_total_bytes=172929252556, dtype='fp8', mamba_ssm_cache_dtype='auto', mamba_ssm_stochastic_rounding=False, mamba_ssm_philox_rounds=10, tokens_per_block=32, use_kv_cache_manager_v2=False, max_util_for_resume=0.95)
+    kv_cache_config=KvCacheConfig(enable_block_reuse=False, max_tokens=4651353, max_attention_window=None, sink_token_length=None, free_gpu_memory_fraction=0.8, host_cache_size=None, onboard_blocks=True, cross_kv_cache_fraction=None, secondary_offload_min_priority=None, event_buffer_max_size=0, attention_dp_events_gather_period_ms=5, enable_partial_reuse=True, copy_on_partial_reuse=True, use_uvm=False, max_gpu_total_bytes=171467479859, dtype='fp8', mamba_ssm_cache_dtype='auto', mamba_ssm_stochastic_rounding=False, mamba_ssm_philox_rounds=10, tokens_per_block=32, use_kv_cache_manager_v2=False, max_util_for_resume=0.95)
     enable_chunked_prefill=False
     guided_decoding_backend=None
     batched_logits_processor=None
@@ -107,7 +107,7 @@ RESULT: OK - 20/20 completed, output_throughput=304.7 tok/s
     cuda_graph_config=CudaGraphConfig(batch_sizes=[1], max_batch_size=1, enable_padding=True)
     attention_dp_config=None
     disable_overlap_scheduler=False
-    moe_config=MoeConfig(backend='CUTLASS', max_num_tokens=None, load_balancer=None, disable_finalize_fusion=False, use_low_precision_moe_combine=False)
+    moe_config=MoeConfig(backend='TRTLLM', max_num_tokens=None, load_balancer=None, disable_finalize_fusion=False, use_low_precision_moe_combine=False)
     nvfp4_gemm_config=Nvfp4GemmConfig(allowed_backends=['cutlass', 'cublaslt', 'cuda_core'])
     attn_backend='TRTLLM'
     sampler_type=<SamplerType.auto: 'auto'>
@@ -144,15 +144,15 @@ RESULT: OK - 20/20 completed, output_throughput=304.7 tok/s
   Runtime: max_seq_len=8192, max_num_requests=2048, max_num_tokens=8192, max_batch_size=2048
 
 [MEMORY]
-  Model weights (torch): 64.12 GiB
-  Model weights (non-torch): 4.12 GiB
-  Peak memory: 68.62 GiB, KV cache: 161.05 GiB (fraction=0.8)
-  Estimated KV cache: 161.05 GiB
-  PyTorch memory fraction: 0.39211897219529757 (104.96307373046875 GiB)
+  Model weights (torch): 65.40 GiB
+  Model weights (non-torch): 4.16 GiB
+  Peak memory: 70.32 GiB, KV cache: 159.69 GiB (fraction=0.8)
+  Estimated KV cache: 159.69 GiB
+  PyTorch memory fraction: 0.39719729839977547 (106.32244873046875 GiB)
 
 [ERRORS]
   You are using a model of type gpt_oss to instantiate a model of type . This is not supported for all configurations of models and can yield errors.
-  [04/29/2026-05:49:51] [TRT-LLM] [E] Failed to send object: None
+  [04/30/2026-00:46:20] [TRT-LLM] [E] Failed to send object: None
 
 [STATUS]
   Server startup: OK
