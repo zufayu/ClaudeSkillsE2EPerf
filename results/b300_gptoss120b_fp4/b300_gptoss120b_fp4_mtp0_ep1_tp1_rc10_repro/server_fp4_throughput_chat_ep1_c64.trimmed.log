@@ -1,0 +1,19 @@
+=== Trimmed: 260 -> 16 lines ===
+=== Source: server_fp4_throughput_chat_ep1_c64.log ===
+
+[SERVER RUNTIME]
+  Attention: AttentionRuntimeFeatures(chunked_prefill=False, cache_reuse=False, has_speculative_draft_tokens=False, chunk_size=8192, chunked_prefill_buffer_batch_size=4)
+
+[ERRORS]
+  You are using a model of type gpt_oss to instantiate a model of type . This is not supported for all configurations of models and can yield errors.
+  [04/30/2026-06:03:43] [TRT-LLM] [E] Failed to initialize executor on rank 0: Executor creation failed due to insufficient GPU memory.
+  [04/30/2026-06:03:43] [TRT-LLM] [E] Traceback (most recent call last):
+  torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.08 GiB. GPU 0 has a total capacity of 267.68 GiB of which 344.12 MiB is free. Process 38380 has 680.00 MiB memory in use. Including non-PyTorch memory, this process has 17.76 GiB memory in use. Of the allocated memory 17.03 GiB is allocated by PyTorch, and 38.46 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  The above exception was the direct cause of the following exception:
+  Traceback (most recent call last):
+  raise RuntimeError(explanation) from e
+  RuntimeError: Executor creation failed due to insufficient GPU memory.
+  [04/30/2026-06:03:43] [TRT-LLM] [E] Executor worker initialization error: Traceback (most recent call last):
+  raise RuntimeError(
+  RuntimeError: Executor worker returned error
+

@@ -1,0 +1,6 @@
+Regression Report - 2026-04-30 06:03:52
+Compared against: HEAD
+Directories: ./results/b300_gptoss120b_fp4/b300_gptoss120b_fp4_mtp0_ep1_tp1_rc10_repro
+
+========================================================================================================================
+Total: 0 points compared, 0 flagged (>5.0% diff on any metric)
