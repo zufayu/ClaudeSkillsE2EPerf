@@ -483,100 +483,87 @@ def main():
             cur_mod = mod
         print(f"  {i:<3} {show_mod:<40} {kname[:53]:<55} {d:>7.1f} {avg:>7.1f}")
 
-    # Write xlsx
+    # Partition representative-layer kernels into attention vs non-attention.
+    # Attention block in a transformer layer is contiguous (norm -> q/k/v ->
+    # rope+kv -> attn -> o_proj), so this split preserves intra-block order.
+    def is_attn_kernel(name):
+        nl = name.lower()
+        return any(s in nl for s in (
+            "paged_attention", "fmha", "mla_", "_fused_qk_rope",
+            "flash_attn", "attention_kernel",
+        ))
+
+    # Write xlsx with 4 sheets: attn_decode, attn_summary, non_attn_decode,
+    # non_attn_summary. Each {prefix}_decode is sequential / module-grouped;
+    # each {prefix}_summary is aggregated by kernel name.
     from openpyxl import Workbook
     wb = Workbook()
+    wb.remove(wb.active)
 
-    # Sheet 1: "decode" — sequential, module-grouped
-    ws = wb.active
-    ws.title = "decode"
-    ws.append(["cpu_module", "gpu_kernel", "duration_us", "pct%",
-               "sum per module", "module_pct%",
-               "avg_us", "median_us", "p95_us", "avg sum per module",
-               "n_samples"])
+    def emit_sheets(title_prefix, indices):
+        sub = [(rep_layer[i], avg_durs[i], med_durs[i], p95_durs[i]) for i in indices]
+        sub_total_rep = sum(d for (_, _, d), *_ in sub)
+        sub_total_avg = sum(a for _, a, _, _ in sub)
 
-    # Group consecutive kernels by module
-    groups = []
-    for i, (mod, kname, d) in enumerate(rep_layer):
-        avg = avg_durs[i] if i < len(avg_durs) else 0
-        med = med_durs[i] if i < len(med_durs) else 0
-        p95 = p95_durs[i] if i < len(p95_durs) else 0
-        if not groups or groups[-1][0] != mod:
-            groups.append((mod, []))
-        groups[-1][1].append((kname, d, avg, med, p95))
+        ws = wb.create_sheet(f"{title_prefix}_decode")
+        ws.append(["cpu_module", "gpu_kernel", "duration_us", "pct%",
+                   "sum per module", "module_pct%",
+                   "avg_us", "median_us", "p95_us", "avg sum per module",
+                   "n_samples"])
+        groups = []
+        for (mod, kname, d), avg, med, p95 in sub:
+            if not groups or groups[-1][0] != mod:
+                groups.append((mod, []))
+            groups[-1][1].append((kname, d, avg, med, p95))
+        for mod, kernel_list in groups:
+            mod_sum = sum(d for _, d, _, _, _ in kernel_list)
+            mod_avg_sum = sum(a for _, _, a, _, _ in kernel_list)
+            mod_pct = mod_sum / sub_total_rep * 100 if sub_total_rep else 0
+            first = True
+            for kname, d, avg, med, p95 in kernel_list:
+                pct = d / sub_total_rep * 100 if sub_total_rep else 0
+                ws.append([
+                    mod if first else "",
+                    kname,
+                    round(d, 3),
+                    round(pct, 1),
+                    round(mod_sum, 3) if first else "",
+                    round(mod_pct, 1) if first else "",
+                    round(avg, 3),
+                    round(med, 3),
+                    round(p95, 3),
+                    round(mod_avg_sum, 3) if first else "",
+                    n_layers_total,
+                ])
+                first = False
+        ws.append(["TOTAL", "", round(sub_total_rep, 3), "100", "", "100",
+                   round(sub_total_avg, 3), "", "", "", n_layers_total])
 
-    for mod, kernel_list in groups:
-        mod_sum = sum(d for _, d, _, _, _ in kernel_list)
-        mod_avg_sum = sum(a for _, _, a, _, _ in kernel_list)
-        mod_pct = mod_sum / total_rep * 100 if total_rep else 0
-        first = True
-        for kname, d, avg, med, p95 in kernel_list:
-            pct = d / total_rep * 100 if total_rep else 0
-            ws.append([
-                mod if first else "",
-                kname,
-                round(d, 3),
-                round(pct, 1),
-                round(mod_sum, 3) if first else "",
-                round(mod_pct, 1) if first else "",
-                round(avg, 3),
-                round(med, 3),
-                round(p95, 3),
-                round(mod_avg_sum, 3) if first else "",
-                n_layers_total,
-            ])
-            first = False
+        ws2 = wb.create_sheet(f"{title_prefix}_summary")
+        ws2.append(["gpu_kernel", "calls", "total_duration_us",
+                    "avg_duration_us", "pct%"])
+        by_name = collections.defaultdict(lambda: {"count": 0, "dur": 0})
+        for (_mod, kname, d), *_ in sub:
+            by_name[kname]["count"] += 1
+            by_name[kname]["dur"] += d
+        for kname, v in sorted(by_name.items(), key=lambda x: -x[1]["dur"]):
+            pct = v["dur"] / sub_total_rep * 100 if sub_total_rep else 0
+            avg_d = v["dur"] / v["count"] if v["count"] else 0
+            ws2.append([kname, v["count"], round(v["dur"], 1),
+                        round(avg_d, 1), round(pct, 1)])
+        return len(groups), sub_total_rep
 
-    ws.append(["TOTAL", "", round(total_rep, 3), "100", "", "100",
-               round(total_avg, 3), "", "", "", n_layers_total])
-
-    # Sheet 2: "kernel_summary" — aggregated by kernel name, sorted by avg duration
-    ws2 = wb.create_sheet("kernel_summary")
-    ws2.append(["gpu_kernel", "calls", "total_duration_us", "avg_duration_us", "pct%"])
-    by_name = collections.defaultdict(lambda: {"count": 0, "dur": 0})
-    for mod, kname, d in rep_layer:
-        by_name[kname]["count"] += 1
-        by_name[kname]["dur"] += d
-    for kname, v in sorted(by_name.items(), key=lambda x: -x[1]["dur"]):
-        pct = v["dur"] / total_rep * 100 if total_rep else 0
-        avg_d = v["dur"] / v["count"] if v["count"] else 0
-        ws2.append([kname, v["count"], round(v["dur"], 1), round(avg_d, 1), round(pct, 1)])
+    attn_idx = [i for i, (_, kn, _) in enumerate(rep_layer) if is_attn_kernel(kn)]
+    non_attn_idx = [i for i in range(len(rep_layer)) if i not in set(attn_idx)]
+    n_attn_groups, attn_total = emit_sheets("attn", attn_idx)
+    n_non_groups, non_attn_total = emit_sheets("non_attn", non_attn_idx)
 
     print(f"\nWriting {args.output}...")
     wb.save(args.output)
-    print(f"Done. {len(rep_layer)} kernel rows, {len(groups)} module groups.")
-
-    # Companion CSV with cross-platform comparator schema (compare_b300_mi355x.py).
-    # Columns: cpu_module, gpu_kernel, avg_us, median_us, p95_us, std_us, n_steps, pct%
-    import csv as _csv
-    from statistics import pstdev
-    csv_path = (args.output[:-5] + ".csv") if args.output.endswith(".xlsx") else args.output + ".csv"
-
-    # Re-derive per-position std (we have avg/med/p95 above; std needs raw durs)
-    pos_durs = [[] for _ in range(max_pos)]
-    for cl in all_classified:
-        for pos, (_mod, _kn, d) in enumerate(cl):
-            if pos < max_pos:
-                pos_durs[pos].append(d)
-    std_durs = [pstdev(d) if len(d) > 1 else 0.0 for d in pos_durs]
-
-    with open(csv_path, "w", newline="") as f:
-        w = _csv.writer(f)
-        w.writerow(["cpu_module", "gpu_kernel", "avg_us", "median_us", "p95_us",
-                    "std_us", "n_steps", "pct%"])
-        for i, (mod, kname, d) in enumerate(rep_layer):
-            avg = avg_durs[i] if i < len(avg_durs) else 0
-            med = med_durs[i] if i < len(med_durs) else 0
-            p95 = p95_durs[i] if i < len(p95_durs) else 0
-            std = std_durs[i] if i < len(std_durs) else 0
-            pct = avg / total_avg * 100 if total_avg > 0 else 0
-            # n_steps = decode-iterations consumed (each contributing one sample
-            # per position). Cross-platform comparator multiplies by ~30 layers
-            # to compare against B300's N_samples (= step × layer).
-            w.writerow([mod, kname, f"{avg:.3f}", f"{med:.3f}", f"{p95:.3f}",
-                        f"{std:.3f}", n_used, f"{pct:.2f}"])
-        w.writerow(["TOTAL", "", f"{total_avg:.3f}", "", "", "", n_used, "100.00"])
-    print(f"Companion CSV: {csv_path}")
+    print(f"Done. attn: {len(attn_idx)} kernels / {n_attn_groups} groups "
+          f"({attn_total:.1f}us). "
+          f"non_attn: {len(non_attn_idx)} kernels / {n_non_groups} groups "
+          f"({non_attn_total:.1f}us).")
 
 
 if __name__ == "__main__":
