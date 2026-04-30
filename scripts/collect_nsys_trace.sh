@@ -38,7 +38,8 @@ WARMUP=0
 PORT=8888
 SKIP_EXPORT=false
 EXTRA_NSYS_ARGS=""
-MODEL_NAME="dsr1"
+MODEL_NAME=""
+PLATFORM_OVERRIDE=""
 ENV=""
 ENABLE_NCU=false
 NCU_SET="pmsampling"
@@ -73,6 +74,10 @@ Options:
   --enable-ncu              Run ncu profiling after nsys capture (reuses nsys trace)
   --ncu-set SET             ncu section set: full|detailed|basic|pmsampling [default: pmsampling]
   --ncu-launch-count N      ncu kernel launch count [default: 50]
+  --platform PLAT           b200|b300|h200|h20|default [default: \$PLATFORM env or b200]
+                            Selects configs/adaptive/<plat>_trt.sh AND tag prefix
+  --model-name NAME         Short model id baked into trace filenames
+                            [default: auto-derived from --model basename]
   -h, --help                Show this help message
 
 Examples:
@@ -113,6 +118,7 @@ while [[ $# -gt 0 ]]; do
         --ncu-set)         NCU_SET="$2"; shift 2 ;;
         --ncu-launch-count) NCU_LAUNCH_COUNT="$2"; shift 2 ;;
         --model-name)      MODEL_NAME="$2"; shift 2 ;;
+        --platform)        PLATFORM_OVERRIDE="$2"; shift 2 ;;
         --env)             ENV="$2"; shift 2 ;;
         -h|--help)         usage ;;
         *)                 echo "Unknown arg: $1"; exit 1 ;;
@@ -150,8 +156,39 @@ esac
 # ======================== Utilities ===========================================
 # log() and TS() inherited from benchmark_lib.sh
 
+# ======================== Platform Resolution =================================
+# Precedence: --platform CLI > $PLATFORM env > "b200"
+PLATFORM="${PLATFORM_OVERRIDE:-${PLATFORM:-b200}}"
+
+# ======================== Model Name Auto-Derivation ==========================
+# If --model-name not provided, derive from $MODEL basename so trace filenames
+# reflect the actual model (not a stale "dsr1" default that mislabels GPT-OSS
+# / Qwen / etc. runs).
+if [[ -z "$MODEL_NAME" ]]; then
+    _BASE="$(basename "$MODEL")"
+    _BASE_LC="$(echo "$_BASE" | tr '[:upper:]' '[:lower:]')"
+    case "$_BASE_LC" in
+        *gpt*oss*120*)        MODEL_NAME="gptoss120b" ;;
+        *gpt*oss*20*)         MODEL_NAME="gptoss20b" ;;
+        *gpt*oss*)            MODEL_NAME="gptoss" ;;
+        *deepseek*r1*0528*|*deepseek-r1-0528*) MODEL_NAME="dsr1_0528" ;;
+        *deepseek*r1*|*dsr1*) MODEL_NAME="dsr1" ;;
+        *deepseek*v3.2*)      MODEL_NAME="dsv32" ;;
+        *deepseek*v3*|*dsv3*) MODEL_NAME="dsv3" ;;
+        *qwen*3*235*)         MODEL_NAME="qwen3_235b" ;;
+        *qwen*3*30*)          MODEL_NAME="qwen3_30b" ;;
+        *qwen*)               MODEL_NAME="qwen" ;;
+        *llama*3.1*70*)       MODEL_NAME="llama31_70b" ;;
+        *llama*3.1*8*)        MODEL_NAME="llama31_8b" ;;
+        *)
+            MODEL_NAME="$(echo "$_BASE_LC" | sed -e 's/[^a-z0-9]//g' | cut -c1-32)"
+            [[ -z "$MODEL_NAME" ]] && MODEL_NAME="model"
+            ;;
+    esac
+fi
+
 # ======================== Tag & Output Setup ==================================
-TAG="trace_nsys_b200_trt_${MODEL_NAME}_${QUANT}_${ENV}_${SCENARIO}_ep${EP}_tp${TP}_c${CONCURRENCY}_iter${ITER_RANGE}"
+TAG="trace_nsys_${PLATFORM}_trt_${MODEL_NAME}_${QUANT}_${ENV}_${SCENARIO}_ep${EP}_tp${TP}_c${CONCURRENCY}_iter${ITER_RANGE}"
 [[ "$DP" == "true" ]] && TAG="${TAG}_dp"
 mkdir -p "$TRACE_DIR"
 
@@ -164,7 +201,9 @@ log "  Command: $0 $ORIG_ARGS"
 log "============================================================"
 log "  Nsight Systems Trace Capture"
 log "============================================================"
+log "  Platform:    $PLATFORM"
 log "  Model:       $MODEL"
+log "  Model Name:  $MODEL_NAME"
 log "  Mode:        $MODE"
 log "  Scenario:    $SCENARIO (ISL=$ISL, OSL=$OSL)"
 log "  Concurrency: $CONCURRENCY"
@@ -180,8 +219,7 @@ log "============================================================"
 
 # ======================== Adaptive Parameters =================================
 # Loaded from configs/adaptive/ (same source as sa_bench_trt.sh)
-# Previously: 100-line copy-paste from sa_bench_b200.sh
-PLATFORM="${PLATFORM:-b200}"
+# (PLATFORM resolved earlier from --platform CLI / $PLATFORM env / "b200")
 _ADAPTIVE="$SCRIPT_DIR/../configs/adaptive/${PLATFORM}_trt.sh"
 if [[ -f "$_ADAPTIVE" ]]; then
     source "$_ADAPTIVE"
@@ -535,9 +573,10 @@ for f in "$TRACE_DIR"/nsys_serving_*.json; do
     [[ -f "$f" ]] && HAS_RESULTS=true && break
 done
 if [[ "$HAS_RESULTS" == "true" ]]; then
-    cat > "$SUMMARY_FILE" << 'HEADER'
+    PLAT_UPPER="$(echo "$PLATFORM" | tr '[:lower:]' '[:upper:]')"
+    cat > "$SUMMARY_FILE" << HEADER
 # Nsys Profiling Results (TRT-LLM)
-## B200 8×GPU
+## ${PLAT_UPPER} ${TP}×GPU
 
 | Mode | Quant | Scenario | EP | CONC | Total Tput | Output Tput | TPOT (ms) | TTFT (ms) |
 |------|-------|----------|----|------|------------|-------------|-----------|-----------|
