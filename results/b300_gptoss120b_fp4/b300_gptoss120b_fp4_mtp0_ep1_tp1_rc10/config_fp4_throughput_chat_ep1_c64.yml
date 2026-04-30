@@ -9,4 +9,4 @@ kv_cache_config:
     enable_block_reuse: false
 stream_interval: 10
 moe_config:
-    backend: TRTLLM
+    backend: CUTLASS
