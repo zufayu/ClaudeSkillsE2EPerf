@@ -1,0 +1,26 @@
+=== Trimmed: 230 -> 5 lines ===
+=== Source: server_mxfp4_throughput_chat_c1.log ===
+
+======================================================================
+REPRODUCE INFO (from result JSON)
+======================================================================
+
+Key Config:
+  model_id: /shared/data/amd_int/models/gpt-oss-120b-w-mxfp4-a-fp8-merged
+  max_model_len: atom_default
+  tensor_parallel_size: 1
+  dp_attention: false
+  mtp_layers: 0
+  max_concurrency: 1
+  num_prompts: 10
+
+RESULT: OK - 10/10 completed, output_throughput=269.4 tok/s
+  median_ttft_ms: 39.81066960841417
+  median_tpot_ms: 3.6685330004996337
+======================================================================
+
+[STATUS]
+  Server startup: OK
+  Server shutdown:
+  Server shutdown:
+
