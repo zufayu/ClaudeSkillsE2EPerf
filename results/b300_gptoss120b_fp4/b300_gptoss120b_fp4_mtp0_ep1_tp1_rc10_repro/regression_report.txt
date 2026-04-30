@@ -1,6 +1,14 @@
-Regression Report - 2026-04-30 06:32:50
+Regression Report - 2026-04-30 06:37:49
 Compared against: HEAD
 Directories: ./results/b300_gptoss120b_fp4/b300_gptoss120b_fp4_mtp0_ep1_tp1_rc10_repro
+
+========================================================================================================================
+  ./results/b300_gptoss120b_fp4/b300_gptoss120b_fp4_mtp0_ep1_tp1_rc10_repro
+========================================================================================================================
+Config                                         Old      New    Diff       Old      New    Diff       Old      New    Diff       Old      New    Diff       Old      New    Diff
+                                          Total Tput Total Tput          Output Tpu Output Tpu          TPOT p50 TPOT p50          TTFT p50 TTFT p50          Interactiv Interactiv        
+------------------------------------------------------------------------------------------------------------------------
+fp4_throughput_chat_ep1_c64                    NEW  14133.8               NEW   7065.3               NEW      8.8               NEW     35.7               NEW    113.3        
 
 ========================================================================================================================
 Total: 0 points compared, 0 flagged (>5.0% diff on any metric)
