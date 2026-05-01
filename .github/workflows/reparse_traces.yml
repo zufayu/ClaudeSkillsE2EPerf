@@ -106,26 +106,27 @@ jobs:
           ls -la "$TRACE_DIR"/decode_breakdown* "$TRACE_DIR"/prefill_breakdown* 2>/dev/null || echo "(no breakdown files)"
           echo "=== git status BEFORE add ==="
           git status --short "$TRACE_DIR" | head -20
-          # Stash any unrelated working changes so pull --rebase succeeds
-          git stash push -u -- ":(exclude)$TRACE_DIR/decode_breakdown*" ":(exclude)$TRACE_DIR/prefill_breakdown*" 2>/dev/null || true
-          git pull --rebase origin main || true
-          git stash pop 2>/dev/null || true
-          # Add via find — reliable, ignores missing files
-          mapfile -t FILES < <(find "$TRACE_DIR" -maxdepth 1 -name "decode_breakdown*" -o -name "prefill_breakdown*" 2>/dev/null)
-          echo "=== files to add (${#FILES[@]} total) ==="
+          # Abort any leftover rebase/merge state from prior runs (clean slate)
+          git rebase --abort 2>/dev/null || true
+          git merge --abort 2>/dev/null || true
+          # Collect breakdown files via find (reliable, no glob silent-noop)
+          mapfile -t FILES < <(find "$TRACE_DIR" -maxdepth 1 \( -name "decode_breakdown*" -o -name "prefill_breakdown*" \) 2>/dev/null)
+          echo "=== files to add (${#FILES[@]}) ==="
           printf '  %s\n' "${FILES[@]}"
-          if [ ${#FILES[@]} -gt 0 ]; then
-            git add -f "${FILES[@]}"
+          [ ${#FILES[@]} -eq 0 ] && { echo "Nothing to add"; exit 0; }
+          git add -f "${FILES[@]}"
+          if git diff --cached --quiet; then
+            echo "Files unchanged — nothing to commit"; exit 0
           fi
-          echo "=== git diff --cached ==="
-          git diff --cached --name-only
-          if ! git diff --cached --quiet; then
-            git commit -m "data: reparse DKB for ${{ inputs.platform }} (updated KERNEL_MODULE_RULES)
+          git commit -m "data: reparse DKB for ${{ inputs.platform }} (updated KERNEL_MODULE_RULES)
 
           Co-Authored-By: Claude Opus 4 <noreply@anthropic.com>"
-            git push
-          else
-            echo "Nothing to commit"
+          # Push with one retry: fetch+rebase+push if non-fast-forward
+          if ! timeout 60 git push 2>&1; then
+            echo "Push rejected or timed out, fetch+rebase+retry once"
+            git fetch origin main
+            git rebase origin/main
+            timeout 60 git push
           fi
 
   reparse-b200-sglang:
