@@ -8,6 +8,7 @@ on:
         options:
           - mi355x-ep4
           - mi355x-ep8
+          - mi355x-gptoss-tp1
           - b200-sglang
         default: mi355x-ep4
       target_bs:
@@ -35,6 +36,8 @@ jobs:
         run: |
           if [ "${{ inputs.platform }}" = "mi355x-ep4" ]; then
             echo "TRACE_DIR=$REPO/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep4_tp4_rocm711_profiling" >> $GITHUB_ENV
+          elif [ "${{ inputs.platform }}" = "mi355x-gptoss-tp1" ]; then
+            echo "TRACE_DIR=$REPO/results/mi355x_gptoss120b_mxfp4/mi355x_gptoss120b_mxfp4_mtp0_ep1_tp1_atom_dev_profiling" >> $GITHUB_ENV
           else
             echo "TRACE_DIR=$REPO/results/mi355x_dsr_mxfp4/mi355x_dsr_mxfp4_mtp0_ep8_tp8_rocm711_profiling" >> $GITHUB_ENV
           fi
@@ -141,3 +144,19 @@ jobs:
           ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 're-parsed B200 SGLang trace with multi-EP fix
 
           Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push; else echo 'Nothing to commit'; fi"
+      - name: Commit reparsed DKB outputs
+        if: success()
+        run: |
+          cd $REPO && git config user.email "ci@github.com" && git config user.name "MI355X CI"
+          git pull --rebase origin main || true
+          REL_DIR=${TRACE_DIR#$REPO/}
+          for ext in csv xlsx; do git add -f $REL_DIR/decode_breakdown*.$ext 2>/dev/null; done
+          if ! git diff --cached --quiet; then
+            git commit -m "data: reparse DKB for ${{ inputs.platform }} with updated KERNEL_MODULE_RULES
+
+          Co-Authored-By: Claude Opus 4 <noreply@anthropic.com>"
+            git push
+          else
+            echo "Nothing to commit"
+          fi
+
