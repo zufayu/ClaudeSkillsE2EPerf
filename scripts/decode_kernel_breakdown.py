@@ -43,6 +43,15 @@ from trace_utils import load_trace_events  # noqa: E402
 # Positional classifier: maps (kernel_pattern, occurrence_index) → module
 # For kernels that appear multiple times per layer, the index disambiguates.
 KERNEL_MODULE_RULES = [
+    # === GPT-OSS-120B on MI355X (AMD ROCm) ===
+    # Must precede generic FlatmmKernel / add_rmsnorm_quant rules below
+    # (substring match is first-hit-wins).
+    ("MoeFlatmmKernel",                  ["moe_expert_ffn"]),       # gate+up (Swiglu) and down (MoeSilu); down = layer terminator
+    ("_fused_add_rmsnorm_pad",           ["input_layernorm"]),
+    ("add_rmsnorm_quant_kernel",         ["post_attn_layernorm"]),
+    ("_fused_qk_rope_reshape_and_cache", ["rope_and_kv_cache"]),
+    ("paged_attention_decode",           ["attention"]),             # covers _sliding_window / _causal variants
+    ("topkGatingSoftmax",                ["moe_router"]),
     # (pattern, module_for_1st_occurrence, module_for_2nd_occurrence, ...)
     ("reduce_scatter_cross_device", ["input_layernorm", "post_attn_layernorm"]),
     ("local_device_load_rmsnorm", ["input_layernorm", "post_attn_layernorm"]),
@@ -53,7 +62,7 @@ KERNEL_MODULE_RULES = [
     ("FlatmmKernel", ["v_up_proj_and_o_proj"]),
     ("Cijk_", ["q_proj_and_k_up_proj", "v_up_proj_and_o_proj"]),
     ("batched_gemm_a8w8", ["q_proj_and_k_up_proj", "v_up_proj_and_o_proj"]),
-    ("bf16gemm", ["gemm_a16w16"]),
+    ("bf16gemm", ["q_proj_and_k_up_proj", "v_up_proj_and_o_proj"]),  # DSR-style 2-occurrence; GPT-OSS has 3rd→clamps to v_up/o_proj
     ("fuse_qk_rope_concat", ["rope_and_kv_cache"]),
     ("mla_a8w8", ["mla_decode"]),
     ("kn_mla_reduce", ["mla_decode"]),
