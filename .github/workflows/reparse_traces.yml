@@ -75,6 +75,27 @@ jobs:
           fi
           podman exec $CONTAINER bash -c "cd $TRACE_DIR && python3 $REPO/scripts/decode_kernel_breakdown.py '$RUN_TRACE' $BS_ARG $LAYERS_ARG $ATTN_KERNEL_ARG 2>&1" | tee /tmp/reparse.log
 
+      - name: Regenerate CSV from xlsx (DKB only writes xlsx)
+        if: success()
+        run: |
+          podman exec $CONTAINER bash -c '
+            cd "'"$TRACE_DIR"'" && python3 -c "
+          import openpyxl, csv, glob
+          for xlsx in glob.glob("decode_breakdown*.xlsx") + glob.glob("prefill_breakdown*.xlsx"):
+              wb = openpyxl.load_workbook(xlsx)
+              csv_path = xlsx[:-5] + ".csv"
+              with open(csv_path, "w", newline="") as f:
+                  w = csv.writer(f)
+                  for sheet in wb.sheetnames:
+                      ws = wb[sheet]
+                      if len(wb.sheetnames) > 1:
+                          w.writerow([f"# sheet: {sheet}"])
+                      for row in ws.iter_rows(values_only=True):
+                          w.writerow(row)
+              print(f"Wrote {csv_path}")
+          "
+          '
+
       - name: Show decode breakdown
         if: always()
         run: |
