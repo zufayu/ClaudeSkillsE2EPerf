@@ -78,9 +78,10 @@ jobs:
       - name: Regenerate CSV from xlsx (DKB only writes xlsx)
         if: success()
         run: |
-          podman exec $CONTAINER bash -c '
-            cd "'"$TRACE_DIR"'" && python3 -c "
-          import openpyxl, csv, glob
+          # Write helper to TRACE_DIR (mounted into container), then run inside container
+          cat > "$TRACE_DIR/_xlsx_to_csv.py" <<'PYEOF'
+          import openpyxl, csv, glob, sys, os
+          os.chdir(sys.argv[1])
           for xlsx in glob.glob("decode_breakdown*.xlsx") + glob.glob("prefill_breakdown*.xlsx"):
               wb = openpyxl.load_workbook(xlsx)
               csv_path = xlsx[:-5] + ".csv"
@@ -93,8 +94,9 @@ jobs:
                       for row in ws.iter_rows(values_only=True):
                           w.writerow(row)
               print(f"Wrote {csv_path}")
-          "
-          '
+          PYEOF
+          podman exec $CONTAINER python3 "$TRACE_DIR/_xlsx_to_csv.py" "$TRACE_DIR"
+          rm -f "$TRACE_DIR/_xlsx_to_csv.py"
 
       - name: Show decode breakdown
         if: always()
