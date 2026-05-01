@@ -68,10 +68,12 @@ jobs:
             BS_ARG="--target-bs ${{ inputs.target_bs }}"
           fi
           LAYERS_ARG=""
+          ATTN_KERNEL_ARG=""
           if [ "${{ inputs.platform }}" = "mi355x-gptoss-tp1" ]; then
-            LAYERS_ARG="--layers 5-30"   # GPT-OSS-120B has 36 layers; default 10-40 silent-fails
+            LAYERS_ARG="--layers 5-30"                                     # 36-layer model
+            ATTN_KERNEL_ARG="--attn-kernel add_rmsnorm_quant_kernel"       # force input_norm as anchor → MoE down naturally falls last in bucket
           fi
-          podman exec $CONTAINER bash -c "cd $TRACE_DIR && python3 $REPO/scripts/decode_kernel_breakdown.py '$RUN_TRACE' $BS_ARG $LAYERS_ARG 2>&1" | tee /tmp/reparse.log
+          podman exec $CONTAINER bash -c "cd $TRACE_DIR && python3 $REPO/scripts/decode_kernel_breakdown.py '$RUN_TRACE' $BS_ARG $LAYERS_ARG $ATTN_KERNEL_ARG 2>&1" | tee /tmp/reparse.log
 
       - name: Show decode breakdown
         if: always()
