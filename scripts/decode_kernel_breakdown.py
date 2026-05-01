@@ -47,8 +47,8 @@ KERNEL_MODULE_RULES = [
     # Must precede generic FlatmmKernel / add_rmsnorm_quant rules below
     # (substring match is first-hit-wins).
     ("MoeFlatmmKernel",                  ["moe_expert_ffn"]),       # gate+up (Swiglu) and down (MoeSilu); down = layer terminator
-    ("_fused_add_rmsnorm_pad",           ["input_layernorm"]),
-    ("add_rmsnorm_quant_kernel",         ["post_attn_layernorm"]),
+    ("_fused_add_rmsnorm_pad",           ["post_attn_layernorm"]),  # outputs bf16 (no quant) → MoE input
+    ("add_rmsnorm_quant_kernel",         ["input_layernorm"]),       # outputs quant → attn QKV input
     ("_fused_qk_rope_reshape_and_cache", ["rope_and_kv_cache"]),
     ("paged_attention_decode",           ["attention"]),             # covers _sliding_window / _causal variants
     ("topkGatingSoftmax",                ["moe_router"]),
