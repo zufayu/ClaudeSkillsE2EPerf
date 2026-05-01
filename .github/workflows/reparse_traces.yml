@@ -100,13 +100,27 @@ jobs:
           cd $REPO
           git config user.email "ci@github.com"
           git config user.name "MI355X CI"
+          echo "=== files in TRACE_DIR ==="
+          ls -la "$TRACE_DIR"/decode_breakdown* "$TRACE_DIR"/prefill_breakdown* 2>/dev/null || echo "(no breakdown files)"
+          echo "=== git status BEFORE add ==="
+          git status --short "$TRACE_DIR" | head -20
+          # Stash any unrelated working changes so pull --rebase succeeds
+          git stash push -u -- ":(exclude)$TRACE_DIR/decode_breakdown*" ":(exclude)$TRACE_DIR/prefill_breakdown*" 2>/dev/null || true
           git pull --rebase origin main || true
-          git add -f $TRACE_DIR/decode_breakdown*.xlsx $TRACE_DIR/decode_breakdown*.csv $TRACE_DIR/prefill_breakdown*.xlsx 2>/dev/null || true
+          git stash pop 2>/dev/null || true
+          # Add via find — reliable, ignores missing files
+          mapfile -t FILES < <(find "$TRACE_DIR" -maxdepth 1 -name "decode_breakdown*" -o -name "prefill_breakdown*" 2>/dev/null)
+          echo "=== files to add (${#FILES[@]} total) ==="
+          printf '  %s\n' "${FILES[@]}"
+          if [ ${#FILES[@]} -gt 0 ]; then
+            git add -f "${FILES[@]}"
+          fi
+          echo "=== git diff --cached ==="
           git diff --cached --name-only
           if ! git diff --cached --quiet; then
-            git commit -m "data: re-parsed MI355X trace with multi-EP fix
+            git commit -m "data: reparse DKB for ${{ inputs.platform }} (updated KERNEL_MODULE_RULES)
 
-          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+          Co-Authored-By: Claude Opus 4 <noreply@anthropic.com>"
             git push
           else
             echo "Nothing to commit"
