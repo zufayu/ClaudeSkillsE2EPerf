@@ -121,12 +121,15 @@ jobs:
           git commit -m "data: reparse DKB for ${{ inputs.platform }} (updated KERNEL_MODULE_RULES)
 
           Co-Authored-By: Claude Opus 4 <noreply@anthropic.com>"
-          # Push with one retry: fetch+rebase+push if non-fast-forward
-          if ! timeout 60 git push 2>&1; then
+          # Push: inject GITHUB_TOKEN into remote URL to avoid credential-prompt hang
+          # GIT_TERMINAL_PROMPT=0 forces fail (not hang) if auth missing.
+          export GIT_TERMINAL_PROMPT=0
+          REPO_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          if ! timeout 120 git push "$REPO_URL" HEAD:main 2>&1; then
             echo "Push rejected or timed out, fetch+rebase+retry once"
-            git fetch origin main
-            git rebase origin/main
-            timeout 60 git push
+            git fetch "$REPO_URL" main
+            git rebase FETCH_HEAD
+            timeout 120 git push "$REPO_URL" HEAD:main
           fi
 
   reparse-b200-sglang:
