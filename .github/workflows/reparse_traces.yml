@@ -67,7 +67,11 @@ jobs:
           if [ -n "${{ inputs.target_bs }}" ]; then
             BS_ARG="--target-bs ${{ inputs.target_bs }}"
           fi
-          podman exec $CONTAINER bash -c "cd $TRACE_DIR && python3 $REPO/scripts/decode_kernel_breakdown.py '$RUN_TRACE' $BS_ARG 2>&1" | tee /tmp/reparse.log
+          LAYERS_ARG=""
+          if [ "${{ inputs.platform }}" = "mi355x-gptoss-tp1" ]; then
+            LAYERS_ARG="--layers 5-30"   # GPT-OSS-120B has 36 layers; default 10-40 silent-fails
+          fi
+          podman exec $CONTAINER bash -c "cd $TRACE_DIR && python3 $REPO/scripts/decode_kernel_breakdown.py '$RUN_TRACE' $BS_ARG $LAYERS_ARG 2>&1" | tee /tmp/reparse.log
 
       - name: Show decode breakdown
         if: always()
@@ -97,7 +101,7 @@ jobs:
           git config user.email "ci@github.com"
           git config user.name "MI355X CI"
           git pull --rebase origin main || true
-          git add -f $TRACE_DIR/decode_breakdown.xlsx $TRACE_DIR/prefill_breakdown.xlsx 2>/dev/null
+          git add -f $TRACE_DIR/decode_breakdown*.xlsx $TRACE_DIR/decode_breakdown*.csv $TRACE_DIR/prefill_breakdown*.xlsx 2>/dev/null || true
           git diff --cached --name-only
           if ! git diff --cached --quiet; then
             git commit -m "data: re-parsed MI355X trace with multi-EP fix
@@ -144,19 +148,3 @@ jobs:
           ssh $NODE "cd $REPO && if ! git diff --cached --quiet; then git commit -m 're-parsed B200 SGLang trace with multi-EP fix
 
           Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>' && git push; else echo 'Nothing to commit'; fi"
-      - name: Commit reparsed DKB outputs
-        if: success()
-        run: |
-          cd $REPO && git config user.email "ci@github.com" && git config user.name "MI355X CI"
-          git pull --rebase origin main || true
-          REL_DIR=${TRACE_DIR#$REPO/}
-          for ext in csv xlsx; do git add -f $REL_DIR/decode_breakdown*.$ext 2>/dev/null; done
-          if ! git diff --cached --quiet; then
-            git commit -m "data: reparse DKB for ${{ inputs.platform }} with updated KERNEL_MODULE_RULES
-
-          Co-Authored-By: Claude Opus 4 <noreply@anthropic.com>"
-            git push
-          else
-            echo "Nothing to commit"
-          fi
-
